@@ -1,12 +1,10 @@
-/**
- * ==============================================================================
- * 『くねくねバトル オンライン』iOS WebKit & iPhone 干渉完全マスクスタイル (style.js)
- * Phase 3 改訂:
- * ・ボトムシートメニュー（4タブ均等・スライドアップ・8大定型文チップ）
- * ・右上「…」直下いいね誘導吹き出し（▲アロー連動）
- * ・ニコニコ風弾幕チャットレイヤー（4レーン・バッジ表示）
- * ==============================================================================
- */
+// ==============================================================================
+// 『くねくねバトル オンライン』iOS WebKit & iPhone 干渉完全マスクスタイル (style.js)
+// Step 5-C 改訂:
+// ・マルチプレイロビー画面 (.lobby-card, .btn-lobby-hero, .room-list-box 等)
+// ・マッチング待機室 (.waiting-card, .waiting-members-list 等)
+// ・リザルト画面、HUD、ボトムシートメニューの完全統合
+// ==============================================================================
 
 export function injectStyles() {
     if (document.getElementById('kunekune-style')) return;
@@ -100,16 +98,26 @@ export function injectStyles() {
             position: absolute;
             top: 40px;
             left: 0;
-            background: rgba(15, 23, 42, 0.85);
+            background: rgba(15, 23, 42, 0.9);
             border: 1px solid rgba(0, 229, 255, 0.4);
             border-radius: 10px;
-            padding: 8px 12px;
+            padding: 10px 14px;
             color: white;
             font-size: 12px;
             backdrop-filter: blur(10px);
             -webkit-backdrop-filter: blur(10px);
             box-shadow: 0 6px 20px rgba(0, 0, 0, 0.6);
-            min-width: 140px;
+            min-width: 160px;
+        }
+        .stats-box hr {
+            border: none;
+            border-top: 1px dashed rgba(255, 255, 255, 0.25);
+            margin: 8px 0;
+        }
+        #leaderboard-list {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
         }
 
         /* --- 操作ボタンレイアウト --- */
@@ -236,9 +244,7 @@ export function injectStyles() {
             pointer-events: none;
         }
 
-        /* ==========================================================================
-           ニコニコ風弾幕チャットシステム (danmaku.js)
-           ========================================================================== */
+        /* --- 弾幕チャット --- */
         #danmaku-container {
             position: absolute;
             top: 0;
@@ -278,9 +284,7 @@ export function injectStyles() {
             100% { transform: translateX(-200%); left: -50%; }
         }
 
-        /* ==========================================================================
-           右上「…」直下 いいね誘導吹き出し（image_12完全準拠）
-           ========================================================================== */
+        /* --- いいね誘導吹き出し --- */
         #like-bubble {
             display: none;
             position: absolute;
@@ -317,9 +321,7 @@ export function injectStyles() {
             100% { transform: scale(1); opacity: 1; }
         }
 
-        /* ==========================================================================
-           ボトムシートメニュー (menu.js / image_10〜12完全準拠)
-           ========================================================================== */
+        /* --- ボトムシートメニュー --- */
         #menu-overlay {
             display: none;
             position: absolute;
@@ -387,7 +389,6 @@ export function injectStyles() {
             cursor: pointer;
         }
 
-        /* 4タブ均等グリッドバー */
         .sheet-tabs {
             display: grid;
             grid-template-columns: repeat(4, 1fr);
@@ -415,7 +416,6 @@ export function injectStyles() {
             box-shadow: 0 2px 6px rgba(0, 0, 0, 0.3);
         }
 
-        /* CHAT: 8大定型文チップ (2列×4行) */
         .chat-chips-grid {
             display: grid;
             grid-template-columns: 1fr 1fr;
@@ -439,7 +439,6 @@ export function injectStyles() {
             transform: scale(0.96);
         }
 
-        /* CHAT: 自由入力バー */
         .chat-input-bar {
             display: flex;
             gap: 8px;
@@ -465,7 +464,6 @@ export function injectStyles() {
             cursor: pointer;
         }
 
-        /* 走者一覧 (participants) */
         .participants-list {
             display: flex;
             flex-direction: column;
@@ -513,7 +511,6 @@ export function injectStyles() {
             font-size: 16px;
         }
 
-        /* CUSTOM 着せ替えピッカー */
         .custom-panel {
             display: flex;
             flex-direction: column;
@@ -558,7 +555,6 @@ export function injectStyles() {
             box-shadow: 0 0 10px rgba(255, 255, 255, 0.8);
         }
 
-        /* 製作者タブ (image_12完全準拠) */
         .creator-notice-card {
             background: rgba(0, 0, 0, 0.3);
             border: 1px solid rgba(255, 255, 255, 0.15);
@@ -586,6 +582,366 @@ export function injectStyles() {
         }
         .creator-link-row:active {
             background: rgba(255, 255, 255, 0.2);
+        }
+
+        /* --- リザルト画面 --- */
+        #over-screen {
+            display: none;
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(11, 5, 26, 0.85);
+            backdrop-filter: blur(6px);
+            -webkit-backdrop-filter: blur(6px);
+            align-items: center;
+            justify-content: center;
+            pointer-events: auto;
+            z-index: 300;
+            padding: 20px;
+        }
+        .result-panel {
+            background: linear-gradient(135deg, #0f172a 0%, #1e1b4b 100%);
+            border: 2px solid #38bdf8;
+            border-radius: 16px;
+            padding: 20px 24px;
+            width: 100%;
+            max-width: 360px;
+            color: #ffffff;
+            text-align: center;
+            box-shadow: 0 12px 36px rgba(0, 0, 0, 0.8), 0 0 20px rgba(56, 189, 248, 0.3);
+            animation: panel-appear 0.25s ease-out;
+        }
+        @keyframes panel-appear {
+            0% { transform: scale(0.85); opacity: 0; }
+            100% { transform: scale(1); opacity: 1; }
+        }
+        .result-title {
+            color: #ff3366;
+            font-size: 22px;
+            font-weight: 900;
+            letter-spacing: 1.5px;
+            margin: 0 0 16px;
+            text-shadow: 0 0 10px rgba(255, 51, 102, 0.6);
+        }
+        .result-stats-table {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            margin-bottom: 20px;
+        }
+        .result-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-size: 14px;
+            border-bottom: 1px dashed rgba(255, 255, 255, 0.15);
+            padding-bottom: 4px;
+        }
+        .result-row-label {
+            color: #94a3b8;
+        }
+        .result-row-val {
+            font-weight: 800;
+            font-size: 16px;
+            color: #38bdf8;
+        }
+        .result-actions {
+            display: flex;
+            gap: 10px;
+        }
+        .result-btn {
+            flex: 1;
+            padding: 12px;
+            border-radius: 10px;
+            font-size: 14px;
+            font-weight: 800;
+            border: none;
+            cursor: pointer;
+            transition: transform 0.1s, opacity 0.15s;
+        }
+        .result-btn:active {
+            transform: scale(0.96);
+        }
+        .btn-retry {
+            background: linear-gradient(135deg, #0284c7, #0369a1);
+            color: #ffffff;
+            box-shadow: 0 4px 12px rgba(2, 132, 199, 0.4);
+        }
+        .btn-submit-score {
+            background: linear-gradient(135deg, #e11d48, #be123c);
+            color: #ffffff;
+            box-shadow: 0 4px 12px rgba(225, 29, 72, 0.4);
+        }
+
+        /* ==========================================================================
+           マルチプレイロビー画面 (#lobby-overlay)
+           ========================================================================== */
+        #lobby-overlay {
+            position: absolute;
+            inset: 0;
+            z-index: 250;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            background: radial-gradient(circle at 50% 15%, rgba(14, 165, 233, 0.95) 0%, rgba(15, 23, 42, 0.98) 100%);
+            color: #ffffff;
+            padding: 16px 20px;
+            padding-top: max(104px, env(safe-area-inset-top, 44px) + 56px);
+            overflow-y: auto;
+            -webkit-overflow-scrolling: touch;
+            pointer-events: auto;
+        }
+        .lobby-card {
+            width: 100%;
+            max-width: 380px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 12px;
+        }
+        .lobby-title {
+            font-size: 28px;
+            font-weight: 900;
+            letter-spacing: 0.05em;
+            color: #ffffff;
+            text-shadow: 0 3px 12px rgba(2, 132, 199, 0.8), 0 2px 4px rgba(0, 0, 0, 0.5);
+            margin-bottom: 2px;
+        }
+        .lobby-subtitle {
+            font-size: 14px;
+            color: #bae6fd;
+            margin-bottom: 6px;
+        }
+        .btn-lobby-hero {
+            width: 100%;
+            padding: 16px 24px;
+            background: linear-gradient(135deg, #38bdf8 0%, #0284c7 100%);
+            color: #ffffff;
+            font-size: 18px;
+            font-weight: 900;
+            border: 2px solid rgba(255, 255, 255, 0.5);
+            border-radius: 16px;
+            cursor: pointer;
+            box-shadow: 0 8px 22px rgba(2, 132, 199, 0.45);
+            transition: transform 0.1s ease;
+        }
+        .btn-lobby-hero:active {
+            transform: scale(0.96);
+        }
+        .lobby-btn-row {
+            display: flex;
+            gap: 10px;
+            width: 100%;
+        }
+        .btn-lobby-sub {
+            flex: 1;
+            padding: 14px 10px;
+            font-size: 14px;
+            font-weight: 800;
+            border-radius: 12px;
+            border: 1px solid rgba(255, 255, 255, 0.3);
+            color: #ffffff;
+            cursor: pointer;
+            transition: transform 0.1s ease;
+        }
+        .btn-lobby-sub:active {
+            transform: scale(0.96);
+        }
+        .btn-green {
+            background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+            box-shadow: 0 4px 14px rgba(16, 185, 129, 0.35);
+        }
+        .btn-teal {
+            background: linear-gradient(135deg, #0d9488 0%, #0f766e 100%);
+            box-shadow: 0 4px 14px rgba(13, 148, 136, 0.35);
+        }
+        .room-list-box {
+            width: 100%;
+            background: rgba(255, 255, 255, 0.08);
+            border: 1px solid rgba(255, 255, 255, 0.18);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            border-radius: 14px;
+            padding: 14px 16px;
+            margin-top: 4px;
+        }
+        .room-list-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-size: 15px;
+            font-weight: 800;
+            color: #e0f2fe;
+            margin-bottom: 10px;
+        }
+        .btn-refresh-mini {
+            background: rgba(255, 255, 255, 0.15);
+            border: 1px solid rgba(255, 255, 255, 0.3);
+            border-radius: 8px;
+            color: #ffffff;
+            font-size: 12px;
+            font-weight: 700;
+            padding: 4px 12px;
+            cursor: pointer;
+        }
+        .room-list-container {
+            max-height: 180px;
+            overflow-y: auto;
+            -webkit-overflow-scrolling: touch;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+        .room-list-empty {
+            font-size: 13px;
+            color: #bae6fd;
+            text-align: center;
+            padding: 24px 0;
+        }
+        .room-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            background: rgba(255, 255, 255, 0.12);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            border-radius: 10px;
+            padding: 10px 12px;
+        }
+        .room-item-info {
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+            text-align: left;
+        }
+        .room-item-id {
+            font-size: 13px;
+            font-weight: 800;
+            color: #ffffff;
+        }
+        .room-item-count {
+            font-size: 11px;
+            color: #7dd3fc;
+        }
+        .btn-join-room {
+            background: #10b981;
+            color: #ffffff;
+            border: none;
+            border-radius: 8px;
+            padding: 6px 14px;
+            font-size: 12px;
+            font-weight: 800;
+            cursor: pointer;
+        }
+
+        /* ==========================================================================
+           マッチング待機室画面 (#waiting-overlay)
+           ========================================================================== */
+        #waiting-overlay {
+            display: none;
+            position: absolute;
+            inset: 0;
+            z-index: 260;
+            flex-direction: column;
+            align-items: center;
+            background: radial-gradient(circle at 50% 20%, rgba(14, 165, 233, 0.96) 0%, rgba(15, 23, 42, 0.98) 100%);
+            color: #ffffff;
+            padding: 16px 20px;
+            padding-top: max(104px, env(safe-area-inset-top, 44px) + 56px);
+            overflow-y: auto;
+            pointer-events: auto;
+        }
+        .waiting-card {
+            width: 100%;
+            max-width: 380px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 12px;
+        }
+        .waiting-room-tag {
+            font-size: 13px;
+            font-weight: 800;
+            color: #38bdf8;
+            background: rgba(56, 189, 248, 0.15);
+            padding: 4px 14px;
+            border-radius: 20px;
+            border: 1px solid rgba(56, 189, 248, 0.4);
+        }
+        .waiting-title {
+            font-size: 22px;
+            font-weight: 900;
+            color: #ffffff;
+            text-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
+        }
+        .waiting-divider {
+            width: 100%;
+            height: 1px;
+            background: rgba(255, 255, 255, 0.2);
+            margin: 4px 0;
+        }
+        .waiting-members-list {
+            width: 100%;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            max-height: 240px;
+            overflow-y: auto;
+        }
+        .waiting-slot {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            background: rgba(255, 255, 255, 0.1);
+            border: 1px solid rgba(255, 255, 255, 0.18);
+            border-radius: 10px;
+            padding: 8px 12px;
+        }
+        .waiting-slot-left {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .waiting-slot-badge {
+            width: 22px;
+            height: 22px;
+            border-radius: 6px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 11px;
+            font-weight: 900;
+            color: #0b051a;
+        }
+        .waiting-slot-name {
+            font-size: 13px;
+            font-weight: 700;
+            color: #ffffff;
+        }
+        .waiting-slot-host {
+            font-size: 10px;
+            font-weight: 800;
+            color: #fde047;
+            background: rgba(250, 204, 21, 0.2);
+            border: 1px solid rgba(250, 204, 21, 0.5);
+            padding: 2px 6px;
+            border-radius: 6px;
+        }
+        .btn-waiting-leave {
+            width: 100%;
+            margin-top: 6px;
+            background: rgba(255, 255, 255, 0.15);
+            border: 1px solid rgba(255, 255, 255, 0.25);
+            color: #ffffff;
+            padding: 13px;
+            border-radius: 12px;
+            font-weight: 800;
+            font-size: 14px;
+            cursor: pointer;
+        }
+        .btn-waiting-leave:active {
+            transform: scale(0.97);
         }
     `;
     document.head.appendChild(styleEl);
