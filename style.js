@@ -1,7 +1,7 @@
 /**
  * ==============================================================================
  * 『くねくねバトル オンライン』iOS WebKit & iPhone 干渉完全マスクスタイル (style.js)
- * JavaScriptフォーマットによる動的スタイル注入（CSSキャッシュ事故完全防止）
+ * JavaScript動的注入により、CSSキャッシュ事故を100%根絶する
  * ==============================================================================
  */
 
@@ -47,7 +47,6 @@ export function injectStyles() {
             z-index: 10;
         }
 
-        /* 動的セーフエリア変数（main.js で環境検知して更新） */
         :root {
             --safe-top: 104px;       /* GRAVITY実機ヘッダー直下 */
             --safe-side: 16px;
@@ -111,7 +110,7 @@ export function injectStyles() {
         }
 
         /* ==========================================================================
-           右下3連ボタンレイアウト（親アプリの「ルーム招待 ⇧」完全回避）
+           右下3連ボタン（親アプリ「ルーム招待 ⇧」出現エリア：下から105〜145pxを完全回避）
            ========================================================================== */
 
         /* 1. BOOSTボタン（最上段：親指スイートスポット・下から168px） */
@@ -122,15 +121,14 @@ export function injectStyles() {
             width: 66px;
             height: 66px;
             border-radius: 50%;
-            background: radial-gradient(circle, rgba(15, 23, 42, 0.9) 0%, rgba(2, 6, 23, 0.95) 100%);
+            background: radial-gradient(circle, rgba(15, 23, 42, 0.92) 0%, rgba(2, 6, 23, 0.96) 100%);
             border: 2px solid #00e5ff;
             color: #00e5ff;
             display: flex;
-            flex-direction: column;
             align-items: center;
             justify-content: center;
             pointer-events: auto;
-            box-shadow: 0 0 15px rgba(0, 229, 255, 0.35), inset 0 0 10px rgba(0, 229, 255, 0.2);
+            box-shadow: 0 0 16px rgba(0, 229, 255, 0.35), inset 0 0 10px rgba(0, 229, 255, 0.2);
             transition: transform 0.1s, border-color 0.2s, box-shadow 0.2s;
             cursor: pointer;
             z-index: 50;
@@ -138,7 +136,8 @@ export function injectStyles() {
         #btn-boost svg {
             width: 28px;
             height: 28px;
-            fill: #00e5ff;
+            fill: none;
+            stroke: #00e5ff;
             filter: drop-shadow(0 0 4px #00e5ff);
             transition: transform 0.1s;
         }
@@ -148,7 +147,7 @@ export function injectStyles() {
             box-shadow: 0 0 25px rgba(255, 0, 85, 0.8), inset 0 0 15px rgba(255, 0, 85, 0.4);
         }
         #btn-boost.active svg {
-            fill: #ff0055;
+            stroke: #ff0055;
             filter: drop-shadow(0 0 6px #ff0055);
             transform: scale(1.15);
         }
@@ -216,7 +215,7 @@ export function injectStyles() {
             filter: drop-shadow(0 0 5px rgba(0, 229, 255, 0.6));
         }
 
-        /* --- バーチャルジョイスティック --- */
+        /* --- 仮想ジョイスティック --- */
         #joystick-base {
             display: none;
             position: absolute;
@@ -240,37 +239,6 @@ export function injectStyles() {
             box-shadow: 0 0 10px rgba(0, 229, 255, 0.6);
             transform: translate(-50%, -50%);
             pointer-events: none;
-        }
-
-        /* --- エントリーシールド --- */
-        #entry-shield {
-            position: absolute;
-            top: 0; left: 0; width: 100%; height: 100%;
-            background: #0b051a;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
-            z-index: 9999;
-            transition: opacity 0.3s ease;
-        }
-        .spinner {
-            width: 44px;
-            height: 44px;
-            border: 3px solid rgba(0, 229, 255, 0.2);
-            border-top-color: #00e5ff;
-            border-radius: 50%;
-            animation: spin 0.8s linear infinite;
-        }
-        @keyframes spin {
-            to { transform: rotate(360deg); }
-        }
-        .shield-text {
-            color: #00e5ff;
-            font-size: 14px;
-            font-weight: 700;
-            letter-spacing: 2px;
-            margin-top: 16px;
         }
     `;
     document.head.appendChild(styleEl);

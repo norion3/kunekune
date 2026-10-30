@@ -1,12 +1,17 @@
 /**
  * ==============================================================================
  * 『くねくねバトル オンライン』Phase 1: メインオーケストレーター (main.js)
+ * 厳密な実行順序：スタイル注入 -> DOM自律生成 -> Canvas取得 -> スネーク起動
  * ==============================================================================
  */
 
-// 1. スタイルの自動動的注入（CSSキャッシュ事故完全防止）
+// Step 1: スタイルを動的注入（CSSを確実に先行適用）
 import { injectStyles } from './style.js';
 injectStyles();
+
+// Step 2: DOMを自律生成（Canvas・HUD・右下ボタンを一瞬で展開）
+import { mountDOM } from './dom.js';
+mountDOM();
 
 import {
     MAP_SIZE,
@@ -18,7 +23,7 @@ import {
     SNAKE_COLORS
 } from './constants.js';
 
-// --- 2. プラットフォーム環境検知 (GRAVITY vs Webプレビュー) ---
+// --- プラットフォーム環境検知 (GRAVITY実機 vs Webプレビュー) ---
 export const PlatformDetector = {
     inGravity: false,
     hasAgentSDK: false,
@@ -30,9 +35,10 @@ export const PlatformDetector = {
 };
 PlatformDetector.check();
 
-// --- 3. セーフエリア動的適応 ---
+// --- セーフエリア動的適応 ---
 function updateLayout() {
     const canvas = document.getElementById('game-canvas');
+    if (!canvas) return;
     canvas.width = window.innerWidth;
     canvas.height = window.innerHeight;
 
@@ -48,7 +54,7 @@ function updateLayout() {
 window.addEventListener('resize', updateLayout);
 updateLayout();
 
-// --- 4. iOS WebKit ピンチズーム＆オーバースクロール完全遮断 ---
+// --- iOS WebKit ピンチズーム＆オーバースクロール完全遮断 ---
 document.addEventListener('gesturestart', (e) => e.preventDefault(), { passive: false });
 document.addEventListener('gesturechange', (e) => e.preventDefault(), { passive: false });
 document.addEventListener('gestureend', (e) => e.preventDefault(), { passive: false });
@@ -56,7 +62,7 @@ window.addEventListener('touchmove', (e) => {
     if (e.scale !== 1) e.preventDefault();
 }, { passive: false });
 
-// --- 5. サウンド管理（初期MUTE・Web Audio API基盤） ---
+// --- サウンド管理（初期MUTE・Web Audio API基盤） ---
 const SoundManager = {
     isMuted: true,
     ctx: null,
@@ -103,25 +109,33 @@ const SoundManager = {
         } catch (e) {}
     }
 };
-document.getElementById('btn-sound').onclick = (e) => {
-    e.stopPropagation();
-    SoundManager.toggle();
-};
 
-// --- 6. 入力制御（ジョイスティック ＆ 右手ブースト） ---
+const soundBtn = document.getElementById('btn-sound');
+if (soundBtn) {
+    soundBtn.onclick = (e) => {
+        e.stopPropagation();
+        SoundManager.toggle();
+    };
+}
+
+// --- 入力制御（ジョイスティック ＆ 右手ブースト） ---
 const InputController = {
     x: 0,
     y: 0,
     active: false,
     boost: false,
     touchId: null,
-    baseEl: document.getElementById('joystick-base'),
-    knobEl: document.getElementById('joystick-knob'),
+    baseEl: null,
+    knobEl: null,
     center: { x: 0, y: 0 },
     maxRadius: 28,
 
     init() {
+        this.baseEl = document.getElementById('joystick-base');
+        this.knobEl = document.getElementById('joystick-knob');
         const canvas = document.getElementById('game-canvas');
+        if (!canvas) return;
+
         canvas.addEventListener('touchstart', (e) => this.handleStart(e), { passive: false });
         canvas.addEventListener('touchmove', (e) => this.handleMove(e), { passive: false });
         canvas.addEventListener('touchend', (e) => this.handleEnd(e), { passive: false });
@@ -143,15 +157,17 @@ const InputController = {
         });
 
         const boostBtn = document.getElementById('btn-boost');
-        const setBoost = (on) => {
-            this.boost = on;
-            boostBtn.classList.toggle('active', on);
-        };
-        boostBtn.addEventListener('touchstart', (e) => { e.preventDefault(); e.stopPropagation(); setBoost(true); }, { passive: false });
-        boostBtn.addEventListener('touchend', (e) => { e.preventDefault(); e.stopPropagation(); setBoost(false); }, { passive: false });
-        boostBtn.addEventListener('touchcancel', (e) => { e.preventDefault(); e.stopPropagation(); setBoost(false); }, { passive: false });
-        boostBtn.addEventListener('mousedown', (e) => { e.stopPropagation(); setBoost(true); });
-        window.addEventListener('mouseup', () => setBoost(false));
+        if (boostBtn) {
+            const setBoost = (on) => {
+                this.boost = on;
+                boostBtn.classList.toggle('active', on);
+            };
+            boostBtn.addEventListener('touchstart', (e) => { e.preventDefault(); e.stopPropagation(); setBoost(true); }, { passive: false });
+            boostBtn.addEventListener('touchend', (e) => { e.preventDefault(); e.stopPropagation(); setBoost(false); }, { passive: false });
+            boostBtn.addEventListener('touchcancel', (e) => { e.preventDefault(); e.stopPropagation(); setBoost(false); }, { passive: false });
+            boostBtn.addEventListener('mousedown', (e) => { e.stopPropagation(); setBoost(true); });
+            window.addEventListener('mouseup', () => setBoost(false));
+        }
     },
 
     handleStart(e) {
@@ -160,7 +176,8 @@ const InputController = {
             const t = e.changedTouches[i];
             if (t.clientX > window.innerWidth * 0.55 && !this.boost) {
                 this.boost = true;
-                document.getElementById('btn-boost').classList.add('active');
+                const b = document.getElementById('btn-boost');
+                if (b) b.classList.add('active');
             } else if (!this.active) {
                 this.touchId = t.identifier;
                 this.startJoystick(t.clientX, t.clientY);
@@ -187,7 +204,8 @@ const InputController = {
             }
             if (t.clientX > window.innerWidth * 0.55) {
                 this.boost = false;
-                document.getElementById('btn-boost').classList.remove('active');
+                const b = document.getElementById('btn-boost');
+                if (b) b.classList.remove('active');
             }
         }
     },
@@ -195,10 +213,14 @@ const InputController = {
     startJoystick(x, y) {
         this.active = true;
         this.center = { x, y };
-        this.baseEl.style.display = 'block';
-        this.baseEl.style.left = `${x}px`;
-        this.baseEl.style.top = `${y}px`;
-        this.knobEl.style.transform = 'translate(-50%, -50%)';
+        if (this.baseEl) {
+            this.baseEl.style.display = 'block';
+            this.baseEl.style.left = `${x}px`;
+            this.baseEl.style.top = `${y}px`;
+        }
+        if (this.knobEl) {
+            this.knobEl.style.transform = 'translate(-50%, -50%)';
+        }
         this.x = 0;
         this.y = 0;
     },
@@ -211,7 +233,9 @@ const InputController = {
             dx = (dx / dist) * this.maxRadius;
             dy = (dy / dist) * this.maxRadius;
         }
-        this.knobEl.style.transform = `translate(calc(-50% + ${dx}px), calc(-50% + ${dy}px))`;
+        if (this.knobEl) {
+            this.knobEl.style.transform = `translate(calc(-50% + ${dx}px), calc(-50% + ${dy}px))`;
+        }
         this.x = dx;
         this.y = dy;
     },
@@ -219,14 +243,14 @@ const InputController = {
     endJoystick() {
         this.active = false;
         this.touchId = null;
-        this.baseEl.style.display = 'none';
+        if (this.baseEl) this.baseEl.style.display = 'none';
         this.x = 0;
         this.y = 0;
     }
 };
 InputController.init();
 
-// --- 7. スネークエンティティ ---
+// --- スネークエンティティ ---
 class SnakeEntity {
     constructor(isPlayer, name, color) {
         this.isPlayer = isPlayer;
@@ -308,29 +332,34 @@ class SnakeEntity {
     }
 }
 
-// --- 8. メインゲームループ ＆ レンダリング ---
+// --- メイン描画ループ ---
 const player = new SnakeEntity(true, 'あなた', SNAKE_COLORS[0]);
 let showRadar = true;
 
 const btnRank = document.getElementById('btn-rank');
 const statsBox = document.getElementById('stats-box');
-btnRank.onclick = (e) => {
-    e.stopPropagation();
-    statsBox.style.display = statsBox.style.display === 'none' ? 'block' : 'none';
-};
+if (btnRank && statsBox) {
+    btnRank.onclick = (e) => {
+        e.stopPropagation();
+        statsBox.style.display = statsBox.style.display === 'none' ? 'block' : 'none';
+    };
+}
 
 const btnMap = document.getElementById('btn-map');
-btnMap.onclick = (e) => {
-    e.stopPropagation();
-    showRadar = !showRadar;
-    btnMap.innerText = showRadar ? 'MAP: ON' : 'MAP: OFF';
-};
+if (btnMap) {
+    btnMap.onclick = (e) => {
+        e.stopPropagation();
+        showRadar = !showRadar;
+        btnMap.innerText = showRadar ? 'MAP: ON' : 'MAP: OFF';
+    };
+}
 
 const canvas = document.getElementById('game-canvas');
-const ctx = canvas.getContext('2d', { alpha: false });
+const ctx = canvas ? canvas.getContext('2d', { alpha: false }) : null;
 
 function gameLoop() {
     requestAnimationFrame(gameLoop);
+    if (!ctx || !canvas) return;
 
     player.update();
 
@@ -340,7 +369,7 @@ function gameLoop() {
     ctx.save();
     ctx.translate(canvas.width / 2 - player.x, canvas.height / 2 - player.y);
 
-    // グリッド背景
+    // グリッド線描画
     ctx.strokeStyle = 'rgba(255, 255, 255, 0.05)';
     ctx.lineWidth = 1;
     const step = 150;
@@ -361,7 +390,7 @@ function gameLoop() {
     player.draw(ctx);
     ctx.restore();
 
-    // 一体型ミニマップ（右上に直接描画）
+    // 一体型Canvasミニマップ（右上に直接描画）
     if (showRadar) {
         const radarSize = 75;
         const margin = 16;
@@ -381,16 +410,4 @@ function gameLoop() {
     }
 }
 
-// エントリーシールド解除
-window.addEventListener('load', () => {
-    setTimeout(() => {
-        const shield = document.getElementById('entry-shield');
-        if (shield) {
-            shield.style.opacity = '0';
-            setTimeout(() => shield.style.display = 'none', 300);
-        }
-    }, 350);
-});
-
-// 開始
 requestAnimationFrame(gameLoop);
