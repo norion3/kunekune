@@ -1,9 +1,9 @@
 /**
  * ==============================================================================
- * 『くねくねバトル オンライン』Phase 2: メインオーケストレーター (main.js)
- * ・input.js: 2本指ピンチズーム連動 ＆ BOOST誤爆根絶
- * ・audio.js: Web Audio API音響（小餌/大餌/加速ハム音）
- * ・hud.js: Canvas直接描画ミニマップ ＆ ランキング
+ * 『くねくねバトル オンライン』Phase 3: メインオーケストレーター (main.js)
+ * ・menu.js: 4タブボトムシート（CHAT・走者・CUSTOM・製作者）
+ * ・danmaku.js: ニコニコ風弾幕チャット
+ * ・CUSTOM着せ替え: 顔・カラーのリアルタイム動的変更
  * ==============================================================================
  */
 
@@ -22,12 +22,15 @@ import {
     SAFE_INSET_TOP_GRAVITY,
     SAFE_INSET_TOP_WEB,
     SNAKE_COLORS,
-    FOOD_COLORS
+    FOOD_COLORS,
+    CREATOR_MAIN_INTERNAL_UID
 } from './constants.js';
 
 import { Sound } from './audio.js';
 import { InputManager } from './input.js';
 import { HUDManager } from './hud.js';
+import { Danmaku } from './danmaku.js';
+import { Menu } from './menu.js';
 
 // --- プラットフォーム環境検知 ---
 export const PlatformDetector = {
@@ -80,38 +83,16 @@ input.init(canvas, (isBoosting) => {
 const hud = new HUDManager();
 hud.init();
 
-// --- サウンドボタンのイベントバインド（左下） ---
-const soundBtn = document.getElementById('btn-sound');
-if (soundBtn) {
-    soundBtn.onclick = (e) => {
-        e.stopPropagation();
-        const isMuted = Sound.toggleMute();
-        soundBtn.classList.toggle('sound-on', !isMuted);
-        const iconOff = document.getElementById('icon-sound-off');
-        const iconOn = document.getElementById('icon-sound-on');
-        if (iconOff) iconOff.style.display = isMuted ? 'block' : 'none';
-        if (iconOn) iconOn.style.display = isMuted ? 'none' : 'block';
-    };
-}
-
-// --- 餌（Food）の初期生成 ---
-const foods = [];
-for (let i = 0; i < 400; i++) {
-    foods.push({
-        x: Math.random() * MAP_SIZE,
-        y: Math.random() * MAP_SIZE,
-        size: Math.random() < 0.08 ? 8 : 3.5,
-        isBig: Math.random() < 0.08,
-        color: FOOD_COLORS[Math.floor(Math.random() * FOOD_COLORS.length)]
-    });
-}
+Danmaku.init();
 
 // --- スネークエンティティ ---
 class SnakeEntity {
-    constructor(isPlayer, name, color) {
+    constructor(isPlayer, name, color, face = 'normal', internalUid = 'local_user') {
         this.isPlayer = isPlayer;
         this.name = name;
         this.color = color;
+        this.face = face;
+        this.internalUid = internalUid;
         this.x = MAP_SIZE / 2;
         this.y = MAP_SIZE / 2;
         this.angle = 0;
@@ -132,7 +113,7 @@ class SnakeEntity {
             }
             this.speed = input.boost ? BASE_SPEED * BOOST_SPEED_MULT : BASE_SPEED;
 
-            // ブースト消費（少しずつ体を消費）
+            // ブースト消費
             if (input.boost && this.score > 60) {
                 this.score -= 0.08;
                 this.size = Math.max(12, 12 + Math.pow(this.score, 0.45) * 0.35);
@@ -148,7 +129,6 @@ class SnakeEntity {
         this.x += Math.cos(this.angle) * this.speed;
         this.y += Math.sin(this.angle) * this.speed;
 
-        // 壁の衝突リミッター
         this.x = Math.max(this.size, Math.min(MAP_SIZE - this.size, this.x));
         this.y = Math.max(this.size, Math.min(MAP_SIZE - this.size, this.y));
 
@@ -178,7 +158,6 @@ class SnakeEntity {
                     this.size = 12 + Math.pow(this.score, 0.45) * 0.35;
                     this.targetLength = 10 + Math.floor(Math.pow(this.score, 0.55) * 0.4);
 
-                    // 餌のリスポーン
                     f.x = this.x + (Math.random() - 0.5) * 3000;
                     f.y = this.y + (Math.random() - 0.5) * 3000;
                     f.x = Math.max(100, Math.min(MAP_SIZE - 100, f.x));
@@ -207,17 +186,36 @@ class SnakeEntity {
         ctx.arc(0, 0, this.size, 0, Math.PI * 2);
         ctx.fill();
 
-        // 目
+        // 顔タイプ別の表情描画
         const eyeR = this.size * 0.35;
         const eyeX = this.size * 0.3;
         const eyeY = this.size * 0.4;
-        ctx.fillStyle = '#ffffff';
-        ctx.beginPath(); ctx.arc(eyeX, -eyeY, eyeR, 0, Math.PI * 2); ctx.fill();
-        ctx.beginPath(); ctx.arc(eyeX, eyeY, eyeR, 0, Math.PI * 2); ctx.fill();
 
-        ctx.fillStyle = '#000000';
-        ctx.beginPath(); ctx.arc(eyeX + 2, -eyeY, eyeR * 0.5, 0, Math.PI * 2); ctx.fill();
-        ctx.beginPath(); ctx.arc(eyeX + 2, eyeY, eyeR * 0.5, 0, Math.PI * 2); ctx.fill();
+        if (this.face === 'angry') {
+            ctx.fillStyle = '#ffffff';
+            ctx.beginPath(); ctx.arc(eyeX, -eyeY, eyeR, 0, Math.PI * 2); ctx.fill();
+            ctx.beginPath(); ctx.arc(eyeX, eyeY, eyeR, 0, Math.PI * 2); ctx.fill();
+            ctx.fillStyle = '#000000';
+            ctx.beginPath(); ctx.arc(eyeX + 2, -eyeY, eyeR * 0.4, 0, Math.PI * 2); ctx.fill();
+            ctx.beginPath(); ctx.arc(eyeX + 2, eyeY, eyeR * 0.4, 0, Math.PI * 2); ctx.fill();
+            ctx.strokeStyle = '#222';
+            ctx.lineWidth = 2;
+            ctx.beginPath(); ctx.moveTo(eyeX - eyeR, -eyeY - 3); ctx.lineTo(eyeX + eyeR, -eyeY + 3); ctx.stroke();
+            ctx.beginPath(); ctx.moveTo(eyeX - eyeR, eyeY + 3); ctx.lineTo(eyeX + eyeR, eyeY - 3); ctx.stroke();
+        } else if (this.face === 'happy') {
+            ctx.strokeStyle = '#222';
+            ctx.lineWidth = 2.5;
+            ctx.beginPath(); ctx.arc(eyeX, -eyeY, eyeR * 0.8, -Math.PI / 2, Math.PI / 2); ctx.stroke();
+            ctx.beginPath(); ctx.arc(eyeX, eyeY, eyeR * 0.8, -Math.PI / 2, Math.PI / 2); ctx.stroke();
+        } else {
+            // normal
+            ctx.fillStyle = '#ffffff';
+            ctx.beginPath(); ctx.arc(eyeX, -eyeY, eyeR, 0, Math.PI * 2); ctx.fill();
+            ctx.beginPath(); ctx.arc(eyeX, eyeY, eyeR, 0, Math.PI * 2); ctx.fill();
+            ctx.fillStyle = '#000000';
+            ctx.beginPath(); ctx.arc(eyeX + 2, -eyeY, eyeR * 0.5, 0, Math.PI * 2); ctx.fill();
+            ctx.beginPath(); ctx.arc(eyeX + 2, eyeY, eyeR * 0.5, 0, Math.PI * 2); ctx.fill();
+        }
 
         ctx.restore();
 
@@ -229,7 +227,45 @@ class SnakeEntity {
     }
 }
 
-const player = new SnakeEntity(true, 'あなた', SNAKE_COLORS[0]);
+const player = new SnakeEntity(true, 'あなた', SNAKE_COLORS[0], 'normal', '1540889251');
+
+// --- ボトムシートメニューの初期化 ＆ CUSTOM着せ替え連動 ---
+Menu.init((face, color) => {
+    player.face = face;
+    player.color = color;
+    Danmaku.push('システム', 'アバターを変更しました', '#ffdd00', true);
+});
+
+// 初期走者リストの反映（自機）
+Menu.updateParticipants([
+    { name: player.name, color: player.color, internalUid: player.internalUid }
+]);
+
+// サウンドボタンのイベントバインド
+const soundBtn = document.getElementById('btn-sound');
+if (soundBtn) {
+    soundBtn.onclick = (e) => {
+        e.stopPropagation();
+        const isMuted = Sound.toggleMute();
+        soundBtn.classList.toggle('sound-on', !isMuted);
+        const iconOff = document.getElementById('icon-sound-off');
+        const iconOn = document.getElementById('icon-sound-on');
+        if (iconOff) iconOff.style.display = isMuted ? 'block' : 'none';
+        if (iconOn) iconOn.style.display = isMuted ? 'none' : 'block';
+    };
+}
+
+// 餌の初期生成
+const foods = [];
+for (let i = 0; i < 400; i++) {
+    foods.push({
+        x: Math.random() * MAP_SIZE,
+        y: Math.random() * MAP_SIZE,
+        size: Math.random() < 0.08 ? 8 : 3.5,
+        isBig: Math.random() < 0.08,
+        color: FOOD_COLORS[Math.floor(Math.random() * FOOD_COLORS.length)]
+    });
+}
 
 // --- メインループ ---
 let cameraScale = 1.0;
@@ -240,7 +276,6 @@ function gameLoop() {
     player.update();
     hud.updateStats(1, 50, player.score);
 
-    // ピンチズームと自機サイズに応じた動的カメラズームの合成
     const baseTargetScale = 60.0 / (60.0 + (player.size - 12) * 0.85);
     const finalTargetScale = baseTargetScale * input.zoomMultiplier;
     cameraScale += (finalTargetScale - cameraScale) * 0.05;
@@ -249,7 +284,6 @@ function gameLoop() {
     ctx.fillRect(0, 0, canvas.width, canvas.height);
 
     ctx.save();
-    // カメラの中心をプレイヤーに合わせ、ピンチズーム倍率を適用
     ctx.translate(canvas.width / 2, canvas.height / 2);
     ctx.scale(cameraScale, cameraScale);
     ctx.translate(-player.x, -player.y);
@@ -286,7 +320,7 @@ function gameLoop() {
     player.draw(ctx);
     ctx.restore();
 
-    // 一体型HUDミニマップ描画（右上に直接描画）
+    // 一体型HUDミニマップ描画
     const safeTop = PlatformDetector.inGravity ? SAFE_INSET_TOP_GRAVITY : SAFE_INSET_TOP_WEB;
     hud.drawRadar(ctx, canvas.width, safeTop, player, [], MAP_SIZE);
 }
