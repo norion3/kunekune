@@ -1,7 +1,10 @@
 /**
  * ==============================================================================
  * 『くねくねバトル オンライン』iOS WebKit & iPhone 干渉完全マスクスタイル (style.js)
- * JavaScript動的注入により、CSSキャッシュ事故を100%根絶する
+ * Phase 2 改訂:
+ * ・サウンドボタンを「左下（下から24px, 左から16px）」へ配置
+ * ・MENUボタンを「右下（下から86px, 右から16px）」へ配置
+ * ・BOOSTボタンを「右下（下から168px, 右から20px）」へ配置し誤爆を根絶
  * ==============================================================================
  */
 
@@ -110,10 +113,10 @@ export function injectStyles() {
         }
 
         /* ==========================================================================
-           右下3連ボタン（親アプリ「ルーム招待 ⇧」出現エリア：下から105〜145pxを完全回避）
+           操作ボタンレイアウト（左右セパレート ＆ 親アプリ重畳回避）
            ========================================================================== */
 
-        /* 1. BOOSTボタン（最上段：親指スイートスポット・下から168px） */
+        /* 1. BOOSTボタン（右手上段：親指スイートスポット・下から168px, 右から20px） */
         #btn-boost {
             position: absolute;
             bottom: calc(var(--safe-bottom) + 144px);
@@ -136,7 +139,6 @@ export function injectStyles() {
         #btn-boost svg {
             width: 28px;
             height: 28px;
-            fill: none;
             stroke: #00e5ff;
             filter: drop-shadow(0 0 4px #00e5ff);
             transition: transform 0.1s;
@@ -152,7 +154,7 @@ export function injectStyles() {
             transform: scale(1.15);
         }
 
-        /* 2. MENUボタン（中段：下から86px） */
+        /* 2. MENUボタン（右手下段：下から86px, 右から16px） */
         #btn-menu {
             position: absolute;
             bottom: calc(var(--safe-bottom) + 62px);
@@ -184,11 +186,11 @@ export function injectStyles() {
             transform: scale(0.92);
         }
 
-        /* 3. サウンドボタン（最下段：下から24px・初期MUTE・ベクターSVG） */
+        /* 3. サウンドボタン（左手最下段：下から24px, 左から16px・初期MUTE・ベクターSVG） */
         #btn-sound {
             position: absolute;
             bottom: var(--safe-bottom);
-            right: 16px;
+            left: 16px;
             width: 44px;
             height: 44px;
             border-radius: 50%;

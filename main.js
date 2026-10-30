@@ -1,41 +1,46 @@
 /**
  * ==============================================================================
- * 『くねくねバトル オンライン』Phase 1: メインオーケストレーター (main.js)
- * 厳密な実行順序：スタイル注入 -> DOM自律生成 -> Canvas取得 -> スネーク起動
+ * 『くねくねバトル オンライン』Phase 2: メインオーケストレーター (main.js)
+ * ・input.js: 2本指ピンチズーム連動 ＆ BOOST誤爆根絶
+ * ・audio.js: Web Audio API音響（小餌/大餌/加速ハム音）
+ * ・hud.js: Canvas直接描画ミニマップ ＆ ランキング
  * ==============================================================================
  */
 
-// Step 1: スタイルを動的注入（CSSを確実に先行適用）
 import { injectStyles } from './style.js';
 injectStyles();
 
-// Step 2: DOMを自律生成（Canvas・HUD・右下ボタンを一瞬で展開）
 import { mountDOM } from './dom.js';
 mountDOM();
 
 import {
     MAP_SIZE,
+    GRID_SIZE,
     BASE_SPEED,
     BOOST_SPEED_MULT,
     TURN_SPEED_PLAYER,
     SAFE_INSET_TOP_GRAVITY,
     SAFE_INSET_TOP_WEB,
-    SNAKE_COLORS
+    SNAKE_COLORS,
+    FOOD_COLORS
 } from './constants.js';
 
-// --- プラットフォーム環境検知 (GRAVITY実機 vs Webプレビュー) ---
+import { Sound } from './audio.js';
+import { InputManager } from './input.js';
+import { HUDManager } from './hud.js';
+
+// --- プラットフォーム環境検知 ---
 export const PlatformDetector = {
     inGravity: false,
     hasAgentSDK: false,
     check() {
         this.hasAgentSDK = typeof window.AgentSDK !== 'undefined';
         this.inGravity = this.hasAgentSDK || (window.parent && window.parent !== window) || /gravity/i.test(navigator.userAgent);
-        console.log(`[PlatformDetector] inGravity: ${this.inGravity}, hasAgentSDK: ${this.hasAgentSDK}`);
     }
 };
 PlatformDetector.check();
 
-// --- セーフエリア動的適応 ---
+// --- 画面リサイズとセーフエリア管理 ---
 function updateLayout() {
     const canvas = document.getElementById('game-canvas');
     if (!canvas) return;
@@ -54,201 +59,52 @@ function updateLayout() {
 window.addEventListener('resize', updateLayout);
 updateLayout();
 
-// --- iOS WebKit ピンチズーム＆オーバースクロール完全遮断 ---
+// --- iOS WebKit ピンチズーム＆バウンスのブラウザデフォルト挙動を遮断 ---
 document.addEventListener('gesturestart', (e) => e.preventDefault(), { passive: false });
 document.addEventListener('gesturechange', (e) => e.preventDefault(), { passive: false });
 document.addEventListener('gestureend', (e) => e.preventDefault(), { passive: false });
-window.addEventListener('touchmove', (e) => {
-    if (e.scale !== 1) e.preventDefault();
-}, { passive: false });
 
-// --- サウンド管理（初期MUTE・Web Audio API基盤） ---
-const SoundManager = {
-    isMuted: true,
-    ctx: null,
-    init() {
-        if (!this.ctx) {
-            const AudioContext = window.AudioContext || window.webkitAudioContext;
-            if (AudioContext) this.ctx = new AudioContext();
-        }
-        if (this.ctx && this.ctx.state === 'suspended') {
-            this.ctx.resume();
-        }
-    },
-    toggle() {
-        this.init();
-        this.isMuted = !this.isMuted;
-        const btn = document.getElementById('btn-sound');
-        const iconOff = document.getElementById('icon-sound-off');
-        const iconOn = document.getElementById('icon-sound-on');
+// --- モジュール初期化 ---
+const canvas = document.getElementById('game-canvas');
+const ctx = canvas.getContext('2d', { alpha: false });
 
-        if (this.isMuted) {
-            btn.classList.remove('sound-on');
-            iconOff.style.display = 'block';
-            iconOn.style.display = 'none';
-        } else {
-            btn.classList.add('sound-on');
-            iconOff.style.display = 'none';
-            iconOn.style.display = 'block';
-            this.playTone(587.33, 0.08); // 起動音
-        }
-    },
-    playTone(freq, duration) {
-        if (this.isMuted || !this.ctx) return;
-        try {
-            const osc = this.ctx.createOscillator();
-            const gain = this.ctx.createGain();
-            osc.type = 'sine';
-            osc.frequency.setValueAtTime(freq, this.ctx.currentTime);
-            gain.gain.setValueAtTime(0.15, this.ctx.currentTime);
-            gain.gain.exponentialRampToValueAtTime(0.001, this.ctx.currentTime + duration);
-            osc.connect(gain);
-            gain.connect(this.ctx.destination);
-            osc.start();
-            osc.stop(this.ctx.currentTime + duration);
-        } catch (e) {}
+const input = new InputManager();
+input.init(canvas, (isBoosting) => {
+    if (isBoosting) {
+        Sound.startBoostSound();
+    } else {
+        Sound.stopBoostSound();
     }
-};
+});
 
+const hud = new HUDManager();
+hud.init();
+
+// --- サウンドボタンのイベントバインド（左下） ---
 const soundBtn = document.getElementById('btn-sound');
 if (soundBtn) {
     soundBtn.onclick = (e) => {
         e.stopPropagation();
-        SoundManager.toggle();
+        const isMuted = Sound.toggleMute();
+        soundBtn.classList.toggle('sound-on', !isMuted);
+        const iconOff = document.getElementById('icon-sound-off');
+        const iconOn = document.getElementById('icon-sound-on');
+        if (iconOff) iconOff.style.display = isMuted ? 'block' : 'none';
+        if (iconOn) iconOn.style.display = isMuted ? 'none' : 'block';
     };
 }
 
-// --- 入力制御（ジョイスティック ＆ 右手ブースト） ---
-const InputController = {
-    x: 0,
-    y: 0,
-    active: false,
-    boost: false,
-    touchId: null,
-    baseEl: null,
-    knobEl: null,
-    center: { x: 0, y: 0 },
-    maxRadius: 28,
-
-    init() {
-        this.baseEl = document.getElementById('joystick-base');
-        this.knobEl = document.getElementById('joystick-knob');
-        const canvas = document.getElementById('game-canvas');
-        if (!canvas) return;
-
-        canvas.addEventListener('touchstart', (e) => this.handleStart(e), { passive: false });
-        canvas.addEventListener('touchmove', (e) => this.handleMove(e), { passive: false });
-        canvas.addEventListener('touchend', (e) => this.handleEnd(e), { passive: false });
-        canvas.addEventListener('touchcancel', (e) => this.handleEnd(e), { passive: false });
-
-        let mouseDown = false;
-        canvas.addEventListener('mousedown', (e) => {
-            mouseDown = true;
-            this.startJoystick(e.clientX, e.clientY);
-        });
-        window.addEventListener('mousemove', (e) => {
-            if (mouseDown) this.moveJoystick(e.clientX, e.clientY);
-        });
-        window.addEventListener('mouseup', () => {
-            if (mouseDown) {
-                mouseDown = false;
-                this.endJoystick();
-            }
-        });
-
-        const boostBtn = document.getElementById('btn-boost');
-        if (boostBtn) {
-            const setBoost = (on) => {
-                this.boost = on;
-                boostBtn.classList.toggle('active', on);
-            };
-            boostBtn.addEventListener('touchstart', (e) => { e.preventDefault(); e.stopPropagation(); setBoost(true); }, { passive: false });
-            boostBtn.addEventListener('touchend', (e) => { e.preventDefault(); e.stopPropagation(); setBoost(false); }, { passive: false });
-            boostBtn.addEventListener('touchcancel', (e) => { e.preventDefault(); e.stopPropagation(); setBoost(false); }, { passive: false });
-            boostBtn.addEventListener('mousedown', (e) => { e.stopPropagation(); setBoost(true); });
-            window.addEventListener('mouseup', () => setBoost(false));
-        }
-    },
-
-    handleStart(e) {
-        e.preventDefault();
-        for (let i = 0; i < e.changedTouches.length; i++) {
-            const t = e.changedTouches[i];
-            if (t.clientX > window.innerWidth * 0.55 && !this.boost) {
-                this.boost = true;
-                const b = document.getElementById('btn-boost');
-                if (b) b.classList.add('active');
-            } else if (!this.active) {
-                this.touchId = t.identifier;
-                this.startJoystick(t.clientX, t.clientY);
-            }
-        }
-    },
-
-    handleMove(e) {
-        e.preventDefault();
-        for (let i = 0; i < e.changedTouches.length; i++) {
-            const t = e.changedTouches[i];
-            if (t.identifier === this.touchId) {
-                this.moveJoystick(t.clientX, t.clientY);
-            }
-        }
-    },
-
-    handleEnd(e) {
-        e.preventDefault();
-        for (let i = 0; i < e.changedTouches.length; i++) {
-            const t = e.changedTouches[i];
-            if (t.identifier === this.touchId) {
-                this.endJoystick();
-            }
-            if (t.clientX > window.innerWidth * 0.55) {
-                this.boost = false;
-                const b = document.getElementById('btn-boost');
-                if (b) b.classList.remove('active');
-            }
-        }
-    },
-
-    startJoystick(x, y) {
-        this.active = true;
-        this.center = { x, y };
-        if (this.baseEl) {
-            this.baseEl.style.display = 'block';
-            this.baseEl.style.left = `${x}px`;
-            this.baseEl.style.top = `${y}px`;
-        }
-        if (this.knobEl) {
-            this.knobEl.style.transform = 'translate(-50%, -50%)';
-        }
-        this.x = 0;
-        this.y = 0;
-    },
-
-    moveJoystick(cx, cy) {
-        let dx = cx - this.center.x;
-        let dy = cy - this.center.y;
-        const dist = Math.hypot(dx, dy);
-        if (dist > this.maxRadius) {
-            dx = (dx / dist) * this.maxRadius;
-            dy = (dy / dist) * this.maxRadius;
-        }
-        if (this.knobEl) {
-            this.knobEl.style.transform = `translate(calc(-50% + ${dx}px), calc(-50% + ${dy}px))`;
-        }
-        this.x = dx;
-        this.y = dy;
-    },
-
-    endJoystick() {
-        this.active = false;
-        this.touchId = null;
-        if (this.baseEl) this.baseEl.style.display = 'none';
-        this.x = 0;
-        this.y = 0;
-    }
-};
-InputController.init();
+// --- 餌（Food）の初期生成 ---
+const foods = [];
+for (let i = 0; i < 400; i++) {
+    foods.push({
+        x: Math.random() * MAP_SIZE,
+        y: Math.random() * MAP_SIZE,
+        size: Math.random() < 0.08 ? 8 : 3.5,
+        isBig: Math.random() < 0.08,
+        color: FOOD_COLORS[Math.floor(Math.random() * FOOD_COLORS.length)]
+    });
+}
 
 // --- スネークエンティティ ---
 class SnakeEntity {
@@ -266,14 +122,22 @@ class SnakeEntity {
         this.targetLength = 16;
         this.history = [];
         this.distCounter = 0;
+        this.isDead = false;
     }
 
     update() {
         if (this.isPlayer) {
-            if (InputController.active && (InputController.x !== 0 || InputController.y !== 0)) {
-                this.targetAngle = Math.atan2(InputController.y, InputController.x);
+            if (input.active && (input.x !== 0 || input.y !== 0)) {
+                this.targetAngle = Math.atan2(input.y, input.x);
             }
-            this.speed = InputController.boost ? BASE_SPEED * BOOST_SPEED_MULT : BASE_SPEED;
+            this.speed = input.boost ? BASE_SPEED * BOOST_SPEED_MULT : BASE_SPEED;
+
+            // ブースト消費（少しずつ体を消費）
+            if (input.boost && this.score > 60) {
+                this.score -= 0.08;
+                this.size = Math.max(12, 12 + Math.pow(this.score, 0.45) * 0.35);
+                this.targetLength = Math.max(10, 10 + Math.floor(Math.pow(this.score, 0.55) * 0.4));
+            }
         }
 
         let diff = this.targetAngle - this.angle;
@@ -284,12 +148,42 @@ class SnakeEntity {
         this.x += Math.cos(this.angle) * this.speed;
         this.y += Math.sin(this.angle) * this.speed;
 
+        // 壁の衝突リミッター
+        this.x = Math.max(this.size, Math.min(MAP_SIZE - this.size, this.x));
+        this.y = Math.max(this.size, Math.min(MAP_SIZE - this.size, this.y));
+
         this.distCounter += this.speed;
         if (this.distCounter > this.size * 0.55) {
             this.history.unshift({ x: this.x, y: this.y });
             this.distCounter = 0;
             while (this.history.length > this.targetLength) {
                 this.history.pop();
+            }
+        }
+
+        // 餌の捕食判定
+        if (this.isPlayer) {
+            for (let i = foods.length - 1; i >= 0; i--) {
+                const f = foods[i];
+                const dx = this.x - f.x;
+                const dy = this.y - f.y;
+                if (dx * dx + dy * dy < (this.size + f.size) ** 2) {
+                    if (f.isBig) {
+                        this.score += 25;
+                        Sound.playEatBig();
+                    } else {
+                        this.score += 5;
+                        Sound.playEatSmall();
+                    }
+                    this.size = 12 + Math.pow(this.score, 0.45) * 0.35;
+                    this.targetLength = 10 + Math.floor(Math.pow(this.score, 0.55) * 0.4);
+
+                    // 餌のリスポーン
+                    f.x = this.x + (Math.random() - 0.5) * 3000;
+                    f.y = this.y + (Math.random() - 0.5) * 3000;
+                    f.x = Math.max(100, Math.min(MAP_SIZE - 100, f.x));
+                    f.y = Math.max(100, Math.min(MAP_SIZE - 100, f.y));
+                }
             }
         }
     }
@@ -304,6 +198,7 @@ class SnakeEntity {
             ctx.fill();
         }
 
+        // 頭部
         ctx.save();
         ctx.translate(this.x, this.y);
         ctx.rotate(this.angle);
@@ -312,6 +207,7 @@ class SnakeEntity {
         ctx.arc(0, 0, this.size, 0, Math.PI * 2);
         ctx.fill();
 
+        // 目
         const eyeR = this.size * 0.35;
         const eyeX = this.size * 0.3;
         const eyeY = this.size * 0.4;
@@ -325,6 +221,7 @@ class SnakeEntity {
 
         ctx.restore();
 
+        // ネームプレート
         ctx.fillStyle = 'rgba(255, 255, 255, 0.9)';
         ctx.font = 'bold 12px sans-serif';
         ctx.textAlign = 'center';
@@ -332,52 +229,42 @@ class SnakeEntity {
     }
 }
 
-// --- メイン描画ループ ---
 const player = new SnakeEntity(true, 'あなた', SNAKE_COLORS[0]);
-let showRadar = true;
 
-const btnRank = document.getElementById('btn-rank');
-const statsBox = document.getElementById('stats-box');
-if (btnRank && statsBox) {
-    btnRank.onclick = (e) => {
-        e.stopPropagation();
-        statsBox.style.display = statsBox.style.display === 'none' ? 'block' : 'none';
-    };
-}
-
-const btnMap = document.getElementById('btn-map');
-if (btnMap) {
-    btnMap.onclick = (e) => {
-        e.stopPropagation();
-        showRadar = !showRadar;
-        btnMap.innerText = showRadar ? 'MAP: ON' : 'MAP: OFF';
-    };
-}
-
-const canvas = document.getElementById('game-canvas');
-const ctx = canvas ? canvas.getContext('2d', { alpha: false }) : null;
+// --- メインループ ---
+let cameraScale = 1.0;
 
 function gameLoop() {
     requestAnimationFrame(gameLoop);
-    if (!ctx || !canvas) return;
 
     player.update();
+    hud.updateStats(1, 50, player.score);
+
+    // ピンチズームと自機サイズに応じた動的カメラズームの合成
+    const baseTargetScale = 60.0 / (60.0 + (player.size - 12) * 0.85);
+    const finalTargetScale = baseTargetScale * input.zoomMultiplier;
+    cameraScale += (finalTargetScale - cameraScale) * 0.05;
 
     ctx.fillStyle = '#0b051a';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
 
     ctx.save();
-    ctx.translate(canvas.width / 2 - player.x, canvas.height / 2 - player.y);
+    // カメラの中心をプレイヤーに合わせ、ピンチズーム倍率を適用
+    ctx.translate(canvas.width / 2, canvas.height / 2);
+    ctx.scale(cameraScale, cameraScale);
+    ctx.translate(-player.x, -player.y);
 
     // グリッド線描画
+    const step = 150;
+    const viewW = canvas.width / cameraScale;
+    const viewH = canvas.height / cameraScale;
+    const startX = Math.floor((player.x - viewW / 2) / step) * step;
+    const endX = startX + viewW + step * 2;
+    const startY = Math.floor((player.y - viewH / 2) / step) * step;
+    const endY = startY + viewH + step * 2;
+
     ctx.strokeStyle = 'rgba(255, 255, 255, 0.05)';
     ctx.lineWidth = 1;
-    const step = 150;
-    const startX = Math.floor((player.x - canvas.width) / step) * step;
-    const endX = startX + canvas.width * 2;
-    const startY = Math.floor((player.y - canvas.height) / step) * step;
-    const endY = startY + canvas.height * 2;
-
     ctx.beginPath();
     for (let x = startX; x < endX; x += step) {
         ctx.moveTo(x, startY); ctx.lineTo(x, endY);
@@ -387,27 +274,21 @@ function gameLoop() {
     }
     ctx.stroke();
 
+    // 餌の描画
+    for (let f of foods) {
+        ctx.fillStyle = f.color;
+        ctx.beginPath();
+        ctx.arc(f.x, f.y, f.size, 0, Math.PI * 2);
+        ctx.fill();
+    }
+
+    // プレイヤー描画
     player.draw(ctx);
     ctx.restore();
 
-    // 一体型Canvasミニマップ（右上に直接描画）
-    if (showRadar) {
-        const radarSize = 75;
-        const margin = 16;
-        const rx = canvas.width - radarSize - margin;
-        const ry = PlatformDetector.inGravity ? SAFE_INSET_TOP_GRAVITY : SAFE_INSET_TOP_WEB;
-
-        ctx.fillStyle = 'rgba(15, 23, 42, 0.45)';
-        ctx.fillRect(rx, ry, radarSize, radarSize);
-        ctx.strokeStyle = 'rgba(0, 229, 255, 0.35)';
-        ctx.lineWidth = 1.5;
-        ctx.strokeRect(rx, ry, radarSize, radarSize);
-
-        ctx.fillStyle = '#ffffff';
-        ctx.beginPath();
-        ctx.arc(rx + radarSize / 2, ry + radarSize / 2, 2.5, 0, Math.PI * 2);
-        ctx.fill();
-    }
+    // 一体型HUDミニマップ描画（右上に直接描画）
+    const safeTop = PlatformDetector.inGravity ? SAFE_INSET_TOP_GRAVITY : SAFE_INSET_TOP_WEB;
+    hud.drawRadar(ctx, canvas.width, safeTop, player, [], MAP_SIZE);
 }
 
 requestAnimationFrame(gameLoop);
