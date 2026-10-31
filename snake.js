@@ -1,11 +1,9 @@
-/**
- * ==============================================================================
- * 『くねくねバトル オンライン』スネークエンティティクラス (snake.js)
- * ・自機 ＆ 49体AI共通の物理・描画・成長計算
- * ・体節の滑らかな追従・波打ちアニメーション
- * ・表情5種（normal, angry, happy, cool, cute）のベクター描画
- * ==============================================================================
- */
+// ==============================================================================
+// 『くねくねバトル オンライン』スネークエンティティクラス (snake.js)
+// v17.0.0 改訂:
+// ・オリジナル復刻: 巨大化による速度減衰（スリザー系特有の下克上バランス）
+// ・サイズに反比例してベーススピードが緩やかに低下し、小回りが利く小型が有利に
+// ==============================================================================
 
 import { BASE_SPEED, BOOST_SPEED_MULT, TURN_SPEED_PLAYER, MAP_SIZE } from './constants.js';
 
@@ -40,6 +38,9 @@ export class Snake {
         this.isBoosting = false;
         this.isVisible = true;
 
+        // 無敵時間（リスポーン直後ガード）
+        this.invulnerableTimer = 0;
+
         // AI思考用内部ステート
         this.aiLevel = isPlayer ? 0 : (Math.floor(Math.random() * 3) + 1);
         this.aiChangeTimer = Math.floor(Math.random() * 30);
@@ -53,12 +54,20 @@ export class Snake {
         this.score = 50;
         this.recalculateSize();
         this.maxSize = this.size;
-        this.history = [];
+        
+        // 💡 メモリリーク・残骸化防止: 安全な配列リセット
+        this.history.length = 0;
+        
         this.distCounter = 0;
         this.isDead = false;
         this.kills = 0;
         this.isBoosting = false;
         this.isVisible = true;
+        
+        // 💡 初期化漏れ完全ガード: 速度、無敵タイマー、AIステートを確実にリセット
+        this.speed = BASE_SPEED;
+        this.invulnerableTimer = 3.0; // リスポーン直後の3秒間無敵付与
+        this.aiChangeTimer = Math.floor(Math.random() * 30);
     }
 
     recalculateSize() {
@@ -75,8 +84,17 @@ export class Snake {
     updatePhysics(inputAngle, boostActive) {
         if (this.isDead) return;
 
+        // 無敵タイマーの減算
+        if (this.invulnerableTimer > 0) {
+            this.invulnerableTimer -= 1 / 60; // 60FPS想定
+        }
+
         this.isBoosting = boostActive && this.score > 60;
-        const currentSpeed = this.isBoosting ? BASE_SPEED * BOOST_SPEED_MULT : BASE_SPEED;
+        
+        // ★ オリジナル復刻: 巨大化による速度減衰（スリザー系特有の下克上バランス）
+        // 現行のベース4.2に合わせ、size 14で 4.2、巨大化すると 3.5 へ漸近する計算式
+        const dynamicBaseSpeed = 3.5 + (10.0 / Math.max(10, this.size));
+        const currentSpeed = this.isBoosting ? dynamicBaseSpeed * BOOST_SPEED_MULT : dynamicBaseSpeed;
         this.speed = currentSpeed;
 
         // ブースト時の質量微小消費
@@ -124,6 +142,13 @@ export class Snake {
 
     draw(ctx, frameCount, cameraScale) {
         if (this.isDead || !this.isVisible) return;
+
+        // 無敵時間中は半透明点滅
+        if (this.invulnerableTimer > 0) {
+            ctx.globalAlpha = (Math.floor(Date.now() / 100) % 2 === 0) ? 0.4 : 0.8;
+        } else {
+            ctx.globalAlpha = 1.0;
+        }
 
         const histLen = this.history.length;
 
@@ -174,6 +199,8 @@ export class Snake {
         // 表情描画
         this.drawFaceExpressions(ctx);
         ctx.restore();
+
+        ctx.globalAlpha = 1.0;
 
         // 3. ネームプレート ＆ スコア
         ctx.fillStyle = 'rgba(255, 255, 255, 0.92)';

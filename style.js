@@ -1,9 +1,10 @@
 // ==============================================================================
 // 『くねくねバトル オンライン』iOS WebKit & iPhone 干渉完全マスクスタイル (style.js)
-// Step 5-C 改訂:
-// ・マルチプレイロビー画面 (.lobby-card, .btn-lobby-hero, .room-list-box 等)
-// ・マッチング待機室 (.waiting-card, .waiting-members-list 等)
-// ・リザルト画面、HUD、ボトムシートメニューの完全統合
+// v16.0.0 改訂:
+// ・左下SVGボタングループ（サウンド、ランキング、レーダー、縦並びズーム＋/ー）
+// ・右下一番下（bottom: 24px）MENUボタン配置（左下ボタンと縦位置完全統一）
+// ・メニュー表示中の背景暗転・ブラー完全撤廃（透明・ゲーム進行継続）
+// ・絵文字完全排除・純粋ベクターSVGアイコンスタイル
 // ==============================================================================
 
 export function injectStyles() {
@@ -54,65 +55,40 @@ export function injectStyles() {
             --safe-bottom: 24px;
         }
 
-        /* --- 上部HUD --- */
-        #hud {
+        /* --- 左上：ランキング展開パネル（トグル時のみ表示・文字ボタン廃止） --- */
+        #stats-box {
             position: absolute;
             top: var(--safe-top);
             left: var(--safe-side);
-            right: var(--safe-side);
-            display: flex;
-            justify-content: space-between;
-            align-items: flex-start;
-            pointer-events: none;
-            transition: top 0.2s ease;
-        }
-
-        .hud-group {
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            pointer-events: auto;
-        }
-
-        .hud-btn {
-            background: rgba(15, 23, 42, 0.75);
-            color: #ffffff;
-            border: 1px solid rgba(255, 255, 255, 0.25);
-            border-radius: 8px;
-            padding: 6px 12px;
-            font-size: 13px;
-            font-weight: 700;
-            letter-spacing: 0.5px;
-            cursor: pointer;
-            backdrop-filter: blur(8px);
-            -webkit-backdrop-filter: blur(8px);
-            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
-            transition: background 0.2s, transform 0.1s;
-        }
-        .hud-btn:active {
-            transform: scale(0.94);
-            background: rgba(30, 41, 59, 0.9);
-        }
-
-        .stats-box {
-            position: absolute;
-            top: 40px;
-            left: 0;
-            background: rgba(15, 23, 42, 0.9);
-            border: 1px solid rgba(0, 229, 255, 0.4);
-            border-radius: 10px;
+            background: rgba(15, 23, 42, 0.88);
+            border: 1.5px solid rgba(0, 229, 255, 0.45);
+            border-radius: 12px;
             padding: 10px 14px;
-            color: white;
+            color: #ffffff;
             font-size: 12px;
             backdrop-filter: blur(10px);
             -webkit-backdrop-filter: blur(10px);
-            box-shadow: 0 6px 20px rgba(0, 0, 0, 0.6);
+            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.65);
             min-width: 160px;
+            pointer-events: auto;
+            z-index: 30;
+            animation: stats-appear 0.18s ease-out;
         }
-        .stats-box hr {
+        @keyframes stats-appear {
+            0% { transform: translateY(-8px); opacity: 0; }
+            100% { transform: translateY(0); opacity: 1; }
+        }
+        .stats-header-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-size: 13px;
+            margin-bottom: 3px;
+        }
+        #stats-box hr {
             border: none;
             border-top: 1px dashed rgba(255, 255, 255, 0.25);
-            margin: 8px 0;
+            margin: 6px 0;
         }
         #leaderboard-list {
             display: flex;
@@ -120,7 +96,91 @@ export function injectStyles() {
             gap: 4px;
         }
 
-        /* --- 操作ボタンレイアウト --- */
+        /* ==========================================================================
+           左下ボタングループ（底辺 bottom: 24px / 右下MENUと完全同一高さ）
+           ========================================================================== */
+        .bottom-left-group {
+            position: absolute;
+            bottom: var(--safe-bottom);
+            left: var(--safe-side);
+            display: flex;
+            align-items: flex-end;
+            gap: 8px;
+            pointer-events: auto;
+            z-index: 50;
+        }
+
+        /* ズーム（＋/ー）縦並びコンテナ */
+        .zoom-controls-col {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+            margin-bottom: 2px;
+        }
+        .btn-zoom {
+            width: 36px;
+            height: 36px;
+            border-radius: 50%;
+            background: rgba(15, 23, 42, 0.82);
+            border: 1.5px solid rgba(0, 229, 255, 0.4);
+            color: #ffffff;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            box-shadow: 0 4px 10px rgba(0, 0, 0, 0.45);
+            backdrop-filter: blur(6px);
+            -webkit-backdrop-filter: blur(6px);
+            transition: transform 0.1s, background 0.15s;
+        }
+        .btn-zoom:active {
+            transform: scale(0.92);
+            background: rgba(0, 229, 255, 0.25);
+        }
+        .btn-zoom svg {
+            width: 18px;
+            height: 18px;
+            fill: #00e5ff;
+        }
+
+        /* 左下丸型ボタン共通（サウンド、ランキング、マップ） */
+        .bottom-round-btn {
+            width: 44px;
+            height: 44px;
+            border-radius: 50%;
+            background: rgba(15, 23, 42, 0.85);
+            border: 1.5px solid rgba(255, 255, 255, 0.3);
+            color: white;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            backdrop-filter: blur(8px);
+            -webkit-backdrop-filter: blur(8px);
+            box-shadow: 0 4px 14px rgba(0, 0, 0, 0.5);
+            transition: transform 0.1s, border-color 0.15s, background 0.15s;
+        }
+        .bottom-round-btn:active {
+            transform: scale(0.92);
+        }
+        .bottom-round-btn svg {
+            width: 22px;
+            height: 22px;
+            fill: #94a3b8;
+            transition: fill 0.15s;
+        }
+        .bottom-round-btn.active {
+            border-color: #00e5ff;
+            background: rgba(0, 229, 255, 0.18);
+        }
+        .bottom-round-btn.active svg {
+            fill: #00e5ff;
+            filter: drop-shadow(0 0 5px rgba(0, 229, 255, 0.6));
+        }
+
+        /* ==========================================================================
+           右下ボタン（BOOST: 下から168px / MENU: 下から24px・左下と高さ完全一致）
+           ========================================================================== */
         #btn-boost {
             position: absolute;
             bottom: calc(var(--safe-bottom) + 144px);
@@ -158,9 +218,10 @@ export function injectStyles() {
             transform: scale(1.15);
         }
 
+        /* MENUボタン（右下最下段：bottom: 24px / 左下のサウンドボタンと縦位置完全同一） */
         #btn-menu {
             position: absolute;
-            bottom: calc(var(--safe-bottom) + 62px);
+            bottom: var(--safe-bottom);
             right: 16px;
             width: 48px;
             height: 48px;
@@ -180,8 +241,8 @@ export function injectStyles() {
             z-index: 50;
         }
         #btn-menu svg {
-            width: 18px;
-            height: 18px;
+            width: 19px;
+            height: 19px;
             fill: white;
             margin-bottom: 1px;
         }
@@ -189,36 +250,7 @@ export function injectStyles() {
             transform: scale(0.92);
         }
 
-        #btn-sound {
-            position: absolute;
-            bottom: var(--safe-bottom);
-            left: 16px;
-            width: 44px;
-            height: 44px;
-            border-radius: 50%;
-            background: rgba(15, 23, 42, 0.85);
-            border: 1.5px solid rgba(255, 255, 255, 0.3);
-            color: white;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            pointer-events: auto;
-            backdrop-filter: blur(8px);
-            -webkit-backdrop-filter: blur(8px);
-            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
-            cursor: pointer;
-            z-index: 50;
-        }
-        #btn-sound svg {
-            width: 20px;
-            height: 20px;
-            fill: #94a3b8;
-        }
-        #btn-sound.sound-on svg {
-            fill: #00e5ff;
-            filter: drop-shadow(0 0 5px rgba(0, 229, 255, 0.6));
-        }
-
+        /* --- 仮想ジョイスティック --- */
         #joystick-base {
             display: none;
             position: absolute;
@@ -321,7 +353,9 @@ export function injectStyles() {
             100% { transform: scale(1); opacity: 1; }
         }
 
-        /* --- ボトムシートメニュー --- */
+        /* ==========================================================================
+           ボトムシートメニュー（全画面暗転・ブラー撤廃 ＆ ゲームプレイ継続）
+           ========================================================================== */
         #menu-overlay {
             display: none;
             position: absolute;
@@ -329,28 +363,29 @@ export function injectStyles() {
             left: 0;
             width: 100%;
             height: 100%;
-            background: rgba(0, 0, 0, 0.55);
-            backdrop-filter: blur(3px);
-            -webkit-backdrop-filter: blur(3px);
+            background: transparent; /* 暗転全廃 */
+            backdrop-filter: none;   /* ブラー全廃 */
+            -webkit-backdrop-filter: none;
             z-index: 150;
-            pointer-events: auto;
+            pointer-events: none;    /* シート外のタッチは背面のゲーム操作へ貫通 */
         }
         #bottom-sheet {
             position: absolute;
             bottom: 0;
             left: 0;
             width: 100%;
-            max-height: 72vh;
-            background: linear-gradient(180deg, #0284c7 0%, #0369a1 100%);
+            max-height: 68vh;
+            background: linear-gradient(180deg, rgba(2, 132, 199, 0.96) 0%, rgba(3, 105, 161, 0.98) 100%);
             border-top-left-radius: 20px;
             border-top-right-radius: 20px;
-            box-shadow: 0 -8px 30px rgba(0, 0, 0, 0.6);
+            box-shadow: 0 -8px 30px rgba(0, 0, 0, 0.65);
             transform: translateY(100%);
             transition: transform 0.28s cubic-bezier(0.2, 0.9, 0.3, 1);
             display: flex;
             flex-direction: column;
             padding: 12px 16px calc(var(--safe-bottom) + 12px);
             z-index: 160;
+            pointer-events: auto;    /* シート内部のタップのみ安全に受け取る */
         }
         #bottom-sheet.open {
             transform: translateY(0);
@@ -468,7 +503,7 @@ export function injectStyles() {
             display: flex;
             flex-direction: column;
             gap: 8px;
-            max-height: 40vh;
+            max-height: 38vh;
             overflow-y: auto;
         }
         .participant-row {
@@ -527,6 +562,12 @@ export function injectStyles() {
             justify-content: space-around;
             gap: 8px;
         }
+        .custom-colors-grid {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 10px;
+            justify-items: center;
+        }
         .custom-face-btn {
             flex: 1;
             background: rgba(0, 0, 0, 0.25);
@@ -543,16 +584,17 @@ export function injectStyles() {
             background: rgba(255, 255, 255, 0.25);
         }
         .custom-color-btn {
-            width: 32px;
-            height: 32px;
+            width: 34px;
+            height: 34px;
             border-radius: 50%;
-            border: 2px solid transparent;
+            border: 2.5px solid transparent;
             cursor: pointer;
+            transition: transform 0.12s, border-color 0.12s;
         }
         .custom-color-btn.selected {
             border-color: #ffffff;
-            transform: scale(1.15);
-            box-shadow: 0 0 10px rgba(255, 255, 255, 0.8);
+            transform: scale(1.18);
+            box-shadow: 0 0 10px rgba(255, 255, 255, 0.85);
         }
 
         .creator-notice-card {
@@ -675,9 +717,7 @@ export function injectStyles() {
             box-shadow: 0 4px 12px rgba(225, 29, 72, 0.4);
         }
 
-        /* ==========================================================================
-           マルチプレイロビー画面 (#lobby-overlay)
-           ========================================================================== */
+        /* --- ロビー ＆ 待機室 --- */
         #lobby-overlay {
             position: absolute;
             inset: 0;
@@ -835,9 +875,6 @@ export function injectStyles() {
             cursor: pointer;
         }
 
-        /* ==========================================================================
-           マッチング待機室画面 (#waiting-overlay)
-           ========================================================================== */
         #waiting-overlay {
             display: none;
             position: absolute;

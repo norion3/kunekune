@@ -1,7 +1,8 @@
 // ==============================================================================
 // 『くねくねバトル オンライン』49体自律AIマネージャー (ai.js)
-// ・タイムスライス分散思考による常時60FPS保証
-// ・外壁回避・餌捕食・上位プレデター追撃・胴体激突回避
+// v17.0.0 改訂:
+// ・オリジナル復刻: プレイヤー絶対追従（粘着）を廃止し、自然な生態系へ
+// ・AIは自機・他AIを問わず「最も近い相手」をターゲットに選定し弱肉強食を展開
 // ==============================================================================
 
 import { MAP_SIZE, SNAKE_COLORS } from './constants.js';
@@ -120,14 +121,38 @@ export class AIManager {
         if (ai.aiChangeTimer <= 0) {
             ai.aiChangeTimer = 25 + Math.floor(Math.random() * 35);
 
-            // レベル2以上のAIは獲物（プレイヤーや格下AI）を追う
-            if (ai.aiLevel >= 2 && Math.hypot(player.x - ai.x, player.y - ai.y) < 1600 && ai.score > player.score * 1.1) {
-                // プレイヤーの進行方向を先読みして包囲
-                const leadDist = 120;
-                const tx = player.x + Math.cos(player.angle) * leadDist;
-                const ty = player.y + Math.sin(player.angle) * leadDist;
+            let attackTarget = null;
+            let minDistToTarget = Infinity;
+
+            // ★ オリジナル復刻: プレイヤー絶対殺すマンを廃止し、自然な生態系化
+            // レベル2以上のAIは、プレイヤー・他AI区別なく「一番近くにいる者」を狙う
+            if (ai.aiLevel >= 2) {
+                for (let other of allSnakes) {
+                    if (other === ai || other.isDead || !other.isVisible) continue;
+                    
+                    // 無敵時間（リスポーン直後）の相手は狙わない
+                    if (other.invulnerableTimer && other.invulnerableTimer > 0) continue;
+
+                    const dx = other.x - ai.x;
+                    const dy = other.y - ai.y;
+                    const distToHead = Math.hypot(dx, dy);
+
+                    // 距離1200以内の最も近い相手をターゲットに設定
+                    if (distToHead < 1200 && distToHead < minDistToTarget) {
+                        minDistToTarget = distToHead;
+                        attackTarget = other;
+                    }
+                }
+            }
+
+            if (attackTarget) {
+                // ターゲットの進行方向を先読みして包囲
+                const leadDist = 120 + attackTarget.size;
+                const tx = attackTarget.x + Math.cos(attackTarget.angle) * leadDist;
+                const ty = attackTarget.y + Math.sin(attackTarget.angle) * leadDist;
                 ai.targetAngle = Math.atan2(ty - ai.y, tx - ai.x);
-                ai.isBoosting = ai.score > 150 && Math.random() < 0.4;
+                // 攻撃時はたまにブーストを使う
+                ai.isBoosting = ai.score > 120 && Math.random() < 0.25;
             } else {
                 // ランダム放浪・緩やかな旋回
                 ai.targetAngle += (Math.random() - 0.5) * 0.9;

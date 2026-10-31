@@ -1,8 +1,11 @@
-// ==============================================================================
-// 『くねくねバトル オンライン』ゼロアロケーション空間ハッシュ衝突判定エンジン (combat.js)
-// ・オブジェクトプールによるガベージコレクション（GC）スパイクの完全根絶
-// ・頭部 vs 胴体の高速 O(1) 近傍判定
-// ==============================================================================
+/**
+ * ==============================================================================
+ * 『くねくねバトル オンライン』ゼロアロケーション空間ハッシュ衝突判定エンジン (combat.js)
+ * v18.0.0 改訂:
+ * ・リスポーン直後の無敵時間（invulnerableTimer）を貫通・すり抜けするよう保護機能を追加
+ * ・リスキル（復活直後の即死）を物理的に完全遮断
+ * ==============================================================================
+ */
 
 import { GRID_SIZE } from './constants.js';
 
@@ -71,6 +74,9 @@ export class SpatialCollisionEngine {
             const victim = snakes[i];
             if (victim.isDead || !victim.isVisible) continue;
 
+            // ★ 無敵時間中（リスポーン直後）の相手には判定を行わない（リスキル防止）
+            if (victim.invulnerableTimer && victim.invulnerableTimer > 0) continue;
+
             const hx = victim.x;
             const hy = victim.y;
             const hRadius = victim.size;
@@ -89,7 +95,12 @@ export class SpatialCollisionEngine {
 
                     for (let b = 0; b < bodies.length; b++) {
                         const bodyNode = bodies[b];
-                        if (bodyNode.snake === victim) continue; // 自分自身の体節はスキップ
+                        const killer = bodyNode.snake;
+                        
+                        if (killer === victim) continue; // 自分自身の体節はスキップ
+
+                        // ★ 胴体側（壁を作った側）が無敵時間中の場合も、すり抜けるようにして理不尽な死を防ぐ
+                        if (killer.invulnerableTimer && killer.invulnerableTimer > 0) continue;
 
                         const dx = hx - bodyNode.x;
                         const dy = hy - bodyNode.y;
@@ -97,7 +108,6 @@ export class SpatialCollisionEngine {
 
                         if (dx * dx + dy * dy < minDist * minDist) {
                             victim.isDead = true;
-                            const killer = bodyNode.snake;
                             killer.kills++;
                             killer.addScore(150);
 

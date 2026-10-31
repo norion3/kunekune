@@ -128,7 +128,9 @@ export class WorldManager {
                     const dy = snake.y - f.y;
                     if (dx * dx + dy * dy < (headR + f.size) ** 2) {
                         snake.addScore(f.val);
-                        list.splice(i, 1);
+                        // 💡 GC負荷軽減：O(1)末尾スワップによる超高速削除
+                        list[i] = list[list.length - 1];
+                        list.pop();
                         if (onEat) onEat(snake, f);
                     }
                 }
@@ -142,7 +144,9 @@ export class WorldManager {
             const dy = snake.y - f.y;
             if (dx * dx + dy * dy < (headR + f.size) ** 2) {
                 snake.addScore(f.val);
-                this.dropFoods.splice(i, 1);
+                // 💡 GC負荷軽減：O(1)末尾スワップによる超高速削除
+                this.dropFoods[i] = this.dropFoods[this.dropFoods.length - 1];
+                this.dropFoods.pop();
                 if (onEat) onEat(snake, f);
             }
         }
@@ -155,7 +159,9 @@ export class WorldManager {
             p.y += p.vy;
             p.life -= 0.04;
             if (p.life <= 0) {
-                this.particles.splice(i, 1);
+                // 💡 GC負荷軽減：O(1)末尾スワップによる超高速削除
+                this.particles[i] = this.particles[this.particles.length - 1];
+                this.particles.pop();
             }
         }
     }
@@ -166,7 +172,10 @@ export class WorldManager {
         const minGy = Math.floor(cameraY / GRID_SIZE) - 1;
         const maxGy = Math.floor((cameraY + viewH) / GRID_SIZE) + 1;
 
-        // チャンク餌描画
+        // 💡 描画負荷劇的軽減：色ごとのバッチ描画用マップ
+        const batchMap = new Map();
+
+        // チャンク餌描画の収集
         for (let gx = minGx; gx <= maxGx; gx++) {
             for (let gy = minGy; gy <= maxGy; gy++) {
                 const list = this.foodGrid.get(`${gx}_${gy}`);
@@ -177,24 +186,35 @@ export class WorldManager {
                         const pulse = 1.0 + Math.sin(frameCount * 0.15 + f.x) * 0.2;
                         ctx.fillStyle = 'rgba(255, 255, 255, 0.25)';
                         ctx.beginPath();
+                        ctx.moveTo(f.x + f.size * 1.8 * pulse, f.y);
                         ctx.arc(f.x, f.y, f.size * 1.8 * pulse, 0, Math.PI * 2);
                         ctx.fill();
                     }
-                    ctx.fillStyle = f.color;
-                    ctx.beginPath();
-                    ctx.arc(f.x, f.y, f.size, 0, Math.PI * 2);
-                    ctx.fill();
+                    
+                    if (!batchMap.has(f.color)) batchMap.set(f.color, []);
+                    batchMap.get(f.color).push(f);
                 }
             }
         }
 
-        // 肉片ドロップ餌描画
+        // 肉片ドロップ餌の収集
         for (let f of this.dropFoods) {
             if (f.x < cameraX - 50 || f.x > cameraX + viewW + 50 || f.y < cameraY - 50 || f.y > cameraY + viewH + 50) continue;
+            
             const pulse = 1.0 + Math.sin(frameCount * 0.2 + f.x) * 0.25;
-            ctx.fillStyle = f.color;
+            if (!batchMap.has(f.color)) batchMap.set(f.color, []);
+            // ドロップ餌はパルスサイズを適用してバッチに積む
+            batchMap.get(f.color).push({ x: f.x, y: f.y, size: f.size * pulse });
+        }
+
+        // 一括バッチ描画実行（ドローコールを色数分に削減）
+        for (let [color, foods] of batchMap.entries()) {
+            ctx.fillStyle = color;
             ctx.beginPath();
-            ctx.arc(f.x, f.y, f.size * pulse, 0, Math.PI * 2);
+            for (let f of foods) {
+                ctx.moveTo(f.x + f.size, f.y); // サブパスを切って線が繋がるのを防止
+                ctx.arc(f.x, f.y, f.size, 0, Math.PI * 2);
+            }
             ctx.fill();
         }
 

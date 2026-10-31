@@ -1,12 +1,13 @@
 /**
  * ==============================================================================
- * 『くねくねバトル オンライン』Phase 5 メインオーケストレーター (main.js)
- * ・AgentSDK 8人マルチプレイ ＆ 42体AI（計50体）完全結合
- * ・Host-Authoritative AI（ホスト主権AI ＆ ゲスト受信補間）
- * ・マルチプレイロビー（公開/プライベート部屋作成・参加・一覧更新）
- * ・マッチング待機室（参加者スロット同期 ＆ ホストゲーム開始権限）
- * ・10Hz 送出ループ（自機 ＋ ホスト管理AI 14体時分割インターリーブ相乗り）
- * ・餌取得・散布肉片同期 ＆ ゼロアロケーション空間ハッシュ衝突判定
+ * 『くねくねバトル オンライン』Phase 5 マスター統合オーケストレーター (main.js)
+ * v16.0.0 改訂:
+ * ・ユーザーネームの起動時即時解決＆自機・HUD・待機室・メニューへの全自動プッシュ
+ * ・スネーク頭上に「ユーザーネームのみ」を描画（スコア等の余計な文字は完全排除）
+ * ・ズーム（＋/ー）SVGボタンの完全連携（0.50〜1.40倍の段階的スムーズ調整）
+ * ・ランキング（トロフィーSVG）＆レーダー（マップSVG）トグルボタンの完全連携
+ * ・右下MENUボタン（bottom: 24px）によるボトムシート展開中もゲームが停止せず進行継続
+ * ・105px自機追従相対レーダーによる周辺敵のサイズ別色分け描画
  * ==============================================================================
  */
 
@@ -115,12 +116,12 @@ export const UIController = {
         const lobby = document.getElementById('lobby-overlay');
         const waiting = document.getElementById('waiting-overlay');
         const overScreen = document.getElementById('over-screen');
-        const hudEl = document.getElementById('hud');
+        const statsBox = document.getElementById('stats-box');
 
         if (lobby) lobby.style.display = 'flex';
         if (waiting) waiting.style.display = 'none';
         if (overScreen) overScreen.style.display = 'none';
-        if (hudEl) hudEl.style.display = 'none';
+        if (statsBox) statsBox.style.display = 'none';
 
         this.refreshLobbyGreeting();
     },
@@ -148,12 +149,10 @@ export const UIController = {
         const lobby = document.getElementById('lobby-overlay');
         const waiting = document.getElementById('waiting-overlay');
         const overScreen = document.getElementById('over-screen');
-        const hudEl = document.getElementById('hud');
 
         if (lobby) lobby.style.display = 'none';
         if (waiting) waiting.style.display = 'none';
         if (overScreen) overScreen.style.display = 'none';
-        if (hudEl) hudEl.style.display = 'flex';
     },
 
     refreshLobbyGreeting() {
@@ -196,7 +195,13 @@ function initGame() {
     const spawnX = MAP_SIZE / 2 + (Math.random() - 0.5) * 4000;
     const spawnY = MAP_SIZE / 2 + (Math.random() - 0.5) * 4000;
     player.reset(spawnX, spawnY);
-    player.name = NetworkManager.myUser.name || 'あなた';
+
+    // 取得済みユーザーネームを即座に自機へ適用
+    if (NetworkManager.myUser && NetworkManager.myUser.name) {
+        player.name = NetworkManager.myUser.name;
+    } else if (window.GRAVITY_USER_NAME) {
+        player.name = window.GRAVITY_USER_NAME;
+    }
     player.color = SNAKE_COLORS[NetworkManager.mySlot % SNAKE_COLORS.length];
 
     // AI 42体初期化（ホスト端末のみ物理シミュレーション）
@@ -219,7 +224,6 @@ function initGame() {
 
 // --- マルチプレイ通信コールバック登録 ---
 NetworkManager.setCallbacks({
-    // 他プレイヤー / ホストAIのスネーク座標受信
     onRemoteSnakeUpdate(data) {
         if (data.slot === NetworkManager.mySlot) return;
 
@@ -233,13 +237,11 @@ NetworkManager.setCallbacks({
             remote.reset(data.x, data.y);
             remoteSnakes.set(data.slot, remote);
 
-            // allSnakes に追加（既存AIスロットと置換または追加）
             if (!allSnakes.includes(remote)) {
                 allSnakes.push(remote);
             }
         }
 
-        // 状態同期 ＆ 補間ターゲット設定
         remote.targetNetX = data.x;
         remote.targetNetY = data.y;
         remote.targetAngle = data.angle;
@@ -252,7 +254,6 @@ NetworkManager.setCallbacks({
         remote.recalculateSize();
     },
 
-    // 餌取得同期
     onFoodPicked(pick) {
         const key = `${pick.gx}_${pick.gy}`;
         const list = world.foodGrid.get(key);
@@ -261,7 +262,6 @@ NetworkManager.setCallbacks({
         }
     },
 
-    // 散布肉片同期
     onDropSpawned(drop) {
         world.dropFoods.push({
             x: drop.x,
@@ -273,7 +273,6 @@ NetworkManager.setCallbacks({
         });
     },
 
-    // シード値受信（ワールド同期）
     onSeedReceived(seed) {
         world.clear();
         Danmaku.push('同期', 'ワールドシードを同期しました', '#00e5ff', true);
@@ -282,7 +281,57 @@ NetworkManager.setCallbacks({
 
 // --- UIイベントバインド ---
 
-// 1. ロビー画面
+// 1. ズーム（＋/ー）ボタンのバインド
+const btnZoomIn = document.getElementById('btn-zoom-in');
+const btnZoomOut = document.getElementById('btn-zoom-out');
+
+if (btnZoomIn) {
+    btnZoomIn.onclick = (e) => {
+        e.stopPropagation();
+        // 視野を近づける（拡大）
+        input.zoomMultiplier = Math.min(1.40, input.zoomMultiplier + 0.12);
+    };
+}
+if (btnZoomOut) {
+    btnZoomOut.onclick = (e) => {
+        e.stopPropagation();
+        // 視野を広げる（縮小）
+        input.zoomMultiplier = Math.max(0.50, input.zoomMultiplier - 0.12);
+    };
+}
+
+// 2. ランキング ＆ レーダートグルボタンのバインド
+const btnToggleRanking = document.getElementById('btn-toggle-ranking');
+const btnToggleMap = document.getElementById('btn-toggle-map');
+
+if (btnToggleRanking) {
+    btnToggleRanking.onclick = (e) => {
+        e.stopPropagation();
+        hud.toggleRanking();
+    };
+}
+if (btnToggleMap) {
+    btnToggleMap.onclick = (e) => {
+        e.stopPropagation();
+        hud.toggleMap();
+    };
+}
+
+// 3. サウンド切替ボタン
+const soundBtn = document.getElementById('btn-sound');
+if (soundBtn) {
+    soundBtn.onclick = (e) => {
+        e.stopPropagation();
+        const isMuted = Sound.toggleMute();
+        soundBtn.classList.toggle('active', !isMuted);
+        const iconOff = document.getElementById('icon-sound-off');
+        const iconOn = document.getElementById('icon-sound-on');
+        if (iconOff) iconOff.style.display = isMuted ? 'block' : 'none';
+        if (iconOn) iconOn.style.display = isMuted ? 'none' : 'block';
+    };
+}
+
+// 4. ロビー画面ボタン
 const btnLobbySolo = document.getElementById('btn-lobby-solo');
 if (btnLobbySolo) {
     btnLobbySolo.onclick = () => {
@@ -357,7 +406,7 @@ if (btnRefreshRooms) {
     };
 }
 
-// 2. マッチング待機室画面
+// 5. マッチング待機室画面
 const btnWaitingStart = document.getElementById('btn-waiting-start');
 if (btnWaitingStart) {
     btnWaitingStart.onclick = () => {
@@ -374,28 +423,14 @@ if (btnWaitingLeave) {
     };
 }
 
-// 3. インゲーム・カスタム着せ替え
+// 6. インゲーム・カスタム着せ替え（8色対応）
 Menu.init((face, color) => {
     player.face = face;
     player.color = color;
-    Danmaku.push('システム', 'アバターを変更しました', '#ffdd00', true);
+    Danmaku.push('システム', 'アバターを変更しました', color, true);
 });
 
-// 4. サウンド切替
-const soundBtn = document.getElementById('btn-sound');
-if (soundBtn) {
-    soundBtn.onclick = (e) => {
-        e.stopPropagation();
-        const isMuted = Sound.toggleMute();
-        soundBtn.classList.toggle('sound-on', !isMuted);
-        const iconOff = document.getElementById('icon-sound-off');
-        const iconOn = document.getElementById('icon-sound-on');
-        if (iconOff) iconOff.style.display = isMuted ? 'block' : 'none';
-        if (iconOn) iconOn.style.display = isMuted ? 'none' : 'block';
-    };
-}
-
-// 5. リザルト画面
+// 7. リザルト画面
 const btnRetry = document.getElementById('btn-retry');
 if (btnRetry) {
     btnRetry.onclick = () => {
@@ -445,10 +480,13 @@ function handleGameOver() {
     overScreen.style.display = 'flex';
 }
 
-// --- DM招待リンク自動合流チェック ---
-async function checkAutoJoinLink() {
+// --- ユーザーネーム即時解決 ＆ DM招待リンク自動合流チェック ---
+async function bootSequence() {
     try {
-        await NetworkManager.init();
+        const userInfo = await NetworkManager.init();
+        if (userInfo && userInfo.name) {
+            player.name = userInfo.name;
+        }
         UIController.refreshLobbyGreeting();
 
         if (window.AgentSDK && window.AgentSDK.room && typeof window.AgentSDK.room.getRoomId === 'function') {
@@ -467,12 +505,12 @@ async function checkAutoJoinLink() {
             }
         }
     } catch (err) {
-        console.warn('[AutoJoin] 自動合流エラー:', err);
+        console.warn('[BootSequence] エラー:', err);
     }
     UIController.showLobby();
 }
 
-// --- メインゲームループ ---
+// --- メインゲームループ（メニュー展開中も停止せず常時進行） ---
 function gameLoop() {
     requestAnimationFrame(gameLoop);
     frameCount++;
@@ -551,11 +589,11 @@ function gameLoop() {
             hud.updateStats(myRank || 1, totalAlive, player.score);
 
             const listEl = document.getElementById('leaderboard-list');
-            if (listEl && listEl.parentElement.style.display !== 'none') {
+            if (listEl && listEl.parentElement && listEl.parentElement.style.display !== 'none') {
                 const topList = sortedSnakes.filter(s => !s.isDead).slice(0, 8);
                 listEl.innerHTML = topList.map((s, idx) => `
-                    <div style="display:flex; justify-content:space-between; color:${s === player ? '#ffdd00' : '#ffffff'}; font-weight:${s === player ? 'bold' : 'normal'};">
-                        <span>${idx + 1}. ${s.name}</span>
+                    <div style="display:flex; justify-content:space-between; color:${s === player ? '#ffdd00' : '#ffffff'}; font-weight:${s === player ? 'bold' : 'normal'}; font-size:12px;">
+                        <span style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:85px;">${idx + 1}. ${s.name}</span>
                         <span>${Math.floor(s.score)}</span>
                     </div>
                 `).join('');
@@ -563,7 +601,7 @@ function gameLoop() {
         }
     }
 
-    // カメラズーム計算
+    // カメラズーム計算（スライダー/ボタンズーム統合）
     const baseTargetScale = 60.0 / (60.0 + (player.size - 12) * 0.85);
     const finalTargetScale = baseTargetScale * input.zoomMultiplier;
     cameraScale += (finalTargetScale - cameraScale) * 0.05;
@@ -609,7 +647,7 @@ function gameLoop() {
         // 餌 ＆ パーティクル描画
         world.draw(ctx, cameraLeft, cameraTop, viewW, viewH, frameCount);
 
-        // スネーク描画
+        // スネーク描画（頭上には名前のみを表示）
         for (let i = sortedSnakes.length - 1; i >= 0; i--) {
             const s = sortedSnakes[i];
             if (s === player || s.isVisible) {
@@ -619,12 +657,12 @@ function gameLoop() {
 
         ctx.restore();
 
-        // ミニマップ直接描画
+        // 105px 自機中心相対追従レーダー描画
         const safeTop = PlatformDetector.inGravity ? SAFE_INSET_TOP_GRAVITY : SAFE_INSET_TOP_WEB;
-        hud.drawRadar(ctx, canvas.width, safeTop, player, sortedSnakes, MAP_SIZE);
+        hud.drawRadar(ctx, canvas.width, safeTop, player, sortedSnakes, cameraScale);
     }
 }
 
 // 起動シーケンス開始
-checkAutoJoinLink();
+bootSequence();
 requestAnimationFrame(gameLoop);

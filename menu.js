@@ -1,10 +1,10 @@
 /**
  * ==============================================================================
  * 『くねくねバトル オンライン』ボトムシートメニュー ＆ ルーター (menu.js)
- * ・CHAT: 8大定型文チップ ＋ 自由入力バー
- * ・走者 (N): 参加者一覧 ＋ GravityRouterによるプロフィール起動
- * ・CUSTOM: インゲーム顔5種・色5種リアルタイム着せ替え
- * ・+ 製作者: 実機完全準拠 2大告知パネル ＆ 右上いいね誘導吹き出し連動
+ * v16.0.0 改訂:
+ * ・CUSTOMタブ 8色パレット完全対応
+ * ・シート内のタップ安全遮断 (stopPropagation) ＆ 背景貫通
+ * ・走者一覧・製作者プロフィールの安全起動 (GravityRouter)
  * ==============================================================================
  */
 
@@ -55,12 +55,40 @@ export class MenuManager {
         const btnMenu = document.getElementById('btn-menu');
         const btnClose = document.getElementById('btn-close-menu');
         const overlay = document.getElementById('menu-overlay');
+        const sheet = document.getElementById('bottom-sheet');
 
-        if (btnMenu) btnMenu.onclick = (e) => { e.stopPropagation(); this.open(); };
-        if (btnClose) btnClose.onclick = (e) => { e.stopPropagation(); this.close(); };
-        if (overlay) overlay.onclick = (e) => {
-            if (e.target === overlay) this.close();
-        };
+        if (btnMenu) {
+            btnMenu.onclick = (e) => {
+                e.stopPropagation();
+                this.toggle();
+            };
+        }
+        if (btnClose) {
+            btnClose.onclick = (e) => {
+                e.stopPropagation();
+                this.close();
+            };
+        }
+
+        // シート外の余白（透明エリア）をタップしたら閉じる
+        if (overlay) {
+            overlay.onclick = (e) => {
+                if (e.target === overlay) this.close();
+            };
+        }
+
+        // ボトムシート内でのタップは背面のゲーム操作へ貫通させない（安全に保護）
+        if (sheet) {
+            sheet.onclick = (e) => {
+                e.stopPropagation();
+            };
+            sheet.ontouchstart = (e) => {
+                e.stopPropagation();
+            };
+            sheet.ontouchmove = (e) => {
+                e.stopPropagation();
+            };
+        }
 
         // タブ切り替えボタン
         this.bindTabs();
@@ -71,11 +99,19 @@ export class MenuManager {
         // CHAT: 自由入力バー
         this.bindChatInput();
 
-        // CUSTOM: 着せ替えピッカー
+        // CUSTOM: 8色対応着せ替えピッカー
         this.bindCustomPicker();
 
         // 製作者タブのプロフィールリンク
         this.bindCreatorLinks();
+    }
+
+    toggle() {
+        if (this.isOpen) {
+            this.close();
+        } else {
+            this.open();
+        }
     }
 
     open() {
@@ -99,7 +135,7 @@ export class MenuManager {
 
         setTimeout(() => {
             if (!this.isOpen && overlay) overlay.style.display = 'none';
-        }, 250);
+        }, 280);
     }
 
     switchTab(tabName) {
@@ -113,7 +149,7 @@ export class MenuManager {
             content.style.display = content.id === `tab-pane-${tabName}` ? 'block' : 'none';
         });
 
-        // 実機完全準拠：「製作者」タブの時のみ、右上の「…」直下に「いいね誘導吹き出し」を表示
+        // 「製作者」タブの時のみ、右上の「…」直下に「いいね誘導吹き出し」を表示
         const likeBubble = document.getElementById('like-bubble');
         if (likeBubble) {
             if (tabName === 'creator') {
@@ -140,7 +176,12 @@ export class MenuManager {
             chip.onclick = (e) => {
                 e.stopPropagation();
                 const text = chip.innerText.trim();
-                Danmaku.push('あなた', text, this.selectedColor);
+                const myName = (window.localPlayerInstance && window.localPlayerInstance.name) ? window.localPlayerInstance.name : 'あなた';
+                Danmaku.push(myName, text, this.selectedColor);
+
+                if (window.NetworkManager && typeof window.NetworkManager.queueChat === 'function') {
+                    window.NetworkManager.queueChat(text);
+                }
                 this.close();
             };
         });
@@ -154,7 +195,12 @@ export class MenuManager {
             if (!inputEl) return;
             const text = inputEl.value.trim();
             if (text.length > 0) {
-                Danmaku.push('あなた', text.slice(0, 15), this.selectedColor);
+                const myName = (window.localPlayerInstance && window.localPlayerInstance.name) ? window.localPlayerInstance.name : 'あなた';
+                Danmaku.push(myName, text.slice(0, 15), this.selectedColor);
+
+                if (window.NetworkManager && typeof window.NetworkManager.queueChat === 'function') {
+                    window.NetworkManager.queueChat(text.slice(0, 15));
+                }
                 inputEl.value = '';
                 inputEl.blur();
                 this.close();
@@ -173,7 +219,7 @@ export class MenuManager {
     }
 
     bindCustomPicker() {
-        // 顔選択
+        // 顔選択（5種）
         const faceBtns = document.querySelectorAll('.custom-face-btn');
         faceBtns.forEach(btn => {
             btn.onclick = (e) => {
@@ -185,7 +231,7 @@ export class MenuManager {
             };
         });
 
-        // カラー選択
+        // カラー選択（8色）
         const colorBtns = document.querySelectorAll('.custom-color-btn');
         colorBtns.forEach(btn => {
             btn.onclick = (e) => {
@@ -222,25 +268,33 @@ export class MenuManager {
         const tabCount = document.getElementById('players-tab-count');
         if (!listContainer) return;
 
-        if (tabCount) tabCount.innerText = `(${playerList.length})`;
+        const count = playerList ? playerList.length : 1;
+        if (tabCount) tabCount.innerText = `(${count})`;
 
         listContainer.innerHTML = '';
+        if (!playerList || playerList.length === 0) {
+            listContainer.innerHTML = '<div style="font-size:12px;color:rgba(255,255,255,0.6);padding:12px;text-align:center;">走者はいません</div>';
+            return;
+        }
+
         playerList.forEach(p => {
             const row = document.createElement('div');
             row.className = 'participant-row';
             row.innerHTML = `
-                <div class="participant-avatar" style="background-color: ${p.color};">
-                    ${p.name.charAt(0)}
+                <div class="participant-avatar" style="background-color: ${p.color || '#00e5ff'};">
+                    ${(p.name || 'P').charAt(0)}
                 </div>
                 <div class="participant-info">
-                    <div class="participant-name">${p.name}</div>
+                    <div class="participant-name">${p.name || 'プレイヤー'}</div>
                     <div class="participant-status">● プレイ中</div>
                 </div>
                 <div class="participant-arrow">↗</div>
             `;
             row.onclick = (e) => {
                 e.stopPropagation();
-                if (p.internalUid) GravityRouter.openProfile(p.internalUid);
+                if (p.userId && p.userId !== 'local_user') {
+                    GravityRouter.openProfile(p.userId);
+                }
             };
             listContainer.appendChild(row);
         });
