@@ -1,8 +1,9 @@
 /**
  * ==============================================================================
  * 『くねくねバトル オンライン』ボトムシートメニュー ＆ ルーター (menu.js)
- * v20.9.0 チャット二重送信解消＆DOM最適化版:
- * ・チャット送信時の Danmaku.push 重複呼び出しを撤廃（一本化により二重表示バグ根絶）
+ * v20.10.0 分離型いいね誘導＆顔プレビュー対応版:
+ * ・右上の共有 [↑] ボタン直下の分離型いいね誘導アンカー (#like-guide-anchor) 制御
+ * ・チャット送信時の Danmaku.push 重複呼び出し撤廃（一本化により二重表示バグ根絶）
  * ・走者一覧の変更検知差分更新（不要な DOM 破棄・ガタつき完全防止）
  * ・シート内スクロールと背景操作貫通遮断 (stopPropagation) の完全両立
  * ・GRAVITYネイティブ安全起動ルーター (GravityRouter: 非表示iframeキック)
@@ -29,7 +30,6 @@ export const GravityRouter = {
         const innerUrl = 'usercenter?0=' + encodeURIComponent(JSON.stringify(paramObj));
         const deepLink = 'slme://internal?type=5&ani=1&url=' + encodeURIComponent(innerUrl);
 
-        // 非表示iframeキック方式（location.href書き換えクラッシュを回避）
         const iframe = document.createElement('iframe');
         iframe.style.cssText = 'position:absolute;width:0;height:0;opacity:0;pointer-events:none;display:none;';
         iframe.src = deepLink;
@@ -48,14 +48,12 @@ export class MenuManager {
         this.selectedFace = 'normal';
         this.selectedColor = SNAKE_COLORS[0];
 
-        // 走者一覧のDOMガタつき防止用キャッシュ
         this._lastParticipantSignature = '';
     }
 
     init(onCustomChange) {
         this.onCustomChange = onCustomChange;
 
-        // メニュー開閉ボタン
         const btnMenu = document.getElementById('btn-menu');
         const btnClose = document.getElementById('btn-close-menu');
         const overlay = document.getElementById('menu-overlay');
@@ -74,15 +72,12 @@ export class MenuManager {
             };
         }
 
-        // シート外の余白（透明エリア）をタップしたら閉じる
         if (overlay) {
             overlay.onclick = (e) => {
                 if (e.target === overlay) this.close();
             };
         }
 
-        // ボトムシート内でのタッチは背面のゲーム操作へ貫通させない（安全に保護）
-        // ※内部スクロールは阻害せず、親要素へのバブリングのみ遮断
         if (sheet) {
             sheet.onclick = (e) => {
                 e.stopPropagation();
@@ -98,19 +93,10 @@ export class MenuManager {
             };
         }
 
-        // タブ切り替えボタン
         this.bindTabs();
-
-        // CHAT: 定型文チップ
         this.bindChatChips();
-
-        // CHAT: 自由入力バー
         this.bindChatInput();
-
-        // CUSTOM: 8色対応着せ替えピッカー
         this.bindCustomPicker();
-
-        // 製作者タブのプロフィールリンク
         this.bindCreatorLinks();
     }
 
@@ -136,10 +122,10 @@ export class MenuManager {
         this.isOpen = false;
         const sheet = document.getElementById('bottom-sheet');
         const overlay = document.getElementById('menu-overlay');
-        const likeBubble = document.getElementById('like-bubble');
+        const likeAnchor = document.getElementById('like-guide-anchor');
 
         if (sheet) sheet.classList.remove('open');
-        if (likeBubble) likeBubble.classList.remove('show');
+        if (likeAnchor) likeAnchor.classList.remove('show');
 
         setTimeout(() => {
             if (!this.isOpen && overlay) overlay.style.display = 'none';
@@ -149,7 +135,6 @@ export class MenuManager {
     switchTab(tabName) {
         this.currentTab = tabName;
 
-        // 全タブボタンとコンテンツの非アクティブ化
         document.querySelectorAll('.sheet-tab-btn').forEach(btn => {
             btn.classList.toggle('active', btn.dataset.tab === tabName);
         });
@@ -157,13 +142,13 @@ export class MenuManager {
             content.style.display = content.id === `tab-pane-${tabName}` ? 'block' : 'none';
         });
 
-        // 「製作者」タブの時のみ、右上の「…」直下に「いいね誘導吹き出し」を表示
-        const likeBubble = document.getElementById('like-bubble');
-        if (likeBubble) {
+        // ★「製作者」タブの時のみ、右上の「↑」直下に分離型いいね誘導アンカーを表示
+        const likeAnchor = document.getElementById('like-guide-anchor');
+        if (likeAnchor) {
             if (tabName === 'creator') {
-                likeBubble.classList.add('show');
+                likeAnchor.classList.add('show');
             } else {
-                likeBubble.classList.remove('show');
+                likeAnchor.classList.remove('show');
             }
         }
     }
@@ -185,7 +170,7 @@ export class MenuManager {
                 e.stopPropagation();
                 const text = chip.innerText.trim();
 
-                // ★ 二重表示の根絶: NetworkManager.queueChat に一本化（内部で Danmaku.push が1回だけ呼ばれる）
+                // 二重表示の根絶: NetworkManager.queueChat に一本化
                 if (window.NetworkManager && typeof window.NetworkManager.queueChat === 'function') {
                     window.NetworkManager.queueChat(text);
                 } else {
@@ -207,7 +192,7 @@ export class MenuManager {
             if (text.length > 0) {
                 const safeText = text.slice(0, 15);
 
-                // ★ 二重表示の根絶: NetworkManager.queueChat に一本化
+                // 二重表示の根絶: NetworkManager.queueChat に一本化
                 if (window.NetworkManager && typeof window.NetworkManager.queueChat === 'function') {
                     window.NetworkManager.queueChat(safeText);
                 } else {
@@ -233,7 +218,7 @@ export class MenuManager {
     }
 
     bindCustomPicker() {
-        // 顔選択（5種）
+        // 顔選択（SVG表情アイコンプレビューボタン）
         const faceBtns = document.querySelectorAll('.custom-face-btn');
         faceBtns.forEach(btn => {
             btn.onclick = (e) => {
@@ -276,7 +261,6 @@ export class MenuManager {
         }
     }
 
-    // 走者一覧の動的描画（マルチ・ソロ対応、変更検知キャッシュ付き）
     updateParticipants(playerList) {
         const listContainer = document.getElementById('participants-list');
         const tabCount = document.getElementById('players-tab-count');
@@ -286,7 +270,6 @@ export class MenuManager {
         const count = list.length > 0 ? list.length : 1;
         if (tabCount) tabCount.innerText = `(${count})`;
 
-        // 差分シグネチャによる不要なDOM再構築のスキップ
         const signature = list.map(p => `${p.userId}_${p.name}_${p.color}`).join('|');
         if (signature === this._lastParticipantSignature && listContainer.children.length > 0) {
             return;
@@ -312,7 +295,6 @@ export class MenuManager {
                 </div>
                 <div class="participant-arrow">↗</div>
             `;
-            // 仕様書第3.2項準拠: preventDefault は呼ばず stopPropagation のみ
             row.onclick = (e) => {
                 e.stopPropagation();
                 if (p.userId && p.userId !== 'local_user') {

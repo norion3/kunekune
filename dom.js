@@ -1,10 +1,12 @@
 // ==============================================================================
 // 『くねくねバトル オンライン』自律DOMマウントモジュール (dom.js)
-// v20.9.0 UIクリーン化＆ユーザーネーム同期版:
-// ・ランキングパネルヘッダーの不要な「SCORE:」表示を完全撤去（「順位: ○ / ○」のみに統一）
-// ・GRAVITYユーザーネーム即時同期メソッド (updateLobbyGreeting) を配備
+// v20.10.0 UI刷新・顔プレビュー・分離型いいね誘導版:
+// ・リザルト画面から「得点送信」ボタン撤去（リトライボタン1本化＆押しやすさ向上）
+// ・カスタムタブの顔タイプを言葉から「スネーク表情プレビュー（ミニ目・眉・口）」へ刷新
+// ・参考コード準拠の分離型「いいね誘導アンカー」（三角矢印とメッセージの分離）を配備
+// ・ランキングパネルヘッダーの「SCORE:」表示撤去・順位のみに統一
+// ・GRAVITYユーザーネーム即時同期メソッド (updateLobbyGreeting) 完全維持
 // ・main.js から要求される EntryShield (通信中保護画面) 完全実装
-// ・左下SVGボタングループ ＆ 右下MENU底辺完全統一配置
 // ==============================================================================
 
 import { SNAKE_COLORS } from './constants.js';
@@ -98,7 +100,7 @@ export function mountDOM() {
     const uiLayer = document.createElement('div');
     uiLayer.id = 'ui-layer';
     uiLayer.innerHTML = `
-        <!-- 左上：ランキング展開パネル（★ SCORE表示を撤去し順位のみに統一） -->
+        <!-- 左上：ランキング展開パネル（順位のみ表示・文字ボタン廃止） -->
         <div id="stats-box" style="display: none;">
             <div class="stats-header-row">
                 <span>順位: <strong id="val-rank" style="color:#ffdd00; font-size:15px;">1</strong> / <span id="val-total">50</span></span>
@@ -107,8 +109,11 @@ export function mountDOM() {
             <div id="leaderboard-list"></div>
         </div>
 
-        <!-- 右上「…」直下 いいね誘導吹き出し -->
-        <div id="like-bubble">メニューから「❤️いいね」してね！</div>
+        <!-- ★ 右上「↑」直下 分離型いいね誘導アンカー -->
+        <div id="like-guide-anchor">
+            <div class="like-guide-arrow"></div>
+            <div class="like-guide-bubble">メニューから<br>「❤️いいね」してね！</div>
+        </div>
 
         <!-- 左下ボタングループ（ズーム＋/ー、サウンド、ランキング、マップ） -->
         <div class="bottom-left-group">
@@ -151,7 +156,7 @@ export function mountDOM() {
             </button>
         </div>
 
-        <!-- 右下：BOOST（下から168px） ＆ MENU（下から24px・底辺完全一致） -->
+        <!-- 右下：BOOST（招待ボタンの上部へ退避） ＆ MENU -->
         <div id="btn-boost">
             <svg viewBox="0 0 24 24">
                 <path d="M13 6l6 6-6 6M5 6l6 6-6 6" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
@@ -172,7 +177,7 @@ export function mountDOM() {
     `;
     document.body.appendChild(uiLayer);
 
-    // 4. ボトムシートメニュー（全画面暗転・ブラー撤廃版）
+    // 4. ボトムシートメニュー
     const menuOverlay = document.createElement('div');
     menuOverlay.id = 'menu-overlay';
     menuOverlay.innerHTML = `
@@ -212,15 +217,61 @@ export function mountDOM() {
                 <div id="participants-list" class="participants-list"></div>
             </div>
 
+            <!-- ★ CUSTOMタブ：文字から顔表情プレビューSVGボタンへ刷新 -->
             <div id="tab-pane-custom" class="sheet-tab-content" style="display: none;">
                 <div class="custom-panel">
                     <div class="custom-label">顔タイプ</div>
                     <div class="custom-row">
-                        <button class="custom-face-btn selected" data-face="normal">ノーマル</button>
-                        <button class="custom-face-btn" data-face="angry">いかり</button>
-                        <button class="custom-face-btn" data-face="happy">にこにこ</button>
-                        <button class="custom-face-btn" data-face="cool">クール</button>
-                        <button class="custom-face-btn" data-face="cute">キュート</button>
+                        <!-- 1. ノーマル -->
+                        <button class="custom-face-btn selected" data-face="normal" aria-label="ノーマル">
+                            <svg viewBox="0 0 40 40">
+                                <circle cx="15" cy="20" r="6" fill="#ffffff"/>
+                                <circle cx="25" cy="20" r="6" fill="#ffffff"/>
+                                <circle cx="16.5" cy="20" r="2.8" fill="#111827"/>
+                                <circle cx="26.5" cy="20" r="2.8" fill="#111827"/>
+                            </svg>
+                        </button>
+                        <!-- 2. いかり -->
+                        <button class="custom-face-btn" data-face="angry" aria-label="いかり">
+                            <svg viewBox="0 0 40 40">
+                                <circle cx="14" cy="21" r="5.5" fill="#ffffff"/>
+                                <circle cx="26" cy="21" r="5.5" fill="#ffffff"/>
+                                <circle cx="15.5" cy="21" r="2.6" fill="#111827"/>
+                                <circle cx="27.5" cy="21" r="2.6" fill="#111827"/>
+                                <line x1="9" y1="13" x2="19" y2="18" stroke="#111827" stroke-width="2.2" stroke-linecap="round"/>
+                                <line x1="31" y1="13" x2="21" y2="18" stroke="#111827" stroke-width="2.2" stroke-linecap="round"/>
+                            </svg>
+                        </button>
+                        <!-- 3. にこにこ -->
+                        <button class="custom-face-btn" data-face="happy" aria-label="にこにこ">
+                            <svg viewBox="0 0 40 40">
+                                <path d="M 10 22 A 5 5 0 0 1 18 22" fill="none" stroke="#111827" stroke-width="2.5" stroke-linecap="round"/>
+                                <path d="M 22 22 A 5 5 0 0 1 30 22" fill="none" stroke="#111827" stroke-width="2.5" stroke-linecap="round"/>
+                                <circle cx="9" cy="26" r="3.2" fill="rgba(255, 99, 132, 0.75)"/>
+                                <circle cx="31" cy="26" r="3.2" fill="rgba(255, 99, 132, 0.75)"/>
+                            </svg>
+                        </button>
+                        <!-- 4. クール -->
+                        <button class="custom-face-btn" data-face="cool" aria-label="クール">
+                            <svg viewBox="0 0 40 40">
+                                <rect x="8" y="15" width="10" height="9" rx="2" fill="#0f172a"/>
+                                <rect x="22" y="15" width="10" height="9" rx="2" fill="#0f172a"/>
+                                <line x1="18" y1="18" x2="22" y2="18" stroke="#38bdf8" stroke-width="2"/>
+                                <line x1="10" y1="17" x2="16" y2="17" stroke="rgba(255,255,255,0.4)" stroke-width="1.2"/>
+                                <line x1="24" y1="17" x2="30" y2="17" stroke="rgba(255,255,255,0.4)" stroke-width="1.2"/>
+                            </svg>
+                        </button>
+                        <!-- 5. キュート -->
+                        <button class="custom-face-btn" data-face="cute" aria-label="キュート">
+                            <svg viewBox="0 0 40 40">
+                                <circle cx="14" cy="20" r="6.5" fill="#ffffff"/>
+                                <circle cx="26" cy="20" r="6.5" fill="#ffffff"/>
+                                <circle cx="15" cy="20" r="3.5" fill="#0f172a"/>
+                                <circle cx="27" cy="20" r="3.5" fill="#0f172a"/>
+                                <circle cx="16.5" cy="18.5" r="1.3" fill="#ffffff"/>
+                                <circle cx="28.5" cy="18.5" r="1.3" fill="#ffffff"/>
+                            </svg>
+                        </button>
                     </div>
 
                     <div class="custom-label" style="margin-top: 8px;">カラー（8色対応）</div>
@@ -251,7 +302,7 @@ export function mountDOM() {
     `;
     document.body.appendChild(menuOverlay);
 
-    // 5. リザルト画面モーダル
+    // 5. リザルト画面モーダル（★得点送信ボタン撤去・リトライボタン1本化）
     const overScreen = document.createElement('div');
     overScreen.id = 'over-screen';
     overScreen.innerHTML = `
@@ -280,8 +331,7 @@ export function mountDOM() {
                 </div>
             </div>
             <div class="result-actions">
-                <button id="btn-retry" class="result-btn btn-retry">リトライ</button>
-                <button id="btn-submit-score" class="result-btn btn-submit-score">得点送信</button>
+                <button id="btn-retry" class="btn-retry">リトライ</button>
             </div>
         </div>
     `;

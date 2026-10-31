@@ -1,10 +1,11 @@
 // ==============================================================================
 // 『くねくねバトル オンライン』AgentSDK公式マルチプレイ通信マネージャー (network.js)
-// v20.9.0 GRAVITY公式完全準拠版:
+// v20.10.0 ホスト/ゲスト待機室双方向同期＆完全整合版:
+// ・端末B（ゲスト）参加時のスロット0（ホスト枠）誤上書きバグを完全根絶
+// ・DM招待合流（AutoJoin）時の USER_JOIN / SYNC_MEMBERS 双方向即時同期
+// ・ホスト/ゲスト双方の待機室UI (updateWaitingMembersList) 自動リアルタイム更新
 // ・GRAVITY公式APIレスポンス構造（res.data.room_id / res.room_id）完全対応
-// ・ルーム作成・参加の柔軟な成功判定（参考コード完全整合・無反応バグ根絶）
-// ・ユーザーネーム取得とDOM・グローバル変数の即時同期パイプライン
-// ・GRAVITY公式上限（4名）スロット管理 ＆ 1024バイト物理限界厳格防衛
+// ・1024バイト物理限界厳格防衛 ＆ 未入室exitハング防護
 // ==============================================================================
 
 import {
@@ -62,7 +63,7 @@ export const NetworkManager = {
         slot: i,
         clientId: null,
         userId: null,
-        name: i === 0 ? 'あなた' : `プレイヤー ${i + 1}`,
+        name: i === 0 ? 'ホスト' : `プレイヤー ${i + 1}`,
         color: SNAKE_COLORS[i % SNAKE_COLORS.length],
         isAI: i !== 0,
         joinTime: 0
@@ -124,7 +125,7 @@ export const NetworkManager = {
     },
 
     /**
-     * ユーザー情報取得の堅牢化（参考コード完全準拠・リトライ機構）
+     * ユーザー情報取得（スロット0への誤上書きを完全撤廃）
      */
     async init() {
         if (!this.isSDKAvailable) {
@@ -145,8 +146,6 @@ export const NetworkManager = {
                         portrait: uData.portrait || uData.portait || ''
                     };
                     window.GRAVITY_USER_NAME = resolvedName;
-                    this.slots[0].name = resolvedName;
-                    this.slots[0].userId = this.myUser.user_id;
 
                     // ロビー挨拶文の即時同期
                     updateLobbyGreeting(resolvedName);
@@ -199,7 +198,7 @@ export const NetworkManager = {
     },
 
     /**
-     * 参考コード完全準拠：柔軟なレスポンス構造判定によるルーム作成
+     * ルーム作成（端末Aがホストとしてスロット0を確実に専有）
      */
     async createRoom(isPrivate = false) {
         if (!this.isSDKAvailable) {
@@ -215,7 +214,6 @@ export const NetworkManager = {
             const permission = isPrivate ? 1 : 0;
             const res = await window.AgentSDK.room.create({ max_players: MAX_PLAYERS, room_permission: permission });
 
-            // ★ 参考コード完全準拠の柔軟な判定ロジック
             let isSuccess = false;
             let createdRoomId = null;
 
@@ -256,11 +254,16 @@ export const NetworkManager = {
             this.isMultiplayerActive = true;
             this.currentSeed = Math.floor(Math.random() * 90000000) + 10000000;
 
+            const myResolvedName = (typeof window !== 'undefined' && window.GRAVITY_USER_NAME)
+                ? window.GRAVITY_USER_NAME
+                : this.myUser.name;
+
+            // ★ ホスト自身をスロット0へ確定設定
             this.slots[0] = {
                 slot: 0,
                 clientId: this.clientId,
                 userId: this.myUser.user_id,
-                name: this.myUser.name,
+                name: myResolvedName,
                 color: SNAKE_COLORS[0],
                 isAI: false,
                 joinTime: performance.now()
@@ -291,7 +294,7 @@ export const NetworkManager = {
     },
 
     /**
-     * 参考コード完全準拠：柔軟なレスポンス構造判定によるルーム参加
+     * ルーム参加（端末Bがゲストとしてスロット1以降へ入室）
      */
     async joinRoom(roomId) {
         if (!this.isSDKAvailable || !roomId) return { success: false, msg: '無効な操作です' };
@@ -325,10 +328,46 @@ export const NetworkManager = {
 
             this.isHost = false;
             this.isMultiplayerActive = true;
-            this.mySlot = 1;
+            this.mySlot = 1; // ゲスト初期仮スロット
+
+            const myResolvedName = (typeof window !== 'undefined' && window.GRAVITY_USER_NAME)
+                ? window.GRAVITY_USER_NAME
+                : this.myUser.name;
+
+            // ★ スロット0を汚染せず、自分をスロット1へ仮バインド
+            this.slots[0] = {
+                slot: 0,
+                clientId: null,
+                userId: null,
+                name: 'ホスト',
+                color: SNAKE_COLORS[0],
+                isAI: false,
+                joinTime: 0
+            };
+            this.slots[1] = {
+                slot: 1,
+                clientId: this.clientId,
+                userId: this.myUser.user_id,
+                name: myResolvedName,
+                color: SNAKE_COLORS[1],
+                isAI: false,
+                joinTime: performance.now()
+            };
 
             this._startHostWatchdog();
             this._startBroadcasting();
+
+            // ★【核心】入室直後にホストへ参加通知を自発送信（ネイティブイベントの不発を完全補完）
+            setTimeout(() => {
+                this._sendCustomMessage({
+                    e: 'USER_JOIN',
+                    clientId: this.clientId,
+                    user_id: this.myUser.user_id,
+                    name: myResolvedName,
+                    portrait: this.myUser.portrait || ''
+                });
+            }, 100);
+
             Danmaku.push('システム', `ルーム #${safeRoomId.slice(-4)} に合流しました`, '#34d399', true);
 
             return { success: true };
@@ -386,11 +425,17 @@ export const NetworkManager = {
                 joinTime: performance.now()
             };
 
+            // 全端末へスロット確定一覧を同期
             this._sendCustomMessage({
                 e: 'SYNC_MEMBERS',
                 slots: this.slots,
                 seed: this.currentSeed
             });
+
+            // ホスト側の待機室UIを即時更新
+            if (typeof window !== 'undefined' && window.UIController && typeof window.UIController.updateWaitingMembersList === 'function') {
+                window.UIController.updateWaitingMembersList();
+            }
 
             Danmaku.push('参加', `${guestName} が対戦に参加しました`, this.slots[targetSlot].color);
         }
@@ -416,6 +461,10 @@ export const NetworkManager = {
             };
 
             Danmaku.push('退室', `${exitedName} が退出しました`, '#94a3b8');
+
+            if (typeof window !== 'undefined' && window.UIController && typeof window.UIController.updateWaitingMembersList === 'function') {
+                window.UIController.updateWaitingMembersList();
+            }
 
             if (isHostExited) {
                 console.warn('[NetworkManager] ホストが退出しました。自律ホスト昇格を実行します。');
@@ -465,15 +514,24 @@ export const NetworkManager = {
 
         this.isHost = true;
         this.mySlot = 0;
+
+        const myResolvedName = (typeof window !== 'undefined' && window.GRAVITY_USER_NAME)
+            ? window.GRAVITY_USER_NAME
+            : this.myUser.name;
+
         this.slots[0] = {
             slot: 0,
             clientId: this.clientId,
             userId: this.myUser.user_id,
-            name: this.myUser.name,
+            name: myResolvedName,
             color: SNAKE_COLORS[0],
             isAI: false,
             joinTime: performance.now()
         };
+
+        if (typeof window !== 'undefined' && window.UIController && typeof window.UIController.updateWaitingMembersList === 'function') {
+            window.UIController.updateWaitingMembersList();
+        }
 
         Danmaku.push('システム', 'あなたが新しいホストに昇格しました', '#ffdd00', true);
         this._isPromoting = false;
@@ -500,34 +558,27 @@ export const NetworkManager = {
                 for (let i = startIndex; i < startIndex + BATCH_SIZE && i < ais.length; i++) {
                     const ai = ais[i];
                     if (ai && !ai.isDead) {
-                        // AIのスロットはプレイヤー枠 (0〜3) と重複しない 4 以降で付与
                         const aiTuple = encodeSnakeToTuple(ai, 4 + i, false);
                         tuplesList.push(aiTuple);
                     }
                 }
             }
 
-            // 1024バイト制限対策：安全送信パイプライン（溢れたイベントは次フレームへ自動キャリーオーバー）
             const packet = {
                 e: 'P',
                 l: tuplesList
             };
 
-            // チャットは最優先で同封
             if (this._pendingChats.length > 0) {
                 packet.ch = this._pendingChats.splice(0, 3);
             }
 
-            // 餌取得タプルの安全同封（容量が許す分だけ）
             if (this._pendingPicks.length > 0) {
-                const maxPickCount = 8;
-                packet.pk = this._pendingPicks.splice(0, maxPickCount);
+                packet.pk = this._pendingPicks.splice(0, 8);
             }
 
-            // 肉片散布タプルの安全同封（容量が許す分だけ）
             if (this._pendingDrops.length > 0) {
-                const maxDropCount = 6;
-                packet.dp = this._pendingDrops.splice(0, maxDropCount);
+                packet.dp = this._pendingDrops.splice(0, 6);
             }
 
             this._sendCustomMessage(packet);
@@ -557,6 +608,12 @@ export const NetworkManager = {
             const eventType = packet.e || packet.event;
             this._lastHostPacketTime = performance.now();
             this._hasReceivedFirstHostPacket = true;
+
+            // ゲストからの自発的参加通知を受信（ホスト側処理）
+            if (eventType === 'USER_JOIN' && this.isHost) {
+                this._handleUserJoined(packet);
+                return;
+            }
 
             if (eventType === 'P' || eventType === 'POS') {
                 const incomingList = packet.l || packet.list;
@@ -600,10 +657,24 @@ export const NetworkManager = {
             if (eventType === 'SYNC_MEMBERS') {
                 if (Array.isArray(packet.slots)) {
                     this.slots = packet.slots;
-                    const mySlotData = this.slots.find(s => s.userId && String(s.userId) === String(this.myUser.user_id));
+
+                    // 自分のUIDまたはclientIdから正規スロットを特定
+                    const mySlotData = this.slots.find(s => 
+                        (s.userId && String(s.userId) === String(this.myUser.user_id)) ||
+                        (s.clientId && s.clientId === this.clientId)
+                    );
                     if (mySlotData) {
                         this.mySlot = mySlotData.slot;
+                        if (window.localPlayerInstance) {
+                            window.localPlayerInstance.color = mySlotData.color;
+                        }
                     }
+
+                    // 待機室画面のリストを即座に再描画
+                    if (typeof window !== 'undefined' && window.UIController && typeof window.UIController.updateWaitingMembersList === 'function') {
+                        window.UIController.updateWaitingMembersList();
+                    }
+
                     Menu.updateParticipants(this.slots.filter(s => !s.isAI));
                 }
                 if (packet.seed && packet.seed !== this.currentSeed) {
@@ -618,7 +689,6 @@ export const NetworkManager = {
 
     /**
      * 1024バイト厳守ガード付き送信ラッパー
-     * ルートオブジェクトは { message: string } のみ許可
      */
     _sendCustomMessage(msgObj) {
         if (!this.isSDKAvailable || !window.AgentSDK.room || typeof window.AgentSDK.room.sendMessage !== 'function') return;
@@ -626,7 +696,6 @@ export const NetworkManager = {
             const rawString = JSON.stringify(msgObj);
             const byteLength = getUtf8ByteLength(rawString);
 
-            // 1024バイト（物理限界）の厳格チェック
             if (byteLength >= 1020) {
                 console.warn(`[NetworkManager] パケットサイズが1KB制限に接近 (${byteLength} bytes)。過剰データを切り離して送出します。`);
                 delete msgObj.dp;

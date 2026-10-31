@@ -1,10 +1,12 @@
 // ==============================================================================
 // 『くねくねバトル オンライン』Phase 5 マスター統合オーケストレーター (main.js)
-// v20.9.0 ユーザーネーム完全同期＆チャット整合版:
+// v20.10.0 完全統合版:
+// ・リトライボタン押下時のリザルト画面即時非表示＆ゲーム/待機室完全復帰
+// ・ゲームオーバー時のGRAVITY公式スコア完全自動送信 (postMessage)
+// ・ズーム倍率限界時のボタン .disabled リアルタイム更新
+// ・自律生態系AI連携用ワールドインスタンス参照バインド
 // ・GRAVITY公式ユーザーネームの自機スネーク・ロビー即時反映パイプライン
 // ・ゲスト端末でのローカルAI二重生成を完全遮断（ホストのみAI統括）
-// ・餌捕食 (queueFoodPick) ＆ 撃破肉片散布 (queueDropFood) 通信同期完全接続
-// ・リモート走者参加時の描画タイムラグ（最大10フレーム）を完全解消
 // ・二重ループ起動防止 (animFrameId) ＆ EntryShield 通信ロック
 // ==============================================================================
 
@@ -86,6 +88,9 @@ const collisionEngine = new SpatialCollisionEngine();
 const world = new WorldManager();
 const aiManager = new AIManager();
 
+// ★ 自律生態系AIが肉片ドロップ（ハイエナモード）を検知するためのグローバル参照
+window.currentWorldInstance = world;
+
 let player = new Snake(true, 0, 'あなた', SNAKE_COLORS[0], 'normal');
 let remoteSnakes = new Map();
 let allSnakes = [];
@@ -115,6 +120,7 @@ export const UIController = {
         gameState = 'waiting';
         document.getElementById('lobby-overlay').style.display = 'none';
         document.getElementById('waiting-overlay').style.display = 'flex';
+        document.getElementById('over-screen').style.display = 'none';
         document.getElementById('waiting-room-tag').innerText = `ROOM #${String(roomId).slice(-5)}`;
         document.getElementById('btn-waiting-start').style.display = NetworkManager.isHost ? 'block' : 'none';
         this.updateWaitingMembersList();
@@ -160,9 +166,20 @@ export const UIController = {
     }
 };
 
+// --- ズームボタンのdisabled状態更新 ---
+function updateZoomButtonsState() {
+    const btnIn = document.getElementById('btn-zoom-in');
+    const btnOut = document.getElementById('btn-zoom-out');
+    if (btnIn) {
+        btnIn.classList.toggle('disabled', input.zoomMultiplier >= 1.39);
+    }
+    if (btnOut) {
+        btnOut.classList.toggle('disabled', input.zoomMultiplier <= 0.46);
+    }
+}
+
 // --- ゲーム初期化 ---
 function initGame() {
-    // 以前のループが回っていれば確実に停止して二重起動（倍速化・発熱）を防止
     if (animFrameId) {
         cancelAnimationFrame(animFrameId);
         animFrameId = null;
@@ -178,7 +195,6 @@ function initGame() {
     const spawnY = MAP_SIZE / 2 + (Math.random() - 0.5) * 4000;
     player.reset(spawnX, spawnY);
 
-    // ★ ユーザーネーム解決：GRAVITY_USER_NAME を最優先で採用
     const resolvedPlayerName = (typeof window !== 'undefined' && window.GRAVITY_USER_NAME)
         ? window.GRAVITY_USER_NAME
         : (NetworkManager.myUser && NetworkManager.myUser.name !== 'あなた' ? NetworkManager.myUser.name : 'あなた');
@@ -186,12 +202,10 @@ function initGame() {
     player.name = resolvedPlayerName;
     player.color = SNAKE_COLORS[NetworkManager.mySlot % SNAKE_COLORS.length];
 
-    // リトライ・別ルーム入室時の初期化漏れ完全ガード
     remoteSnakes.clear();
     world.clear();
     collisionEngine.clear();
 
-    // 💡 ゲスト端末でのAI二重生成を完全遮断：ホスト端末またはソロプレイ時のみローカルAIを生成
     const isGuest = NetworkManager.isMultiplayerActive && !NetworkManager.isHost;
     if (!isGuest) {
         aiManager.init(MAX_AIS, player.x, player.y);
@@ -205,6 +219,7 @@ function initGame() {
 
     sortedSnakes = [...allSnakes];
     Menu.updateParticipants(NetworkManager.slots.filter(s => !s.isAI));
+    updateZoomButtonsState();
     
     animFrameId = requestAnimationFrame(gameLoop);
 }
@@ -225,7 +240,6 @@ NetworkManager.setCallbacks({
 
             if (!allSnakes.includes(remote)) {
                 allSnakes.push(remote);
-                // 💡 描画タイムラグ完全解消：参加した瞬間にソートリストへ即時反映
                 if (!sortedSnakes.includes(remote)) {
                     sortedSnakes.push(remote);
                 }
@@ -241,7 +255,7 @@ NetworkManager.setCallbacks({
         remote.isBoosting = data.isBoosting;
         remote.isDead = data.isDead;
         remote.kills = data.kills;
-        remote.lastPacketTime = performance.now(); // 通信切断（ゾンビ）判定用タイムスタンプ
+        remote.lastPacketTime = performance.now();
         remote.recalculateSize();
     },
 
@@ -249,7 +263,6 @@ NetworkManager.setCallbacks({
         const key = `${pick.gx}_${pick.gy}`;
         const list = world.foodGrid.get(key);
         if (list && list[pick.index]) {
-            // O(1)末尾スワップ削除によるGC負荷削減
             list[pick.index] = list[list.length - 1];
             list.pop();
         }
@@ -281,12 +294,14 @@ if (btnZoomIn) {
     btnZoomIn.onclick = (e) => {
         e.stopPropagation();
         input.zoomMultiplier = Math.min(1.40, input.zoomMultiplier + 0.12);
+        updateZoomButtonsState();
     };
 }
 if (btnZoomOut) {
     btnZoomOut.onclick = (e) => {
         e.stopPropagation();
         input.zoomMultiplier = Math.max(0.45, input.zoomMultiplier - 0.12);
+        updateZoomButtonsState();
     };
 }
 
@@ -321,7 +336,6 @@ if (soundBtn) {
 
 const btnLobbySolo = document.getElementById('btn-lobby-solo');
 if (btnLobbySolo) {
-    // iOS連打ガード (デバウンス) の適用
     let lastSoloTap = 0;
     const onSoloTap = (e) => {
         if(e) { e.preventDefault(); e.stopPropagation(); }
@@ -455,9 +469,15 @@ Menu.init((face, color) => {
     Danmaku.push('システム', 'アバターを変更しました', color, true);
 });
 
+// ★ リトライボタン：リザルト画面を確実に即時非表示化してゲームまたは待機室に完全復帰
 const btnRetry = document.getElementById('btn-retry');
 if (btnRetry) {
     btnRetry.onclick = () => {
+        const overScreen = document.getElementById('over-screen');
+        if (overScreen) {
+            overScreen.style.display = 'none';
+        }
+
         if (NetworkManager.isMultiplayerActive) {
             UIController.showWaitingRoom(NetworkManager.currentRoomId);
         } else {
@@ -466,27 +486,25 @@ if (btnRetry) {
     };
 }
 
-const btnSubmit = document.getElementById('btn-submit-score');
-if (btnSubmit) {
-    btnSubmit.onclick = () => {
-        try {
-            if (window.parent) {
-                window.parent.postMessage({
-                    type: 'gameOver',
-                    score: Math.floor(player.score)
-                }, '*');
-                Danmaku.push('システム', '得点を送信しました！', '#34d399', true);
-            }
-        } catch (err) {
-            console.warn('Score submission error:', err);
-        }
-    };
-}
-
+// ゲームオーバー処理 ＆ スコア完全自動送信
 function handleGameOver() {
     gameState = 'gameover';
     Sound.stopBoostSound();
     Sound.playCrash();
+
+    // ★ GRAVITY公式仕様：ゲームオーバー時にスコアを即時自動送信
+    try {
+        const finalScore = Math.floor(player.score);
+        if (window.parent && window.parent !== window) {
+            window.parent.postMessage({
+                type: 'gameOver',
+                score: finalScore
+            }, '*');
+            console.log(`[Score] Auto submitted score to GRAVITY: ${finalScore}`);
+        }
+    } catch (err) {
+        console.warn('Auto score submission error:', err);
+    }
 
     const overScreen = document.getElementById('over-screen');
     if (!overScreen) return;
@@ -552,7 +570,6 @@ function gameLoop() {
         remoteSnakes.forEach(remote => {
             if (remote.isDead) return;
 
-            // 5秒間パケットが途絶えたら通信切断（ゾンビ）とみなして強制キル
             const timeSinceLastPacket = performance.now() - (remote.lastPacketTime || performance.now());
             if (timeSinceLastPacket > 5000) {
                 remote.die();
@@ -565,7 +582,6 @@ function gameLoop() {
                     remote.x = remote.targetNetX;
                     remote.y = remote.targetNetY;
                 } else {
-                    // 時間依存の推測航法（LERP）によりジッターを防止
                     const lerpFactor = 1.0 - Math.exp(-15.0 * dtSec);
                     remote.x += (remote.targetNetX - remote.x) * lerpFactor;
                     remote.y += (remote.targetNetY - remote.y) * lerpFactor;
@@ -574,7 +590,6 @@ function gameLoop() {
             remote.updatePhysics(remote.targetAngle, remote.isBoosting);
         });
 
-        // ホスト端末またはソロプレイ時のみAIを思考・駆動
         if (!NetworkManager.isMultiplayerActive || NetworkManager.isHost) {
             aiManager.update(player, allSnakes, frameCount);
         }
@@ -594,7 +609,6 @@ function gameLoop() {
         world.updateChunks(player.x, player.y, viewRange);
         world.updateParticles();
 
-        // 餌捕食判定 ＆ マルチプレイ同期
         for (let i = 0; i < allSnakes.length; i++) {
             const s = allSnakes[i];
             if (s.isDead || !s.isVisible) continue;
@@ -603,7 +617,6 @@ function gameLoop() {
                     if (food.isBig) Sound.playEatBig();
                     else Sound.playEatSmall();
 
-                    // 💡 捕食イベントをネットワークキューへ同期
                     if (gx !== null && gy !== null && foodIndex !== undefined) {
                         NetworkManager.queueFoodPick(gx, gy, foodIndex);
                     }
@@ -611,12 +624,10 @@ function gameLoop() {
             });
         }
 
-        // 衝突判定 ＆ 撃破肉片散布同期
         collisionEngine.registerBodies(allSnakes);
         collisionEngine.checkHeadCollisions(allSnakes, (killer, victim) => {
             world.spawnDeathDrop(victim);
 
-            // 💡 撃破時の肉片散布をネットワークキューへ同期（ホストが管轄）
             if (NetworkManager.isMultiplayerActive && NetworkManager.isHost) {
                 const colorIdx = SNAKE_COLORS.indexOf(victim.color);
                 NetworkManager.queueDropFood(victim.x, victim.y, 25, colorIdx >= 0 ? colorIdx : 0);
@@ -630,7 +641,6 @@ function gameLoop() {
             }
         });
 
-        // リーダーボード更新
         if (frameCount % 10 === 0) {
             sortedSnakes = [...allSnakes].sort((a, b) => b.score - a.score);
             const myRank = sortedSnakes.filter(s => !s.isDead).findIndex(s => s === player) + 1;
