@@ -1,7 +1,10 @@
 /**
  * ==============================================================================
  * 『くねくねバトル オンライン』ニコニコ風弾幕チャットエンジン (danmaku.js)
- * 画面上部（18%〜36%）の視界を塞がない領域に4レーンで横断アニメーション
+ * v20.8.0 メモリリーク防止＆タイマー安全管理版:
+ * ・animationend イベントとタイマーの二重安全回収による DOM 破棄漏れ完全防止
+ * ・ルーム入退室・リセット時の clear() パージ機構
+ * ・画面上部（18%〜36%）視界阻害ゼロの 4レーン横断アニメーション
  * ==============================================================================
  */
 
@@ -18,6 +21,17 @@ export class DanmakuManager {
 
     init() {
         this.container = document.getElementById('danmaku-container');
+    }
+
+    // セッション切り替え・リセット時の残存弾幕完全パージ
+    clear() {
+        if (this.container) {
+            this.container.innerHTML = '';
+        }
+        const now = Date.now();
+        for (let i = 0; i < this.lanes.length; i++) {
+            this.lanes[i].busyUntil = now;
+        }
     }
 
     // 弾幕メッセージの投入
@@ -51,14 +65,23 @@ export class DanmakuManager {
             `;
         }
 
-        this.container.appendChild(item);
-
-        // 4.6秒後に自動消去
-        setTimeout(() => {
+        // 安全な要素破棄ルーチン（二重実行防止）
+        let removed = false;
+        const removeElement = () => {
+            if (removed) return;
+            removed = true;
             if (item && item.parentNode) {
                 item.parentNode.removeChild(item);
             }
-        }, 4600);
+        };
+
+        // CSSアニメーション終了時の自動破棄
+        item.addEventListener('animationend', removeElement, { once: true });
+
+        // フォールバック安全タイマー（4.6秒）
+        setTimeout(removeElement, 4600);
+
+        this.container.appendChild(item);
     }
 
     escapeHTML(str) {

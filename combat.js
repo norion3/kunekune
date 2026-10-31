@@ -1,13 +1,16 @@
 /**
  * ==============================================================================
  * 『くねくねバトル オンライン』ゼロアロケーション空間ハッシュ衝突判定エンジン (combat.js)
- * v18.0.0 限界突破パッチ:
+ * v20.2.0 限界突破＆メモリ安定化版:
+ * ・ノードプール最大長ガード＆循環参照カットによるメモリリーク完全防止
  * ・リングバッファ O(1) 配列アクセス対応
  * ・理不尽デス回避: 無敵終了時に敵の胴体と重なっていた場合、ノックバック＆無敵延長で保護
  * ==============================================================================
  */
 
 import { GRID_SIZE } from './constants.js';
+
+const MAX_POOL_CAPACITY = 4096; // メモリ肥大化を防ぐプール上限値
 
 export class SpatialCollisionEngine {
     constructor() {
@@ -18,6 +21,18 @@ export class SpatialCollisionEngine {
 
     clear() {
         this.grid.clear();
+
+        // 長時間プレイ時のメモリ肥大化を防ぐ安全トリミング
+        if (this.nodePool.length > MAX_POOL_CAPACITY) {
+            this.nodePool.length = MAX_POOL_CAPACITY;
+        }
+
+        // ガベージコレクタを阻害しないよう、使用済みノードのエンティティ参照を解放
+        const limit = Math.min(this.poolIndex, this.nodePool.length);
+        for (let i = 0; i < limit; i++) {
+            this.nodePool[i].snake = null;
+        }
+
         this.poolIndex = 0;
     }
 
@@ -96,18 +111,18 @@ export class SpatialCollisionEngine {
                         const bodyNode = bodies[b];
                         const killer = bodyNode.snake;
                         
-                        if (killer === victim) continue; 
+                        if (!killer || killer === victim) continue; 
 
                         const dx = hx - bodyNode.x;
                         const dy = hy - bodyNode.y;
                         const minDist = hRadius + bodyNode.radius * 0.75;
 
-                        // 接触判定
+                        // 接触判定（二乗距離判定で平方根計算を回避）
                         if (dx * dx + dy * dy < minDist * minDist) {
                             const isVictimInvuln = victim.invulnerableTimer && victim.invulnerableTimer > 0;
                             const isKillerInvuln = killer.invulnerableTimer && killer.invulnerableTimer > 0;
 
-                            // ★ 限界突破パッチ: 理不尽デス回避（重なり時の無敵延長＆ノックバック）
+                            // 理不尽デス回避（重なり時の無敵延長＆ノックバック）
                             if (isVictimInvuln || isKillerInvuln) {
                                 if (isVictimInvuln && victim.invulnerableTimer < 0.2) {
                                     victim.invulnerableTimer = 0.5; // 無敵延長

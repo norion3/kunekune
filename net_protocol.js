@@ -3,6 +3,7 @@
 // ・ゼロアロケーション純粋算術丸め（文字列インスタンス生成ゼロ）
 // ・スネーク走者9要素タプル規格（1人あたり約32バイト、1KB制限完全クリア）
 // ・餌取得・散布肉片・チャットの極小タプルシリアライザー
+// ・1KB制限超過防止用 UTF-8 バイト長計算ヘルパー
 // ==============================================================================
 
 // --- 高速・ゼロアロケーション純粋算術丸めヘルパー ---
@@ -12,6 +13,28 @@ export const round2 = (val) => Math.round(val * 100) / 100;
 // --- クライアント固有の一意ID生成 ---
 export function generateClientId() {
     return 'client_' + Math.random().toString(36).substring(2, 9) + '_' + Date.now();
+}
+
+/**
+ * 文字列のUTF-8バイト長を高速計算（1024バイト制限判定用）
+ * @param {string} str 対象文字列
+ * @returns {number} バイト数
+ */
+export function getUtf8ByteLength(str) {
+    if (!str) return 0;
+    let bytes = 0;
+    for (let i = 0; i < str.length; i++) {
+        const code = str.charCodeAt(i);
+        if (code <= 0x7f) bytes += 1;
+        else if (code <= 0x7ff) bytes += 2;
+        else if (code >= 0xd800 && code <= 0xdbff) {
+            bytes += 4;
+            i++; // サロゲートペア
+        } else {
+            bytes += 3;
+        }
+    }
+    return bytes;
 }
 
 /**

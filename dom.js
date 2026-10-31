@@ -1,14 +1,76 @@
 // ==============================================================================
 // 『くねくねバトル オンライン』自律DOMマウントモジュール (dom.js)
-// v16.0.0 改訂:
-// ・上部文字ボタン（RANKING / MAP: ON）を完全撤廃
-// ・左下ボタングループ（サウンド、ランキング、マップトグル ＆ 縦並びズーム＋/ー）
-// ・絵文字完全排除・高品位SVGベクターアイコン採用
+// v20.1.0 完全修復版:
+// ・main.js から要求される EntryShield (通信中保護画面) を完全実装・エクスポート
+// ・上部文字ボタン（RANKING / MAP: ON）完全撤廃・高品位SVGアイコン統一
+// ・左下ボタングループ（ズーム＋/ー、サウンド、ランキング、マップトグル）
 // ・右下一番下（bottom: 24px）MENUボタン配置
 // ・CUSTOMタブ 8色パレットピッカー展開
 // ==============================================================================
 
 import { SNAKE_COLORS } from './constants.js';
+
+// ==============================================================================
+// 接続中・非同期処理保護オーバーレイ (EntryShield)
+// 非同期処理中（ルーム作成・入退室等）のユーザー誤操作・連打をロック
+// ==============================================================================
+export const EntryShield = {
+    el: null,
+    titleEl: null,
+    subEl: null,
+
+    ensure() {
+        if (this.el) return;
+        this.el = document.createElement('div');
+        this.el.id = 'entry-shield-overlay';
+        this.el.style.cssText = `
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(11, 5, 26, 0.85);
+            backdrop-filter: blur(8px);
+            -webkit-backdrop-filter: blur(8px);
+            z-index: 9999;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            color: #ffffff;
+            pointer-events: auto;
+        `;
+        this.el.innerHTML = `
+            <div style="
+                width: 44px;
+                height: 44px;
+                border: 3px solid rgba(0, 229, 255, 0.2);
+                border-top-color: #00e5ff;
+                border-radius: 50%;
+                animation: entry-spin 0.8s linear infinite;
+                margin-bottom: 16px;
+            "></div>
+            <style>
+                @keyframes entry-spin { to { transform: rotate(360deg); } }
+            </style>
+            <div id="entry-shield-title" style="font-size: 16px; font-weight: 800; color: #00e5ff; letter-spacing: 1px;">CONNECTING...</div>
+            <div id="entry-shield-sub" style="font-size: 12px; color: #bae6fd; margin-top: 6px;">通信中...</div>
+        `;
+        document.body.appendChild(this.el);
+        this.titleEl = document.getElementById('entry-shield-title');
+        this.subEl = document.getElementById('entry-shield-sub');
+    },
+
+    show(title = 'CONNECTING...', sub = '通信処理中...') {
+        this.ensure();
+        if (this.titleEl) this.titleEl.innerText = title;
+        if (this.subEl) this.subEl.innerText = sub;
+        this.el.style.display = 'flex';
+    },
+
+    hide() {
+        if (this.el) {
+            this.el.style.display = 'none';
+        }
+    }
+};
 
 export function mountDOM() {
     if (document.getElementById('game-canvas')) return;

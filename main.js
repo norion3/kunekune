@@ -1,9 +1,10 @@
 // ==============================================================================
 // 『くねくねバトル オンライン』Phase 5 マスター統合オーケストレーター (main.js)
-// v20.0.0 究極最適化:
-// ・二重ループ起動(メモリリーク・倍速化)を完全遮断する animFrameId 管理
-// ・EntryShield (通信中保護画面) を復刻し、非同期処理中の意図せぬ状態遷移をロック
-// ・リトライ・別ルーム入退室時の配列・タイマーの安全なクリーンアップ
+// v20.4.0 完全同期＆描画安定化版:
+// ・ゲスト端末でのローカルAI二重生成を完全遮断（ホストのみAI統括）
+// ・餌捕食 (queueFoodPick) ＆ 撃破肉片散布 (queueDropFood) 通信同期完全接続
+// ・リモート走者参加時の描画タイムラグ（最大10フレーム）を完全解消
+// ・二重ループ起動防止 (animFrameId) ＆ EntryShield 通信ロック
 // ==============================================================================
 
 import { injectStyles } from './style.js';
@@ -15,6 +16,7 @@ mountDOM();
 import {
     MAP_SIZE,
     TOTAL_SNAKES,
+    MAX_AIS,
     SAFE_INSET_TOP_GRAVITY,
     SAFE_INSET_TOP_WEB,
     SNAKE_COLORS
@@ -92,8 +94,8 @@ let gameState = 'lobby';
 let gameStartTime = Date.now();
 let frameCount = 0;
 let cameraScale = 1.0;
-let animFrameId = null; // ★ 二重ループ防止用
-let lastFrameTime = Date.now(); // ★ 追加: DeltaTime計算用
+let animFrameId = null; // 二重ループ防止用
+let lastFrameTime = Date.now(); // DeltaTime計算用
 
 window.localPlayerInstance = player;
 window.allAISnakesInstance = aiManager.ais;
@@ -153,7 +155,7 @@ export const UIController = {
 
 // --- ゲーム初期化 ---
 function initGame() {
-    // ★ 以前のループが回っていれば確実に停止して二重起動（倍速化・発熱）を防止
+    // 以前のループが回っていれば確実に停止して二重起動（倍速化・発熱）を防止
     if (animFrameId) {
         cancelAnimationFrame(animFrameId);
         animFrameId = null;
@@ -163,6 +165,7 @@ function initGame() {
 
     gameStartTime = Date.now();
     frameCount = 0;
+    lastFrameTime = Date.now();
 
     const spawnX = MAP_SIZE / 2 + (Math.random() - 0.5) * 4000;
     const spawnY = MAP_SIZE / 2 + (Math.random() - 0.5) * 4000;
@@ -175,17 +178,24 @@ function initGame() {
     }
     player.color = SNAKE_COLORS[NetworkManager.mySlot % SNAKE_COLORS.length];
 
-    aiManager.init(42, player.x, player.y);
-    window.allAISnakesInstance = aiManager.ais;
-
-    // ★ リトライ・別ルーム入室時の初期化漏れ完全ガード
+    // リトライ・別ルーム入室時の初期化漏れ完全ガード
     remoteSnakes.clear();
     world.clear();
     collisionEngine.clear();
 
-    allSnakes = [player, ...aiManager.ais];
-    sortedSnakes = [...allSnakes];
+    // 💡 ゲスト端末でのAI二重生成を完全遮断：ホスト端末またはソロプレイ時のみローカルAIを生成
+    const isGuest = NetworkManager.isMultiplayerActive && !NetworkManager.isHost;
+    if (!isGuest) {
+        aiManager.init(MAX_AIS, player.x, player.y);
+        window.allAISnakesInstance = aiManager.ais;
+        allSnakes = [player, ...aiManager.ais];
+    } else {
+        aiManager.ais = [];
+        window.allAISnakesInstance = [];
+        allSnakes = [player];
+    }
 
+    sortedSnakes = [...allSnakes];
     Menu.updateParticipants(NetworkManager.slots.filter(s => !s.isAI));
     
     animFrameId = requestAnimationFrame(gameLoop);
@@ -197,9 +207,9 @@ NetworkManager.setCallbacks({
 
         let remote = remoteSnakes.get(data.slot);
         if (!remote) {
-            const isPlayerSlot = data.slot < 8;
+            const isPlayerSlot = data.slot < 4;
             const color = SNAKE_COLORS[data.slot % SNAKE_COLORS.length];
-            const name = NetworkManager.slots[data.slot] ? NetworkManager.slots[data.slot].name : (isPlayerSlot ? `P${data.slot + 1}` : `CPU ${data.slot - 7}`);
+            const name = NetworkManager.slots[data.slot] ? NetworkManager.slots[data.slot].name : (isPlayerSlot ? `P${data.slot + 1}` : `CPU ${data.slot - 3}`);
 
             remote = new Snake(false, data.slot, name, color, 'normal');
             remote.reset(data.x, data.y);
@@ -207,6 +217,10 @@ NetworkManager.setCallbacks({
 
             if (!allSnakes.includes(remote)) {
                 allSnakes.push(remote);
+                // 💡 描画タイムラグ完全解消：参加した瞬間にソートリストへ即時反映
+                if (!sortedSnakes.includes(remote)) {
+                    sortedSnakes.push(remote);
+                }
             }
         }
 
@@ -219,7 +233,7 @@ NetworkManager.setCallbacks({
         remote.isBoosting = data.isBoosting;
         remote.isDead = data.isDead;
         remote.kills = data.kills;
-        remote.lastPacketTime = performance.now(); // ★ 追加: 通信切断（ゾンビ）判定用タイムスタンプ
+        remote.lastPacketTime = performance.now(); // 通信切断（ゾンビ）判定用タイムスタンプ
         remote.recalculateSize();
     },
 
@@ -227,7 +241,7 @@ NetworkManager.setCallbacks({
         const key = `${pick.gx}_${pick.gy}`;
         const list = world.foodGrid.get(key);
         if (list && list[pick.index]) {
-            // 💡 O(1)末尾スワップ削除によるGC負荷削減
+            // O(1)末尾スワップ削除によるGC負荷削減
             list[pick.index] = list[list.length - 1];
             list.pop();
         }
@@ -299,7 +313,7 @@ if (soundBtn) {
 
 const btnLobbySolo = document.getElementById('btn-lobby-solo');
 if (btnLobbySolo) {
-    // 💡 iOS連打ガード (デバウンス) の適用
+    // iOS連打ガード (デバウンス) の適用
     let lastSoloTap = 0;
     const onSoloTap = (e) => {
         if(e) { e.preventDefault(); e.stopPropagation(); }
@@ -530,7 +544,7 @@ function gameLoop() {
         remoteSnakes.forEach(remote => {
             if (remote.isDead) return;
 
-            // ★ 限界突破パッチ: 5秒間パケットが途絶えたら通信切断（ゾンビ）とみなして強制キル
+            // 5秒間パケットが途絶えたら通信切断（ゾンビ）とみなして強制キル
             const timeSinceLastPacket = performance.now() - (remote.lastPacketTime || performance.now());
             if (timeSinceLastPacket > 5000) {
                 remote.die();
@@ -543,7 +557,7 @@ function gameLoop() {
                     remote.x = remote.targetNetX;
                     remote.y = remote.targetNetY;
                 } else {
-                    // ★ 限界突破パッチ: 時間依存の推測航法（LERP）により、60/120FPS環境でもジッター（微振動）なくヌルヌル動かす
+                    // 時間依存の推測航法（LERP）によりジッターを防止
                     const lerpFactor = 1.0 - Math.exp(-15.0 * dtSec);
                     remote.x += (remote.targetNetX - remote.x) * lerpFactor;
                     remote.y += (remote.targetNetY - remote.y) * lerpFactor;
@@ -552,6 +566,7 @@ function gameLoop() {
             remote.updatePhysics(remote.targetAngle, remote.isBoosting);
         });
 
+        // ホスト端末またはソロプレイ時のみAIを思考・駆動
         if (!NetworkManager.isMultiplayerActive || NetworkManager.isHost) {
             aiManager.update(player, allSnakes, frameCount);
         }
@@ -563,27 +578,42 @@ function gameLoop() {
         for (let i = 0; i < allSnakes.length; i++) {
             const s = allSnakes[i];
             if (s === player) continue;
-            const dist = Math.hypot(s.x - player.x, s.y - player.y);
-            s.isVisible = dist < viewRange;
+            const dx = s.x - player.x;
+            const dy = s.y - player.y;
+            s.isVisible = (dx * dx + dy * dy) < (viewRange * viewRange);
         }
 
         world.updateChunks(player.x, player.y, viewRange);
         world.updateParticles();
 
+        // 餌捕食判定 ＆ マルチプレイ同期
         for (let i = 0; i < allSnakes.length; i++) {
             const s = allSnakes[i];
             if (s.isDead || !s.isVisible) continue;
-            world.checkFoodConsumption(s, (eater, food) => {
+            world.checkFoodConsumption(s, (eater, food, gx, gy, foodIndex) => {
                 if (eater.isPlayer) {
                     if (food.isBig) Sound.playEatBig();
                     else Sound.playEatSmall();
+
+                    // 💡 捕食イベントをネットワークキューへ同期
+                    if (gx !== null && gy !== null && foodIndex !== undefined) {
+                        NetworkManager.queueFoodPick(gx, gy, foodIndex);
+                    }
                 }
             });
         }
 
+        // 衝突判定 ＆ 撃破肉片散布同期
         collisionEngine.registerBodies(allSnakes);
         collisionEngine.checkHeadCollisions(allSnakes, (killer, victim) => {
             world.spawnDeathDrop(victim);
+
+            // 💡 撃破時の肉片散布をネットワークキューへ同期（ホストが管轄）
+            if (NetworkManager.isMultiplayerActive && NetworkManager.isHost) {
+                const colorIdx = SNAKE_COLORS.indexOf(victim.color);
+                NetworkManager.queueDropFood(victim.x, victim.y, 25, colorIdx >= 0 ? colorIdx : 0);
+            }
+
             if (victim.isPlayer) {
                 handleGameOver();
             } else if (killer.isPlayer) {
@@ -592,6 +622,7 @@ function gameLoop() {
             }
         });
 
+        // リーダーボード更新
         if (frameCount % 10 === 0) {
             sortedSnakes = [...allSnakes].sort((a, b) => b.score - a.score);
             const myRank = sortedSnakes.filter(s => !s.isDead).findIndex(s => s === player) + 1;

@@ -1,13 +1,14 @@
 // ==============================================================================
 // 『くねくねバトル オンライン』スネークエンティティクラス (snake.js)
-// v18.0.0 限界突破パッチ:
-// ・リングバッファ導入: 毎フレームの unshift による O(N) CPU負荷を完全撤廃
-// ・GC（ガベージコレクション）スパイクと発熱を根絶するゼロアロケーション構造
+// v20.3.0 パス連結・描画負荷劇的軽減版:
+// ・胴体体節の個別 beginPath/fill を単一パス走査へ連結し、GPUドローコールを半減
+// ・リングバッファ O(1) 配列アクセスによるゼロアロケーション維持
+// ・表情描画・無敵点滅・減衰物理モデル完全継承
 // ==============================================================================
 
 import { BASE_SPEED, BOOST_SPEED_MULT, TURN_SPEED_PLAYER, MAP_SIZE } from './constants.js';
 
-const MAX_HISTORY = 2048; // ★ リングバッファ最大長
+const MAX_HISTORY = 2048; // リングバッファ最大長
 
 export class Snake {
     constructor(isPlayer = false, id = 0, name = '', color = '#00e5ff', face = 'normal') {
@@ -29,7 +30,7 @@ export class Snake {
         this.size = 14;
         this.targetLength = 16;
         
-        // ★ 限界突破パッチ: ゼロアロケーション・リングバッファ
+        // ゼロアロケーション・リングバッファ
         this.history = new Array(MAX_HISTORY);
         this.headIdx = 0;
         this.historyLength = 0;
@@ -82,6 +83,10 @@ export class Snake {
         this.recalculateSize();
     }
 
+    die() {
+        this.isDead = true;
+    }
+
     updatePhysics(inputAngle, boostActive) {
         if (this.isDead) return;
 
@@ -122,7 +127,7 @@ export class Snake {
             }
         }
 
-        // ★ 限界突破パッチ: O(1) リングバッファへの座標格納（GC負荷ゼロ）
+        // O(1) リングバッファへの座標格納（GC負荷ゼロ）
         this.distCounter += this.speed;
         const stepDist = this.size * 0.55;
         if (this.distCounter >= stepDist) {
@@ -140,7 +145,7 @@ export class Snake {
             if (this.historyLength < this.targetLength) {
                 this.historyLength++;
             } else if (this.historyLength > this.targetLength) {
-                this.historyLength = this.targetLength; // サイズ減少時に安全に無視
+                this.historyLength = this.targetLength;
             }
         }
     }
@@ -156,7 +161,9 @@ export class Snake {
 
         const histLen = this.historyLength;
 
-        // ★ O(1) リングバッファからの読み出し描画
+        // 💡 描画負荷激減：胴体体節を一括パス連結で描画（ドローコールを1回に削減）
+        ctx.fillStyle = this.color;
+        ctx.beginPath();
         for (let i = histLen - 1; i >= 0; i--) {
             const idx = (this.headIdx + i) % MAX_HISTORY;
             const pt = this.history[idx];
@@ -170,20 +177,36 @@ export class Snake {
             const drawX = pt.x + Math.cos(normAngle) * waveOffset;
             const drawY = pt.y + Math.sin(normAngle) * waveOffset;
 
-            ctx.fillStyle = this.color;
-            ctx.beginPath();
+            ctx.moveTo(drawX + segmentRadius, drawY);
             ctx.arc(drawX, drawY, segmentRadius, 0, Math.PI * 2);
-            ctx.fill();
-
-            const flow = Math.sin(frameCount * 0.25 - i * 0.3);
-            if (flow > 0.4) {
-                ctx.fillStyle = 'rgba(0, 0, 0, 0.15)';
-                ctx.beginPath();
-                ctx.arc(drawX, drawY, segmentRadius * 0.7, 0, Math.PI * 2);
-                ctx.fill();
-            }
         }
+        ctx.fill();
 
+        // 胴体の光彩・ウロコシャドウ（フロー効果）を一括描画
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.15)';
+        ctx.beginPath();
+        for (let i = histLen - 1; i >= 0; i--) {
+            const flow = Math.sin(frameCount * 0.25 - i * 0.3);
+            if (flow <= 0.4) continue;
+
+            const idx = (this.headIdx + i) % MAX_HISTORY;
+            const pt = this.history[idx];
+            if (!pt) continue;
+
+            const progress = i / histLen;
+            const segmentRadius = this.size * (1 - Math.pow(progress, 2.5) * 0.5) * 0.7;
+
+            const waveOffset = Math.sin(frameCount * 0.18 - i * 0.35) * (this.size * 0.2);
+            const normAngle = (pt.angle || 0) + Math.PI / 2;
+            const drawX = pt.x + Math.cos(normAngle) * waveOffset;
+            const drawY = pt.y + Math.sin(normAngle) * waveOffset;
+
+            ctx.moveTo(drawX + segmentRadius, drawY);
+            ctx.arc(drawX, drawY, segmentRadius, 0, Math.PI * 2);
+        }
+        ctx.fill();
+
+        // 頭部描画
         ctx.save();
         ctx.translate(this.x, this.y);
         ctx.rotate(this.angle);
@@ -204,6 +227,7 @@ export class Snake {
 
         ctx.globalAlpha = 1.0;
 
+        // ネームタグ
         ctx.fillStyle = 'rgba(255, 255, 255, 0.92)';
         ctx.font = 'bold 11px sans-serif';
         ctx.textAlign = 'center';

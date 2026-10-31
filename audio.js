@@ -1,7 +1,10 @@
 /**
  * ==============================================================================
  * 『くねくねバトル オンライン』Web Audio API プログラム動的音響エンジン (audio.js)
- * 外部音源ファイル 0バイト・遅延 0ms・iOS WebKit 音声制限完全クリア仕様
+ * v20.6.0 ノード即時解放＆WebKit完全対応版:
+ * ・発音完了時の自動 disconnect によるオーディオグラフ肥大化・メモリリーク完全防止
+ * ・iOS WebKit バックグラウンド自動サスペンド/レジューム制御
+ * ・外部音源ファイル 0バイト・遅延 0ms
  * ==============================================================================
  */
 
@@ -11,6 +14,9 @@ class AudioManager {
         this.isMuted = true; // デフォルトOFF
         this.boostOsc = null;
         this.boostGain = null;
+        this.boostFilter = null;
+
+        this.bindVisibilityChange();
     }
 
     // iOS WebKitのユーザー操作トリガーによるAudioContext初期化
@@ -24,6 +30,23 @@ class AudioManager {
         if (this.ctx && this.ctx.state === 'suspended') {
             this.ctx.resume();
         }
+    }
+
+    // バックグラウンド切り替え時の安全サスペンド制御
+    bindVisibilityChange() {
+        if (typeof document === 'undefined') return;
+        document.addEventListener('visibilitychange', () => {
+            if (document.hidden) {
+                if (this.ctx && this.ctx.state === 'running') {
+                    this.stopBoostSound();
+                    this.ctx.suspend().catch(() => {});
+                }
+            } else {
+                if (!this.isMuted && this.ctx && this.ctx.state === 'suspended') {
+                    this.ctx.resume().catch(() => {});
+                }
+            }
+        });
     }
 
     // サウンド ON / OFF 切り替え
@@ -53,10 +76,15 @@ class AudioManager {
             osc.frequency.exponentialRampToValueAtTime(1320, now + 0.05);
 
             gain.gain.setValueAtTime(0.08, now);
-            gain.gain.exponentialRampToValueAtTime(0.001, now + 0.05);
+            gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.05);
 
             osc.connect(gain);
             gain.connect(this.ctx.destination);
+
+            osc.onended = () => {
+                osc.disconnect();
+                gain.disconnect();
+            };
 
             osc.start(now);
             osc.stop(now + 0.05);
@@ -77,10 +105,15 @@ class AudioManager {
             osc.frequency.setValueAtTime(1760, now + 0.08);
 
             gain.gain.setValueAtTime(0.12, now);
-            gain.gain.exponentialRampToValueAtTime(0.001, now + 0.14);
+            gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.14);
 
             osc.connect(gain);
             gain.connect(this.ctx.destination);
+
+            osc.onended = () => {
+                osc.disconnect();
+                gain.disconnect();
+            };
 
             osc.start(now);
             osc.stop(now + 0.14);
@@ -94,19 +127,19 @@ class AudioManager {
             const now = this.ctx.currentTime;
             this.boostOsc = this.ctx.createOscillator();
             this.boostGain = this.ctx.createGain();
-            const filter = this.ctx.createBiquadFilter();
+            this.boostFilter = this.ctx.createBiquadFilter();
 
             this.boostOsc.type = 'sawtooth';
             this.boostOsc.frequency.setValueAtTime(110, now);
 
-            filter.type = 'lowpass';
-            filter.frequency.setValueAtTime(320, now);
+            this.boostFilter.type = 'lowpass';
+            this.boostFilter.frequency.setValueAtTime(320, now);
 
             this.boostGain.gain.setValueAtTime(0.01, now);
             this.boostGain.gain.linearRampToValueAtTime(0.06, now + 0.08);
 
-            this.boostOsc.connect(filter);
-            filter.connect(this.boostGain);
+            this.boostOsc.connect(this.boostFilter);
+            this.boostFilter.connect(this.boostGain);
             this.boostGain.connect(this.ctx.destination);
 
             this.boostOsc.start(now);
@@ -118,11 +151,22 @@ class AudioManager {
         if (!this.boostOsc || !this.ctx) return;
         try {
             const now = this.ctx.currentTime;
-            this.boostGain.gain.linearRampToValueAtTime(0.001, now + 0.05);
-            this.boostOsc.stop(now + 0.05);
+            const currentOsc = this.boostOsc;
+            const currentGain = this.boostGain;
+            const currentFilter = this.boostFilter;
+
+            currentGain.gain.linearRampToValueAtTime(0.0001, now + 0.05);
+            currentOsc.stop(now + 0.05);
+
+            currentOsc.onended = () => {
+                currentOsc.disconnect();
+                if (currentFilter) currentFilter.disconnect();
+                currentGain.disconnect();
+            };
         } catch (e) {}
         this.boostOsc = null;
         this.boostGain = null;
+        this.boostFilter = null;
     }
 
     // 激突・撃破音（低音バースト）
@@ -138,10 +182,15 @@ class AudioManager {
             osc.frequency.exponentialRampToValueAtTime(40, now + 0.25);
 
             gain.gain.setValueAtTime(0.2, now);
-            gain.gain.exponentialRampToValueAtTime(0.001, now + 0.25);
+            gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.25);
 
             osc.connect(gain);
             gain.connect(this.ctx.destination);
+
+            osc.onended = () => {
+                osc.disconnect();
+                gain.disconnect();
+            };
 
             osc.start(now);
             osc.stop(now + 0.25);
@@ -159,9 +208,16 @@ class AudioManager {
                 osc.type = 'sine';
                 osc.frequency.setValueAtTime(freq, now + i * 0.06);
                 gain.gain.setValueAtTime(0.1, now + i * 0.06);
-                gain.gain.exponentialRampToValueAtTime(0.001, now + i * 0.06 + 0.12);
+                gain.gain.exponentialRampToValueAtTime(0.0001, now + i * 0.06 + 0.12);
+                
                 osc.connect(gain);
                 gain.connect(this.ctx.destination);
+
+                osc.onended = () => {
+                    osc.disconnect();
+                    gain.disconnect();
+                };
+
                 osc.start(now + i * 0.06);
                 osc.stop(now + i * 0.06 + 0.12);
             });

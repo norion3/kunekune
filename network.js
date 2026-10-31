@@ -1,14 +1,16 @@
 // ==============================================================================
 // 『くねくねバトル オンライン』AgentSDK公式マルチプレイ通信マネージャー (network.js)
-// v20.0.0 究極最適化:
-// ・GRAVITY公式上限に合わせた max_players: 4 の安全仕様
-// ・ローカル偽部屋（フォールバック）の完全撤廃・GRAVITYサーバーの純粋なレスポンスへ依存
+// v20.1.0 堅牢化版:
+// ・GRAVITY公式上限（4名）に完全整合した 4スロット（0〜3）管理
+// ・1024バイト（1KB）物理限界の厳格防衛＆自動キュー分割キャリーオーバー機構
 // ・getMyUserInfo の3回リトライ（ポーリング）機構による確実なユーザー名取得
+// ・自律ホスト昇格（Host Migration）＆未入室exitハング完全防護
 // ==============================================================================
 
 import {
     round1,
     generateClientId,
+    getUtf8ByteLength,
     encodeSnakeToTuple,
     decodeTupleToSnake,
     packFoodPickTuple,
@@ -21,7 +23,9 @@ import {
 
 import { Danmaku } from './danmaku.js';
 import { Menu } from './menu.js';
-import { SNAKE_COLORS } from './constants.js';
+import { SNAKE_COLORS, MAX_PLAYERS } from './constants.js';
+
+const SAFE_PACKET_BYTE_LIMIT = 980; // 1024バイト上限に対する安全マージン
 
 /**
  * 未入室時の exit() による無限保留（Promiseハング）を防ぐ安全退出ヘルパー
@@ -52,8 +56,8 @@ export const NetworkManager = {
     clientId: generateClientId(),
     myUser: { name: 'あなた', user_id: 'local_user', portrait: '' },
 
-    // 最大8人のプレイヤー枠（スロット 0〜7）※ゲームシステム上は8人、通信API上限は4人
-    slots: Array.from({ length: 8 }, (_, i) => ({
+    // GRAVITY公式上限の 4名スロット（0〜3）に完全整合
+    slots: Array.from({ length: MAX_PLAYERS }, (_, i) => ({
         slot: i,
         clientId: null,
         userId: null,
@@ -125,7 +129,7 @@ export const NetworkManager = {
             return this.myUser;
         }
 
-        // ★ 取得できるまで最大3回リトライするポーリング機構
+        // 取得できるまで最大3回リトライするポーリング機構
         for (let attempt = 1; attempt <= 3; attempt++) {
             try {
                 const res = await window.AgentSDK.user.getMyUserInfo();
@@ -140,7 +144,7 @@ export const NetworkManager = {
                 }
             } catch (err) {
                 console.warn(`[NetworkManager] Failed to get user info (Attempt ${attempt}/3):`, err);
-                await new Promise(r => setTimeout(r, 500)); // 0.5秒待機してリトライ
+                await new Promise(r => setTimeout(r, 500));
             }
         }
         return this.myUser;
@@ -193,10 +197,8 @@ export const NetworkManager = {
             this.purgeLocalWorldState();
 
             const permission = isPrivate ? 1 : 0;
-            // ★ GRAVITY公式上限の 4名 に修正（8名を指定するとエラーになるため）
-            const res = await window.AgentSDK.room.create({ max_players: 4, room_permission: permission });
+            const res = await window.AgentSDK.room.create({ max_players: MAX_PLAYERS, room_permission: permission });
 
-            // エラー判定（errno !== 0 なら失敗）
             const isError = res && (
                 (res.errno !== undefined && res.errno !== 0 && res.errno !== '0') ||
                 (res.code !== undefined && res.code !== 0 && res.code !== '0')
@@ -205,7 +207,6 @@ export const NetworkManager = {
             if (isError || !res) {
                 const errMsg = (res && (res.errmsg || res.message)) || '不明なエラー';
                 console.error(`[NetworkManager] Create room failed. Errno: ${res?.errno}, Msg: ${errMsg}`);
-                // ★ 偽部屋へのフォールバックを完全撤廃。失敗時は作成を中止してエラーを画面に通知
                 Danmaku.push('作成失敗', `エラー: ${errMsg}`, '#f43f5e', true);
                 return null;
             }
@@ -237,6 +238,18 @@ export const NetworkManager = {
                 isAI: false,
                 joinTime: performance.now()
             };
+
+            for (let i = 1; i < MAX_PLAYERS; i++) {
+                this.slots[i] = {
+                    slot: i,
+                    clientId: null,
+                    userId: null,
+                    name: `プレイヤー ${i + 1}`,
+                    color: SNAKE_COLORS[i % SNAKE_COLORS.length],
+                    isAI: true,
+                    joinTime: 0
+                };
+            }
 
             this._stopHostWatchdog();
             this._startBroadcasting();
@@ -281,7 +294,7 @@ export const NetworkManager = {
 
             this.isHost = false;
             this.isMultiplayerActive = true;
-            this.mySlot = 1; // 初期フォールバック（SYNC_MEMBERSで確定）
+            this.mySlot = 1;
 
             this._startHostWatchdog();
             this._startBroadcasting();
@@ -306,8 +319,7 @@ export const NetworkManager = {
                 else if (Array.isArray(res.list)) list = res.list;
             }
             if (Array.isArray(list)) {
-                // 定員上限の4名をフィルタ基準に適用
-                return list.filter(r => (Number(r.gamer_num) || 0) > 0 && (Number(r.gamer_num) || 0) < 4);
+                return list.filter(r => (Number(r.gamer_num) || 0) > 0 && (Number(r.gamer_num) || 0) < MAX_PLAYERS);
             }
         } catch (err) {
             console.warn('[NetworkManager] Failed to get public room list:', err);
@@ -343,7 +355,6 @@ export const NetworkManager = {
                 joinTime: performance.now()
             };
 
-            // 全員へスロット一覧とシード値を再同期
             this._sendCustomMessage({
                 e: 'SYNC_MEMBERS',
                 slots: this.slots,
@@ -367,7 +378,7 @@ export const NetworkManager = {
                 slot: slotIdx,
                 clientId: null,
                 userId: null,
-                name: `CPU ${slotIdx + 1}`,
+                name: `プレイヤー ${slotIdx + 1}`,
                 color: SNAKE_COLORS[slotIdx % SNAKE_COLORS.length],
                 isAI: true,
                 joinTime: 0
@@ -458,28 +469,35 @@ export const NetworkManager = {
                 for (let i = startIndex; i < startIndex + BATCH_SIZE && i < ais.length; i++) {
                     const ai = ais[i];
                     if (ai && !ai.isDead) {
-                        const aiTuple = encodeSnakeToTuple(ai, 8 + i, false);
+                        // AIのスロットはプレイヤー枠 (0〜3) と重複しない 4 以降で付与
+                        const aiTuple = encodeSnakeToTuple(ai, 4 + i, false);
                         tuplesList.push(aiTuple);
                     }
                 }
             }
 
-            const outgoingPicks = this._pendingPicks.length > 0 ? [...this._pendingPicks] : undefined;
-            const outgoingDrops = this._pendingDrops.length > 0 ? [...this._pendingDrops] : undefined;
-            const outgoingChats = this._pendingChats.length > 0 ? [...this._pendingChats] : undefined;
-
-            this._pendingPicks.length = 0;
-            this._pendingDrops.length = 0;
-            this._pendingChats.length = 0;
-
+            // 1024バイト制限対策：安全送信パイプライン（溢れたイベントは次フレームへ自動キャリーオーバー）
             const packet = {
                 e: 'P',
                 l: tuplesList
             };
 
-            if (outgoingPicks) packet.pk = outgoingPicks;
-            if (outgoingDrops) packet.dp = outgoingDrops;
-            if (outgoingChats) packet.ch = outgoingChats;
+            // チャットは最優先で同封
+            if (this._pendingChats.length > 0) {
+                packet.ch = this._pendingChats.splice(0, 3);
+            }
+
+            // 餌取得タプルの安全同封（容量が許す分だけ）
+            if (this._pendingPicks.length > 0) {
+                const maxPickCount = 8;
+                packet.pk = this._pendingPicks.splice(0, maxPickCount);
+            }
+
+            // 肉片散布タプルの安全同封（容量が許す分だけ）
+            if (this._pendingDrops.length > 0) {
+                const maxDropCount = 6;
+                packet.dp = this._pendingDrops.splice(0, maxDropCount);
+            }
 
             this._sendCustomMessage(packet);
         }, 100);
@@ -567,10 +585,27 @@ export const NetworkManager = {
         }
     },
 
+    /**
+     * 1024バイト厳守ガード付き送信ラッパー
+     * ルートオブジェクトは { message: string } のみ許可
+     */
     _sendCustomMessage(msgObj) {
         if (!this.isSDKAvailable || !window.AgentSDK.room || typeof window.AgentSDK.room.sendMessage !== 'function') return;
         try {
-            window.AgentSDK.room.sendMessage({ message: JSON.stringify(msgObj) });
+            const rawString = JSON.stringify(msgObj);
+            const byteLength = getUtf8ByteLength(rawString);
+
+            // 1024バイト（物理限界）の厳格チェック
+            if (byteLength >= 1020) {
+                console.warn(`[NetworkManager] パケットサイズが1KB制限に接近 (${byteLength} bytes)。過剰データを切り離して送出します。`);
+                // 万一1KBを超過しそうな場合は、副次的なイベント配列を削除して本体のみ送信
+                delete msgObj.dp;
+                delete msgObj.pk;
+                window.AgentSDK.room.sendMessage({ message: JSON.stringify(msgObj) });
+                return;
+            }
+
+            window.AgentSDK.room.sendMessage({ message: rawString });
         } catch (e) {
             console.warn('[NetworkManager] sendMessage error:', e);
         }

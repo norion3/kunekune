@@ -1,9 +1,10 @@
 /**
  * ==============================================================================
  * 『くねくねバトル オンライン』一体型HUD ＆ 自機中心相対追従レーダー (hud.js)
- * v18.0.0 改訂:
- * ・レーダーサイズを 105px から 140px に大型化し、索敵視認性を劇的に向上
- * ・オリジナル復刻: スコア1.2倍以上の「トップエネミー」は視野外でも赤点で遠隔表示
+ * v20.5.0 ゼロアロケーション索敵最適化版:
+ * ・レーダーサイズ 140px 大型表示（索敵視認性向上）
+ * ・topEnemies 抽出処理のゼロアロケーション化（毎30FPSの filter/sort 配列破棄を根絶）
+ * ・2フレームに1回（30FPS）描画スロットリング ＆ Offscreen キャッシュ
  * ==============================================================================
  */
 
@@ -11,15 +12,19 @@ export class HUDManager {
     constructor() {
         this.showMap = true;
         this.showRanking = false;
-        this.radarSize = 140; // ★ オリジナルの良さを活かすため140pxに大型化
+        this.radarSize = 140; // 索敵用大型レーダーサイズ
         this.radarMargin = 14;
         
-        // 💡 描画負荷軽減: レーダー描画をキャッシュし、2フレームに1回の更新（30FPS）へスロットリングするための内部キャンバス
+        // 描画負荷軽減: レーダー描画をキャッシュし、2フレームに1回の更新（30FPS）へスロットリングするための内部キャンバス
         this.radarCanvas = document.createElement('canvas');
         this.radarCanvas.width = this.radarSize;
         this.radarCanvas.height = this.radarSize;
         this.radarCtx = this.radarCanvas.getContext('2d', { alpha: true });
         this.radarFrameCount = 0;
+
+        // ゼロアロケーション用トップエネミー固定参照バッファ（最大5体）
+        this.topEnemiesPool = new Array(5).fill(null);
+        this.topEnemyCount = 0;
     }
 
     init() {
@@ -68,7 +73,7 @@ export class HUDManager {
 
     /**
      * 自機中心の相対追従レーダーをメインCanvasに直接描画
-     * ★ 描画スロットリング ＆ Offscreen キャッシュ最適化版
+     * 描画スロットリング ＆ ゼロアロケーション版
      */
     drawRadar(ctx, canvasWidth, safeTop, player, otherEntities, cameraScale) {
         if (!this.showMap || !player) return;
@@ -76,7 +81,7 @@ export class HUDManager {
         const rx = canvasWidth - this.radarSize - this.radarMargin;
         const ry = safeTop;
 
-        // 💡 スロットリング: 2フレームに1回（30FPS）だけ内部キャンバスを更新
+        // スロットリング: 2フレームに1回（30FPS）だけ内部キャンバスを更新
         if (this.radarFrameCount % 2 === 0) {
             const rCtx = this.radarCtx;
             const radarCenter = this.radarSize / 2;
@@ -94,19 +99,50 @@ export class HUDManager {
             const cx = player.x;
             const cy = player.y;
 
-            // ★ オリジナル復刻: 自分よりスコアが1.2倍以上高い上位5体を「トップエネミー」として抽出
-            const topEnemies = otherEntities
-                .filter(s => !s.isDead && !s.isPlayer && s.score > player.score * 1.2)
-                .sort((a, b) => b.score - a.score)
-                .slice(0, 5);
+            // 💡 ゼロアロケーション：filter/sort/slice を完全撤廃し、固定長プールへ上位5体を直接収集
+            this.topEnemyCount = 0;
+            const targetMinScore = player.score * 1.2;
+
+            if (otherEntities && otherEntities.length > 0) {
+                const len = otherEntities.length;
+                for (let i = 0; i < len; i++) {
+                    const s = otherEntities[i];
+                    if (s === player || s.isDead || s.isPlayer || s.score <= targetMinScore) continue;
+
+                    // 挿入ソート形式で上位5体に格納
+                    if (this.topEnemyCount < 5) {
+                        this.topEnemiesPool[this.topEnemyCount++] = s;
+                    } else {
+                        // 最小スコアの位置を探索して置換
+                        let minIdx = 0;
+                        let minScore = this.topEnemiesPool[0].score;
+                        for (let k = 1; k < 5; k++) {
+                            if (this.topEnemiesPool[k].score < minScore) {
+                                minScore = this.topEnemiesPool[k].score;
+                                minIdx = k;
+                            }
+                        }
+                        if (s.score > minScore) {
+                            this.topEnemiesPool[minIdx] = s;
+                        }
+                    }
+                }
+            }
 
             // 敵スネークの描画
             if (otherEntities && otherEntities.length > 0) {
-                for (let i = 0; i < otherEntities.length; i++) {
+                const totalEntities = otherEntities.length;
+                for (let i = 0; i < totalEntities; i++) {
                     const s = otherEntities[i];
                     if (s === player || s.isDead) continue;
 
-                    const isTopEnemy = topEnemies.includes(s);
+                    let isTopEnemy = false;
+                    for (let k = 0; k < this.topEnemyCount; k++) {
+                        if (this.topEnemiesPool[k] === s) {
+                            isTopEnemy = true;
+                            break;
+                        }
+                    }
 
                     // 視野外の敵は描画しないが、トップエネミーの場合は遠隔表示する
                     if (!s.isVisible && !isTopEnemy) continue;
@@ -114,8 +150,8 @@ export class HUDManager {
                     const drawX = radarCenter + (s.x - cx) * radarRatio;
                     const drawY = radarCenter + (s.y - cy) * radarRatio;
 
-                    // 💡 クリップ処理(clip)を廃止し、純粋な座標判定のみで除外（GPU負荷激減）
-                    if (drawX < -4 || drawX > this.radarSize + 4 || drawY < -4 || drawY > this.radarSize + 4) {
+                    // 座標判定による高速クリッピング
+                    if (drawX < 0 || drawX > this.radarSize || drawY < 0 || drawY > this.radarSize) {
                         continue;
                     }
 
@@ -156,7 +192,7 @@ export class HUDManager {
 
         this.radarFrameCount++;
 
-        // ★ メインCanvasにはキャッシュされた画像を貼るだけ（負荷極小）
+        // メインCanvasにはキャッシュされた画像を転送（負荷極小）
         ctx.drawImage(this.radarCanvas, rx, ry);
     }
 }

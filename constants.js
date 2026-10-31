@@ -1,8 +1,9 @@
 /**
  * ==============================================================================
  * 『くねくねバトル オンライン』システム共通定数定義 (constants.js)
- * v16.0.0 改訂:
- * ・8人マルチプレイ完全対応 8色カラーパレット (SNAKE_COLORS)
+ * v20.1.0 整合版:
+ * ・GRAVITY公式上限（4名）に完全整合したルーム設定
+ * ・8色カラーパレット (SNAKE_COLORS) 完全維持
  * ・セーフエリア・ワールド・物理定数の統一管理
  * ==============================================================================
  */
@@ -12,9 +13,10 @@ export const MAP_SIZE = 60000;
 export const GRID_SIZE = 250;
 
 // プレイヤー・AI定数
+// ★ GRAVITY AgentSDK のルーム最大上限 (4名) に整合
 export const TOTAL_SNAKES = 50;
-export const MAX_PLAYERS = 8;
-export const MAX_AIS = 42;
+export const MAX_PLAYERS = 4;
+export const MAX_AIS = 46;
 
 // 移動速度（黄金比減衰モデル基盤）
 export const BASE_SPEED = 4.2;

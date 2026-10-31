@@ -4,6 +4,22 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
     <title>くねくねバトル オンライン</title>
+    <style>
+        /* DOMマウント前の白フラッシュおよびスクロールバウンス完全防止 */
+        html, body {
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            height: 100%;
+            background-color: #0b051a;
+            overflow: hidden;
+            position: fixed;
+            -webkit-user-select: none;
+            user-select: none;
+            -webkit-touch-callout: none;
+            -webkit-tap-highlight-color: transparent;
+        }
+    </style>
 </head>
 <body>
     <!-- 自律DOMマウントのため、bodyは空の状態でmain.jsを実行 -->

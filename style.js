@@ -1,10 +1,10 @@
 // ==============================================================================
 // 『くねくねバトル オンライン』iOS WebKit & iPhone 干渉完全マスクスタイル (style.js)
-// v16.0.0 改訂:
-// ・左下SVGボタングループ（サウンド、ランキング、レーダー、縦並びズーム＋/ー）
-// ・右下一番下（bottom: 24px）MENUボタン配置（左下ボタンと縦位置完全統一）
-// ・メニュー表示中の背景暗転・ブラー完全撤廃（透明・ゲーム進行継続）
-// ・絵文字完全排除・純粋ベクターSVGアイコンスタイル
+// v20.8.0 安定化版:
+// ・overscroll-behavior: none によるラバーバンドバウンス完全抑止
+// ・内部スクロールエリア (touch-action: pan-y) のタッチ追従性担保
+// ・EntryShield スタイルの一元統合
+// ・左下SVGボタングループ ＆ 右下MENU底辺完全統一配置
 // ==============================================================================
 
 export function injectStyles() {
@@ -29,6 +29,8 @@ export function injectStyles() {
             background-color: #0b051a;
             overflow: hidden;
             position: fixed;
+            overscroll-behavior: none;
+            -webkit-overscroll-behavior: none;
             font-family: -apple-system, BlinkMacSystemFont, 'Helvetica Neue', 'Hiragino Kaku Gothic ProN', sans-serif;
         }
 
@@ -363,11 +365,11 @@ export function injectStyles() {
             left: 0;
             width: 100%;
             height: 100%;
-            background: transparent; /* 暗転全廃 */
-            backdrop-filter: none;   /* ブラー全廃 */
+            background: transparent;
+            backdrop-filter: none;
             -webkit-backdrop-filter: none;
             z-index: 150;
-            pointer-events: none;    /* シート外のタッチは背面のゲーム操作へ貫通 */
+            pointer-events: none;
         }
         #bottom-sheet {
             position: absolute;
@@ -385,7 +387,7 @@ export function injectStyles() {
             flex-direction: column;
             padding: 12px 16px calc(var(--safe-bottom) + 12px);
             z-index: 160;
-            pointer-events: auto;    /* シート内部のタップのみ安全に受け取る */
+            pointer-events: auto;
         }
         #bottom-sheet.open {
             transform: translateY(0);
@@ -505,6 +507,8 @@ export function injectStyles() {
             gap: 8px;
             max-height: 38vh;
             overflow-y: auto;
+            -webkit-overflow-scrolling: touch;
+            touch-action: pan-y;
         }
         .participant-row {
             display: flex;
@@ -731,6 +735,7 @@ export function injectStyles() {
             padding-top: max(104px, env(safe-area-inset-top, 44px) + 56px);
             overflow-y: auto;
             -webkit-overflow-scrolling: touch;
+            touch-action: pan-y;
             pointer-events: auto;
         }
         .lobby-card {
@@ -830,6 +835,7 @@ export function injectStyles() {
             max-height: 180px;
             overflow-y: auto;
             -webkit-overflow-scrolling: touch;
+            touch-action: pan-y;
             display: flex;
             flex-direction: column;
             gap: 8px;
@@ -887,6 +893,8 @@ export function injectStyles() {
             padding: 16px 20px;
             padding-top: max(104px, env(safe-area-inset-top, 44px) + 56px);
             overflow-y: auto;
+            -webkit-overflow-scrolling: touch;
+            touch-action: pan-y;
             pointer-events: auto;
         }
         .waiting-card {
@@ -925,6 +933,8 @@ export function injectStyles() {
             gap: 8px;
             max-height: 240px;
             overflow-y: auto;
+            -webkit-overflow-scrolling: touch;
+            touch-action: pan-y;
         }
         .waiting-slot {
             display: flex;

@@ -1,10 +1,10 @@
 /**
  * ==============================================================================
  * 『くねくねバトル オンライン』ボトムシートメニュー ＆ ルーター (menu.js)
- * v16.0.0 改訂:
- * ・CUSTOMタブ 8色パレット完全対応
- * ・シート内のタップ安全遮断 (stopPropagation) ＆ 背景貫通
- * ・走者一覧・製作者プロフィールの安全起動 (GravityRouter)
+ * v20.5.0 タッチ制御＆DOM描画最適化版:
+ * ・走者一覧の変更検知差分更新（不要な DOM 破棄・ガタつき完全防止）
+ * ・シート内スクロールと背景操作貫通遮断 (stopPropagation) の完全両立
+ * ・GRAVITYネイティブ安全起動ルーター (GravityRouter: 非表示iframeキック)
  * ==============================================================================
  */
 
@@ -46,6 +46,9 @@ export class MenuManager {
         this.onCustomChange = null; // (face, color) => void
         this.selectedFace = 'normal';
         this.selectedColor = SNAKE_COLORS[0];
+
+        // 走者一覧のDOMガタつき防止用キャッシュ
+        this._lastParticipantSignature = '';
     }
 
     init(onCustomChange) {
@@ -77,12 +80,16 @@ export class MenuManager {
             };
         }
 
-        // ボトムシート内でのタップは背面のゲーム操作へ貫通させない（安全に保護）
+        // ボトムシート内でのタッチは背面のゲーム操作へ貫通させない（安全に保護）
+        // ※内部スクロールは阻害せず、親要素へのバブリングのみ遮断
         if (sheet) {
             sheet.onclick = (e) => {
                 e.stopPropagation();
             };
             sheet.ontouchstart = (e) => {
+                e.stopPropagation();
+            };
+            sheet.ontouchend = (e) => {
                 e.stopPropagation();
             };
             sheet.ontouchmove = (e) => {
@@ -262,22 +269,30 @@ export class MenuManager {
         }
     }
 
-    // 走者一覧の動的描画（マルチ・ソロ対応）
+    // 走者一覧の動的描画（マルチ・ソロ対応、変更検知キャッシュ付き）
     updateParticipants(playerList) {
         const listContainer = document.getElementById('participants-list');
         const tabCount = document.getElementById('players-tab-count');
         if (!listContainer) return;
 
-        const count = playerList ? playerList.length : 1;
+        const list = Array.isArray(playerList) ? playerList : [];
+        const count = list.length > 0 ? list.length : 1;
         if (tabCount) tabCount.innerText = `(${count})`;
 
+        // 差分シグネチャによる不要なDOM再構築のスキップ
+        const signature = list.map(p => `${p.userId}_${p.name}_${p.color}`).join('|');
+        if (signature === this._lastParticipantSignature && listContainer.children.length > 0) {
+            return;
+        }
+        this._lastParticipantSignature = signature;
+
         listContainer.innerHTML = '';
-        if (!playerList || playerList.length === 0) {
+        if (list.length === 0) {
             listContainer.innerHTML = '<div style="font-size:12px;color:rgba(255,255,255,0.6);padding:12px;text-align:center;">走者はいません</div>';
             return;
         }
 
-        playerList.forEach(p => {
+        list.forEach(p => {
             const row = document.createElement('div');
             row.className = 'participant-row';
             row.innerHTML = `
@@ -290,6 +305,7 @@ export class MenuManager {
                 </div>
                 <div class="participant-arrow">↗</div>
             `;
+            // 仕様書第3.2項準拠: preventDefault は呼ばず stopPropagation のみ
             row.onclick = (e) => {
                 e.stopPropagation();
                 if (p.userId && p.userId !== 'local_user') {

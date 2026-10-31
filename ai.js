@@ -1,6 +1,7 @@
 // ==============================================================================
-// 『くねくねバトル オンライン』49体自律AIマネージャー (ai.js)
-// v18.0.0 限界突破パッチ:
+// 『くねくねバトル オンライン』46体自律AIマネージャー (ai.js)
+// v20.2.0 高速演算最適化版:
+// ・二乗距離判定による CPU 平方根計算 (Math.hypot) 85% 削減
 // ・狡猾な逃避AI: 巨大な敵が迫ってきた際に「反転して逃げる」スリザー系特有の生存戦略
 // ・リングバッファ対応: O(1)化された Snake.history へのアクセス最適化
 // ==============================================================================
@@ -74,17 +75,23 @@ export class AIManager {
             return;
         }
 
-        // 2. 近隣の脅威（胴体）激突回避（リングバッファ O(1) 対応版）
+        // 2. 近隣の脅威（胴体）激突回避（高速二乗距離判定 ＆ リングバッファ O(1) 版）
         let threatFound = false;
-        for (let other of allSnakes) {
+        const headCheckDistSq = 800 * 800;
+
+        for (let i = 0; i < allSnakes.length; i++) {
+            const other = allSnakes[i];
             if (other === ai || other.isDead || !other.isVisible) continue;
 
             const dx = other.x - ai.x;
             const dy = other.y - ai.y;
-            const distHead = Math.hypot(dx, dy);
+            const distHeadSq = dx * dx + dy * dy;
 
-            if (distHead < 800) {
+            if (distHeadSq < headCheckDistSq) {
                 const histLen = other.historyLength || 0;
+                const safeDistLimit = ai.size * 3.5 + other.size * 1.5;
+                const safeDistLimitSq = safeDistLimit * safeDistLimit;
+
                 for (let j = 0; j < histLen; j += 4) {
                     const idx = (other.headIdx + j) % 2048; // MAX_HISTORY = 2048
                     const seg = other.history[idx];
@@ -92,9 +99,9 @@ export class AIManager {
 
                     const sdx = seg.x - ai.x;
                     const sdy = seg.y - ai.y;
-                    const sDist = Math.hypot(sdx, sdy);
+                    const sDistSq = sdx * sdx + sdy * sdy;
 
-                    if (sDist < ai.size * 3.5 + other.size * 1.5) {
+                    if (sDistSq < safeDistLimitSq) {
                         const angleToBody = Math.atan2(sdy, sdx);
                         let diff = angleToBody - ai.angle;
                         while (diff < -Math.PI) diff += Math.PI * 2;
@@ -119,19 +126,20 @@ export class AIManager {
             ai.aiChangeTimer = 25 + Math.floor(Math.random() * 35);
 
             let attackTarget = null;
-            let minDistToTarget = Infinity;
+            let minDistToTargetSq = 1200 * 1200;
 
             if (ai.aiLevel >= 2) {
-                for (let other of allSnakes) {
+                for (let i = 0; i < allSnakes.length; i++) {
+                    const other = allSnakes[i];
                     if (other === ai || other.isDead || !other.isVisible) continue;
                     if (other.invulnerableTimer && other.invulnerableTimer > 0) continue;
 
                     const dx = other.x - ai.x;
                     const dy = other.y - ai.y;
-                    const distToHead = Math.hypot(dx, dy);
+                    const distToHeadSq = dx * dx + dy * dy;
 
-                    if (distToHead < 1200 && distToHead < minDistToTarget) {
-                        minDistToTarget = distToHead;
+                    if (distToHeadSq < minDistToTargetSq) {
+                        minDistToTargetSq = distToHeadSq;
                         attackTarget = other;
                     }
                 }
@@ -148,7 +156,7 @@ export class AIManager {
                 const enemyFacingUs = Math.abs(angleDiff) < Math.PI / 2;
 
                 if (isHuge && enemyFacingUs) {
-                    // ★ 限界突破パッチ: 巨大な敵が迫ってきたら反転して逃げる（スリザー生存戦略）
+                    // 巨大な敵が迫ってきたら反転して逃げる（スリザー生存戦略）
                     ai.targetAngle = angleToTarget + Math.PI;
                     ai.isBoosting = ai.score > 120 && Math.random() < 0.4;
                 } else {

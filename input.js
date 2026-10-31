@@ -1,8 +1,11 @@
 /**
  * ==============================================================================
- * 『くねくねバトル オンライン』入力制御 ＆ 2本指ピンチズームモジュール (input.js)
- * ・画面長押しによるブースト誤爆を完全根絶（専用ボタンのみで加速）
- * ・2本指ピンチイン/アウトによる滑らかなカメラ視野拡縮（0.45〜1.35倍）
+ * 『くねくねバトル オンライン』入力制御モジュール (input.js)
+ * v20.7.0 操作純化＆低遅延版:
+ * ・2本指ピンチズームを完全撤廃し、画面タッチを1本指ジョイスティック操作に純化
+ * ・左下ズームボタン（＋/ー）およびPCマウスホイール用の zoomMultiplier を維持
+ * ・画面長押しによるブースト誤爆を根絶（専用ボタンのみで加速）
+ * ・二乗距離計算によるタッチ追従の低遅延化
  * ==============================================================================
  */
 
@@ -15,15 +18,13 @@ export class InputManager {
         this.touchId = null;
         this.center = { x: 0, y: 0 };
         this.maxRadius = 32;
+        this.maxRadiusSq = 32 * 32;
 
         // ブースト状態（専用ボタン押下時のみ true）
         this.boost = false;
 
-        // 2本指ピンチズーム状態
-        this.isPinching = false;
-        this.initialPinchDistance = 0;
-        this.zoomMultiplier = 1.0; // ユーザーピンチ倍率 (0.45 〜 1.35)
-        this.pinchTouchIds = [];
+        // 視野ズーム倍率（左下の＋/ーボタンおよびPCマウスホイールで操作）
+        this.zoomMultiplier = 1.0;
 
         // DOM参照
         this.canvas = null;
@@ -98,21 +99,8 @@ export class InputManager {
     handleTouchStart(e) {
         e.preventDefault();
 
-        // 2本指タッチ検知 -> ピンチズーム開始
-        if (e.touches.length === 2) {
-            this.isPinching = true;
-            this.pinchTouchIds = [e.touches[0].identifier, e.touches[1].identifier];
-            this.initialPinchDistance = Math.hypot(
-                e.touches[0].clientX - e.touches[1].clientX,
-                e.touches[0].clientY - e.touches[1].clientY
-            );
-            // ピンチ中はジョイスティックの一時停止
-            this.endJoystick();
-            return;
-        }
-
-        // 1本指タッチ -> ジョイスティック開始（画面のどこを押しても追従）
-        if (e.touches.length === 1 && !this.active && !this.isPinching) {
+        // 1本指タッチで画面のどこを押してもジョイスティック開始
+        if (!this.active && e.touches.length > 0) {
             const t = e.touches[0];
             this.touchId = t.identifier;
             this.startJoystick(t.clientX, t.clientY);
@@ -122,23 +110,6 @@ export class InputManager {
     handleTouchMove(e) {
         e.preventDefault();
 
-        // 2本指ピンチズーム処理
-        if (this.isPinching && e.touches.length >= 2) {
-            const t0 = Array.from(e.touches).find(t => t.identifier === this.pinchTouchIds[0]);
-            const t1 = Array.from(e.touches).find(t => t.identifier === this.pinchTouchIds[1]);
-
-            if (t0 && t1 && this.initialPinchDistance > 10) {
-                const currentDist = Math.hypot(t0.clientX - t1.clientX, t0.clientY - t1.clientY);
-                const deltaRatio = currentDist / this.initialPinchDistance;
-
-                // ズーム倍率の更新（0.45 〜 1.35 に制限）
-                this.zoomMultiplier = Math.max(0.45, Math.min(1.35, this.zoomMultiplier * (1 + (deltaRatio - 1) * 0.05)));
-                this.initialPinchDistance = currentDist;
-            }
-            return;
-        }
-
-        // 1本指ジョイスティック移動
         if (this.active) {
             const t = Array.from(e.touches).find(touch => touch.identifier === this.touchId);
             if (t) {
@@ -150,15 +121,7 @@ export class InputManager {
     handleTouchEnd(e) {
         e.preventDefault();
 
-        if (this.isPinching) {
-            // 2本指のうちどちらかが離れたらピンチ終了
-            if (e.touches.length < 2) {
-                this.isPinching = false;
-                this.pinchTouchIds = [];
-            }
-        }
-
-        // ジョイスティック担当の指が離れたら終了
+        // 操作中の指が離れたらジョイスティック終了
         if (this.active) {
             const stillActive = Array.from(e.touches).some(t => t.identifier === this.touchId);
             if (!stillActive) {
@@ -216,9 +179,10 @@ export class InputManager {
     moveJoystick(cx, cy) {
         let dx = cx - this.center.x;
         let dy = cy - this.center.y;
-        const dist = Math.hypot(dx, dy);
+        const distSq = dx * dx + dy * dy;
 
-        if (dist > this.maxRadius) {
+        if (distSq > this.maxRadiusSq) {
+            const dist = Math.sqrt(distSq);
             dx = (dx / dist) * this.maxRadius;
             dy = (dy / dist) * this.maxRadius;
         }
