@@ -1,10 +1,9 @@
 // ==============================================================================
 // 『くねくねバトル オンライン』AgentSDK公式マルチプレイ通信マネージャー (network.js)
-// ・AgentSDK (v1.0.2) 公式仕様完全準拠
-// ・10Hz 単一パケット集約送出ループ（1KB制限完全クリア）
-// ・5秒無通信検知による自律ホスト昇格ウォッチドッグ (Host Migration)
-// ・入退室・リスタート時のセッション完全初期化 (purgeLocalWorldState)
-// ・安全退出ガード (safeExitCurrentRoom: Promise.race 700ms)
+// v20.0.0 究極最適化:
+// ・GRAVITY公式上限に合わせた max_players: 4 の安全仕様
+// ・ローカル偽部屋（フォールバック）の完全撤廃・GRAVITYサーバーの純粋なレスポンスへ依存
+// ・getMyUserInfo の3回リトライ（ポーリング）機構による確実なユーザー名取得
 // ==============================================================================
 
 import {
@@ -53,7 +52,7 @@ export const NetworkManager = {
     clientId: generateClientId(),
     myUser: { name: 'あなた', user_id: 'local_user', portrait: '' },
 
-    // 最大8人のプレイヤー枠（スロット 0〜7）
+    // 最大8人のプレイヤー枠（スロット 0〜7）※ゲームシステム上は8人、通信API上限は4人
     slots: Array.from({ length: 8 }, (_, i) => ({
         slot: i,
         clientId: null,
@@ -76,20 +75,17 @@ export const NetworkManager = {
     _hasReceivedFirstHostPacket: false,
     _isPromoting: false,
 
-    // AIスネーク送出用の時分割インターリーブインデックス
     _aiSliceIndex: 0,
 
-    // アクション蓄積キュー（100ms周期の単一パケットに同封）
     _pendingPicks: [],
     _pendingDrops: [],
     _pendingChats: [],
 
-    // 外部参照コールバック（main.js から登録）
     callbacks: {
-        onRemoteSnakeUpdate: null,  // (snakeData) => void
-        onFoodPicked: null,         // (pickData) => void
-        onDropSpawned: null,        // (dropData) => void
-        onSeedReceived: null        // (seed) => void
+        onRemoteSnakeUpdate: null,
+        onFoodPicked: null,
+        onDropSpawned: null,
+        onSeedReceived: null
     },
 
     setCallbacks(cb) {
@@ -120,24 +116,32 @@ export const NetworkManager = {
         }
     },
 
+    /**
+     * ユーザー情報取得の堅牢化（リトライ機構）
+     */
     async init() {
         if (!this.isSDKAvailable) {
             console.warn('[NetworkManager] AgentSDK unavailable. Standalone mode.');
             return this.myUser;
         }
 
-        try {
-            const res = await window.AgentSDK.user.getMyUserInfo();
-            if (res && res.data) {
-                this.myUser = {
-                    user_id: String(res.data.user_id),
-                    name: res.data.name || 'あなた',
-                    portrait: res.data.portrait || res.data.portait || ''
-                };
-                window.GRAVITY_USER_NAME = this.myUser.name;
+        // ★ 取得できるまで最大3回リトライするポーリング機構
+        for (let attempt = 1; attempt <= 3; attempt++) {
+            try {
+                const res = await window.AgentSDK.user.getMyUserInfo();
+                if (res && res.data && res.data.name) {
+                    this.myUser = {
+                        user_id: String(res.data.user_id),
+                        name: res.data.name,
+                        portrait: res.data.portrait || res.data.portait || ''
+                    };
+                    window.GRAVITY_USER_NAME = this.myUser.name;
+                    return this.myUser;
+                }
+            } catch (err) {
+                console.warn(`[NetworkManager] Failed to get user info (Attempt ${attempt}/3):`, err);
+                await new Promise(r => setTimeout(r, 500)); // 0.5秒待機してリトライ
             }
-        } catch (err) {
-            console.warn('[NetworkManager] Failed to get user info:', err);
         }
         return this.myUser;
     },
@@ -174,32 +178,45 @@ export const NetworkManager = {
         }
     },
 
+    /**
+     * 厳格な公開・プライベートルーム作成
+     */
     async createRoom(isPrivate = false) {
+        if (!this.isSDKAvailable) {
+            Danmaku.push('エラー', 'マルチプレイはGRAVITYアプリ内でのみ利用可能です', '#f43f5e', true);
+            return null;
+        }
+
         try {
             await this.init();
             await safeExitCurrentRoom(null);
             this.purgeLocalWorldState();
 
-            let createdRoomId = 'local_room_' + Math.floor(Math.random() * 1000);
+            const permission = isPrivate ? 1 : 0;
+            // ★ GRAVITY公式上限の 4名 に修正（8名を指定するとエラーになるため）
+            const res = await window.AgentSDK.room.create({ max_players: 4, room_permission: permission });
 
-            if (this.isSDKAvailable) {
-                const permission = isPrivate ? 1 : 0;
-                const res = await window.AgentSDK.room.create({ max_players: 8, room_permission: permission });
+            // エラー判定（errno !== 0 なら失敗）
+            const isError = res && (
+                (res.errno !== undefined && res.errno !== 0 && res.errno !== '0') ||
+                (res.code !== undefined && res.code !== 0 && res.code !== '0')
+            );
 
-                let isSuccess = false;
-                if (res) {
-                    if (res.errno === 0 || res.errno === '0' || res.code === 0 || res.code === '0') isSuccess = true;
-                    else if (res.data && (res.data.room_id || res.data.roomId)) isSuccess = true;
-                    else if (res.room_id || res.roomId) isSuccess = true;
-                }
+            if (isError || !res) {
+                const errMsg = (res && (res.errmsg || res.message)) || '不明なエラー';
+                console.error(`[NetworkManager] Create room failed. Errno: ${res?.errno}, Msg: ${errMsg}`);
+                // ★ 偽部屋へのフォールバックを完全撤廃。失敗時は作成を中止してエラーを画面に通知
+                Danmaku.push('作成失敗', `エラー: ${errMsg}`, '#f43f5e', true);
+                return null;
+            }
 
-                if (!isSuccess && res && (res.errno !== undefined || res.code !== undefined)) {
-                    console.error('[NetworkManager] Create room failed:', res.errmsg || res.message);
-                    return null;
-                }
+            let createdRoomId = null;
+            if (res.data && res.data.room_id) createdRoomId = String(res.data.room_id);
+            else if (res.room_id) createdRoomId = String(res.room_id);
 
-                if (res && res.data && res.data.room_id) createdRoomId = String(res.data.room_id);
-                else if (res && res.room_id) createdRoomId = String(res.room_id);
+            if (!createdRoomId) {
+                Danmaku.push('作成失敗', 'ルームIDが取得できませんでした', '#f43f5e', true);
+                return null;
             }
 
             this.currentRoomId = createdRoomId;
@@ -228,12 +245,16 @@ export const NetworkManager = {
             return this.currentRoomId;
         } catch (err) {
             console.error('[NetworkManager] createRoom exception:', err);
+            Danmaku.push('通信エラー', 'ルーム作成中に例外が発生しました', '#f43f5e', true);
             return null;
         }
     },
 
+    /**
+     * 厳格なルーム参加と満員エラーハンドリング
+     */
     async joinRoom(roomId) {
-        if (!roomId) return false;
+        if (!this.isSDKAvailable || !roomId) return { success: false, msg: '無効な操作です' };
         const safeRoomId = String(roomId);
 
         try {
@@ -241,17 +262,17 @@ export const NetworkManager = {
             await safeExitCurrentRoom(safeRoomId);
             this.purgeLocalWorldState();
 
-            if (this.isSDKAvailable) {
-                const res = await window.AgentSDK.room.join({ room_id: safeRoomId });
-                let isSuccess = false;
-                if (res) {
-                    if (res.errno === 0 || res.errno === '0' || res.code === 0 || res.code === '0') isSuccess = true;
-                    else if (res.data && (res.data.room_id || res.data.roomId)) isSuccess = true;
-                }
-                if (!isSuccess && res && (res.errno !== undefined || res.code !== undefined)) {
-                    console.error('[NetworkManager] Join room failed:', res.errmsg || res.message);
-                    return false;
-                }
+            const res = await window.AgentSDK.room.join({ room_id: safeRoomId });
+            
+            const isError = res && (
+                (res.errno !== undefined && res.errno !== 0 && res.errno !== '0') ||
+                (res.code !== undefined && res.code !== 0 && res.code !== '0')
+            );
+
+            if (isError || !res) {
+                const errMsg = (res && (res.errmsg || res.message)) || '不明なエラー';
+                console.error(`[NetworkManager] Join room failed. Errno: ${res?.errno}, Msg: ${errMsg}`);
+                return { success: false, msg: errMsg };
             }
 
             this.currentRoomId = safeRoomId;
@@ -260,16 +281,16 @@ export const NetworkManager = {
 
             this.isHost = false;
             this.isMultiplayerActive = true;
-            this.mySlot = 1; // 初期フォールバック
+            this.mySlot = 1; // 初期フォールバック（SYNC_MEMBERSで確定）
 
             this._startHostWatchdog();
             this._startBroadcasting();
             Danmaku.push('システム', `ルーム #${safeRoomId.slice(-4)} に合流しました`, '#34d399', true);
 
-            return true;
+            return { success: true };
         } catch (err) {
             console.error('[NetworkManager] joinRoom exception:', err);
-            return false;
+            return { success: false, msg: 'ネットワーク通信例外' };
         }
     },
 
@@ -285,7 +306,8 @@ export const NetworkManager = {
                 else if (Array.isArray(res.list)) list = res.list;
             }
             if (Array.isArray(list)) {
-                return list.filter(r => (Number(r.gamer_num) || 0) > 0 && (Number(r.gamer_num) || 0) < 8);
+                // 定員上限の4名をフィルタ基準に適用
+                return list.filter(r => (Number(r.gamer_num) || 0) > 0 && (Number(r.gamer_num) || 0) < 4);
             }
         } catch (err) {
             console.warn('[NetworkManager] Failed to get public room list:', err);
@@ -415,7 +437,6 @@ export const NetworkManager = {
         this._isPromoting = false;
     },
 
-    // 10Hz（100ms周期）の単一集約パケット送出ループ
     _startBroadcasting() {
         if (this._syncIntervalId) clearInterval(this._syncIntervalId);
 
@@ -488,7 +509,6 @@ export const NetworkManager = {
             this._lastHostPacketTime = performance.now();
             this._hasReceivedFirstHostPacket = true;
 
-            // 10Hz POS 受信ハンドラ
             if (eventType === 'P' || eventType === 'POS') {
                 const incomingList = packet.l || packet.list;
                 if (Array.isArray(incomingList)) {
@@ -500,7 +520,6 @@ export const NetworkManager = {
                     }
                 }
 
-                // 餌取得同期
                 if (Array.isArray(packet.pk)) {
                     packet.pk.forEach(tuple => {
                         const pick = unpackFoodPickTuple(tuple);
@@ -508,7 +527,6 @@ export const NetworkManager = {
                     });
                 }
 
-                // 散布肉片同期
                 if (Array.isArray(packet.dp)) {
                     packet.dp.forEach(tuple => {
                         const drop = unpackDropFoodTuple(tuple);
@@ -516,7 +534,6 @@ export const NetworkManager = {
                     });
                 }
 
-                // 弾幕チャット受信
                 if (Array.isArray(packet.ch)) {
                     packet.ch.forEach(tuple => {
                         const chat = unpackChatTuple(tuple);
@@ -531,11 +548,9 @@ export const NetworkManager = {
                 return;
             }
 
-            // ルームメンバー同期
             if (eventType === 'SYNC_MEMBERS') {
                 if (Array.isArray(packet.slots)) {
                     this.slots = packet.slots;
-                    // 自スロット番号の同定
                     const mySlotData = this.slots.find(s => s.userId && String(s.userId) === String(this.myUser.user_id));
                     if (mySlotData) {
                         this.mySlot = mySlotData.slot;
@@ -561,7 +576,6 @@ export const NetworkManager = {
         }
     },
 
-    // セッション跨ぎ時のメモリ完全初期化
     purgeLocalWorldState() {
         this._stopHostWatchdog();
         if (this._syncIntervalId) {
@@ -587,7 +601,4 @@ export const NetworkManager = {
         Danmaku.push('システム', 'ルームを退出しました', '#94a3b8', true);
     }
 };
-
-if (typeof window !== 'undefined') {
-    window.NetworkManager = NetworkManager;
-}
+if (typeof window !== 'undefined') window.NetworkManager = NetworkManager;

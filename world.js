@@ -83,9 +83,12 @@ export class WorldManager {
 
     // 撃破されたスネークの肉片ドロップ
     spawnDeathDrop(snake) {
-        const hist = snake.history;
-        for (let i = 0; i < hist.length; i += 2) {
-            const pt = hist[i];
+        const histLen = snake.historyLength || 0;
+        for (let i = 0; i < histLen; i += 2) {
+            const idx = (snake.headIdx + i) % 2048; // MAX_HISTORY = 2048
+            const pt = snake.history[idx];
+            if (!pt) continue;
+            
             this.dropFoods.push({
                 x: pt.x + (Math.random() - 0.5) * 20,
                 y: pt.y + (Math.random() - 0.5) * 20,

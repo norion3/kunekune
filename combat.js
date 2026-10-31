@@ -1,9 +1,9 @@
 /**
  * ==============================================================================
  * 『くねくねバトル オンライン』ゼロアロケーション空間ハッシュ衝突判定エンジン (combat.js)
- * v18.0.0 改訂:
- * ・リスポーン直後の無敵時間（invulnerableTimer）を貫通・すり抜けするよう保護機能を追加
- * ・リスキル（復活直後の即死）を物理的に完全遮断
+ * v18.0.0 限界突破パッチ:
+ * ・リングバッファ O(1) 配列アクセス対応
+ * ・理不尽デス回避: 無敵終了時に敵の胴体と重なっていた場合、ノックバック＆無敵延長で保護
  * ==============================================================================
  */
 
@@ -45,12 +45,14 @@ export class SpatialCollisionEngine {
             const s = snakes[i];
             if (s.isDead || !s.isVisible) continue;
 
-            const hist = s.history;
-            const histLen = hist.length;
+            const histLen = s.historyLength || 0;
 
             // 頭部付近（先頭2節）は自爆防止のため登録しない
             for (let j = 3; j < histLen; j += 2) {
-                const pt = hist[j];
+                const idx = (s.headIdx + j) % 2048; // MAX_HISTORY = 2048
+                const pt = s.history[idx];
+                if (!pt) continue;
+
                 const progress = j / histLen;
                 const radius = s.size * (1 - Math.pow(progress, 2.5) * 0.5);
 
@@ -74,9 +76,6 @@ export class SpatialCollisionEngine {
             const victim = snakes[i];
             if (victim.isDead || !victim.isVisible) continue;
 
-            // ★ 無敵時間中（リスポーン直後）の相手には判定を行わない（リスキル防止）
-            if (victim.invulnerableTimer && victim.invulnerableTimer > 0) continue;
-
             const hx = victim.x;
             const hy = victim.y;
             const hRadius = victim.size;
@@ -97,16 +96,33 @@ export class SpatialCollisionEngine {
                         const bodyNode = bodies[b];
                         const killer = bodyNode.snake;
                         
-                        if (killer === victim) continue; // 自分自身の体節はスキップ
-
-                        // ★ 胴体側（壁を作った側）が無敵時間中の場合も、すり抜けるようにして理不尽な死を防ぐ
-                        if (killer.invulnerableTimer && killer.invulnerableTimer > 0) continue;
+                        if (killer === victim) continue; 
 
                         const dx = hx - bodyNode.x;
                         const dy = hy - bodyNode.y;
                         const minDist = hRadius + bodyNode.radius * 0.75;
 
+                        // 接触判定
                         if (dx * dx + dy * dy < minDist * minDist) {
+                            const isVictimInvuln = victim.invulnerableTimer && victim.invulnerableTimer > 0;
+                            const isKillerInvuln = killer.invulnerableTimer && killer.invulnerableTimer > 0;
+
+                            // ★ 限界突破パッチ: 理不尽デス回避（重なり時の無敵延長＆ノックバック）
+                            if (isVictimInvuln || isKillerInvuln) {
+                                if (isVictimInvuln && victim.invulnerableTimer < 0.2) {
+                                    victim.invulnerableTimer = 0.5; // 無敵延長
+                                }
+                                if (isKillerInvuln && killer.invulnerableTimer < 0.2) {
+                                    killer.invulnerableTimer = 0.5; // 無敵延長
+                                }
+                                // 安全圏への押し出し（ノックバック）
+                                const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+                                const pushForce = (minDist - dist) * 0.15;
+                                victim.x += (dx / dist) * pushForce;
+                                victim.y += (dy / dist) * pushForce;
+                                continue;
+                            }
+
                             victim.isDead = true;
                             killer.kills++;
                             killer.addScore(150);
