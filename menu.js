@@ -1,7 +1,8 @@
 /**
  * ==============================================================================
  * 『くねくねバトル オンライン』ボトムシートメニュー ＆ ルーター (menu.js)
- * v20.5.0 タッチ制御＆DOM描画最適化版:
+ * v20.9.0 チャット二重送信解消＆DOM最適化版:
+ * ・チャット送信時の Danmaku.push 重複呼び出しを撤廃（一本化により二重表示バグ根絶）
  * ・走者一覧の変更検知差分更新（不要な DOM 破棄・ガタつき完全防止）
  * ・シート内スクロールと背景操作貫通遮断 (stopPropagation) の完全両立
  * ・GRAVITYネイティブ安全起動ルーター (GravityRouter: 非表示iframeキック)
@@ -183,11 +184,13 @@ export class MenuManager {
             chip.onclick = (e) => {
                 e.stopPropagation();
                 const text = chip.innerText.trim();
-                const myName = (window.localPlayerInstance && window.localPlayerInstance.name) ? window.localPlayerInstance.name : 'あなた';
-                Danmaku.push(myName, text, this.selectedColor);
 
+                // ★ 二重表示の根絶: NetworkManager.queueChat に一本化（内部で Danmaku.push が1回だけ呼ばれる）
                 if (window.NetworkManager && typeof window.NetworkManager.queueChat === 'function') {
                     window.NetworkManager.queueChat(text);
+                } else {
+                    const myName = (window.localPlayerInstance && window.localPlayerInstance.name) ? window.localPlayerInstance.name : 'あなた';
+                    Danmaku.push(myName, text, this.selectedColor);
                 }
                 this.close();
             };
@@ -202,12 +205,16 @@ export class MenuManager {
             if (!inputEl) return;
             const text = inputEl.value.trim();
             if (text.length > 0) {
-                const myName = (window.localPlayerInstance && window.localPlayerInstance.name) ? window.localPlayerInstance.name : 'あなた';
-                Danmaku.push(myName, text.slice(0, 15), this.selectedColor);
+                const safeText = text.slice(0, 15);
 
+                // ★ 二重表示の根絶: NetworkManager.queueChat に一本化
                 if (window.NetworkManager && typeof window.NetworkManager.queueChat === 'function') {
-                    window.NetworkManager.queueChat(text.slice(0, 15));
+                    window.NetworkManager.queueChat(safeText);
+                } else {
+                    const myName = (window.localPlayerInstance && window.localPlayerInstance.name) ? window.localPlayerInstance.name : 'あなた';
+                    Danmaku.push(myName, safeText, this.selectedColor);
                 }
+
                 inputEl.value = '';
                 inputEl.blur();
                 this.close();

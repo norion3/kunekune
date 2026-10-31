@@ -1,6 +1,7 @@
 // ==============================================================================
 // 『くねくねバトル オンライン』Phase 5 マスター統合オーケストレーター (main.js)
-// v20.4.0 完全同期＆描画安定化版:
+// v20.9.0 ユーザーネーム完全同期＆チャット整合版:
+// ・GRAVITY公式ユーザーネームの自機スネーク・ロビー即時反映パイプライン
 // ・ゲスト端末でのローカルAI二重生成を完全遮断（ホストのみAI統括）
 // ・餌捕食 (queueFoodPick) ＆ 撃破肉片散布 (queueDropFood) 通信同期完全接続
 // ・リモート走者参加時の描画タイムラグ（最大10フレーム）を完全解消
@@ -10,7 +11,7 @@
 import { injectStyles } from './style.js';
 injectStyles();
 
-import { mountDOM, EntryShield } from './dom.js';
+import { mountDOM, EntryShield, updateLobbyGreeting } from './dom.js';
 mountDOM();
 
 import {
@@ -127,9 +128,15 @@ export const UIController = {
     },
 
     refreshLobbyGreeting() {
-        const greeting = document.getElementById('lobby-greeting');
-        if (greeting && NetworkManager.myUser) {
-            greeting.innerText = `ようこそ ${NetworkManager.myUser.name} さん`;
+        const resolvedName = (typeof window !== 'undefined' && window.GRAVITY_USER_NAME)
+            ? window.GRAVITY_USER_NAME
+            : (NetworkManager.myUser && NetworkManager.myUser.name !== 'あなた' ? NetworkManager.myUser.name : '');
+        
+        if (resolvedName) {
+            updateLobbyGreeting(resolvedName);
+            if (player) {
+                player.name = resolvedName;
+            }
         }
     },
 
@@ -171,11 +178,12 @@ function initGame() {
     const spawnY = MAP_SIZE / 2 + (Math.random() - 0.5) * 4000;
     player.reset(spawnX, spawnY);
 
-    if (NetworkManager.myUser && NetworkManager.myUser.name) {
-        player.name = NetworkManager.myUser.name;
-    } else if (window.GRAVITY_USER_NAME) {
-        player.name = window.GRAVITY_USER_NAME;
-    }
+    // ★ ユーザーネーム解決：GRAVITY_USER_NAME を最優先で採用
+    const resolvedPlayerName = (typeof window !== 'undefined' && window.GRAVITY_USER_NAME)
+        ? window.GRAVITY_USER_NAME
+        : (NetworkManager.myUser && NetworkManager.myUser.name !== 'あなた' ? NetworkManager.myUser.name : 'あなた');
+
+    player.name = resolvedPlayerName;
     player.color = SNAKE_COLORS[NetworkManager.mySlot % SNAKE_COLORS.length];
 
     // リトライ・別ルーム入室時の初期化漏れ完全ガード
@@ -498,7 +506,7 @@ function handleGameOver() {
 async function bootSequence() {
     try {
         const userInfo = await NetworkManager.init();
-        if (userInfo && userInfo.name) {
+        if (userInfo && userInfo.name && userInfo.name !== 'あなた') {
             player.name = userInfo.name;
         }
         UIController.refreshLobbyGreeting();

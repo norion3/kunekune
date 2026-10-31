@@ -1,11 +1,10 @@
 // ==============================================================================
 // 『くねくねバトル オンライン』自律DOMマウントモジュール (dom.js)
-// v20.1.0 完全修復版:
-// ・main.js から要求される EntryShield (通信中保護画面) を完全実装・エクスポート
-// ・上部文字ボタン（RANKING / MAP: ON）完全撤廃・高品位SVGアイコン統一
-// ・左下ボタングループ（ズーム＋/ー、サウンド、ランキング、マップトグル）
-// ・右下一番下（bottom: 24px）MENUボタン配置
-// ・CUSTOMタブ 8色パレットピッカー展開
+// v20.9.0 UIクリーン化＆ユーザーネーム同期版:
+// ・ランキングパネルヘッダーの不要な「SCORE:」表示を完全撤去（「順位: ○ / ○」のみに統一）
+// ・GRAVITYユーザーネーム即時同期メソッド (updateLobbyGreeting) を配備
+// ・main.js から要求される EntryShield (通信中保護画面) 完全実装
+// ・左下SVGボタングループ ＆ 右下MENU底辺完全統一配置
 // ==============================================================================
 
 import { SNAKE_COLORS } from './constants.js';
@@ -72,6 +71,16 @@ export const EntryShield = {
     }
 };
 
+/**
+ * ロビー画面のユーザー名表示を即時更新する関数
+ */
+export function updateLobbyGreeting(userName) {
+    const greetingEl = document.getElementById('lobby-greeting');
+    if (greetingEl && userName && userName !== 'あなた') {
+        greetingEl.innerHTML = `ようこそ <strong style="color:#ffdd00;">${userName}</strong> さん`;
+    }
+}
+
 export function mountDOM() {
     if (document.getElementById('game-canvas')) return;
 
@@ -89,11 +98,10 @@ export function mountDOM() {
     const uiLayer = document.createElement('div');
     uiLayer.id = 'ui-layer';
     uiLayer.innerHTML = `
-        <!-- 左上：ランキング展開パネル（トグル時のみ表示・文字ボタン廃止） -->
+        <!-- 左上：ランキング展開パネル（★ SCORE表示を撤去し順位のみに統一） -->
         <div id="stats-box" style="display: none;">
             <div class="stats-header-row">
                 <span>順位: <strong id="val-rank" style="color:#ffdd00; font-size:15px;">1</strong> / <span id="val-total">50</span></span>
-                <span>SCORE: <strong id="val-score" style="color:#00e5ff;">0</strong></span>
             </div>
             <hr>
             <div id="leaderboard-list"></div>

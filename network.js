@@ -1,10 +1,10 @@
 // ==============================================================================
 // 『くねくねバトル オンライン』AgentSDK公式マルチプレイ通信マネージャー (network.js)
-// v20.1.0 堅牢化版:
-// ・GRAVITY公式上限（4名）に完全整合した 4スロット（0〜3）管理
-// ・1024バイト（1KB）物理限界の厳格防衛＆自動キュー分割キャリーオーバー機構
-// ・getMyUserInfo の3回リトライ（ポーリング）機構による確実なユーザー名取得
-// ・自律ホスト昇格（Host Migration）＆未入室exitハング完全防護
+// v20.9.0 GRAVITY公式完全準拠版:
+// ・GRAVITY公式APIレスポンス構造（res.data.room_id / res.room_id）完全対応
+// ・ルーム作成・参加の柔軟な成功判定（参考コード完全整合・無反応バグ根絶）
+// ・ユーザーネーム取得とDOM・グローバル変数の即時同期パイプライン
+// ・GRAVITY公式上限（4名）スロット管理 ＆ 1024バイト物理限界厳格防衛
 // ==============================================================================
 
 import {
@@ -23,6 +23,7 @@ import {
 
 import { Danmaku } from './danmaku.js';
 import { Menu } from './menu.js';
+import { updateLobbyGreeting } from './dom.js';
 import { SNAKE_COLORS, MAX_PLAYERS } from './constants.js';
 
 const SAFE_PACKET_BYTE_LIMIT = 980; // 1024バイト上限に対する安全マージン
@@ -111,7 +112,9 @@ export const NetworkManager = {
         const cleanText = String(messageText).trim().slice(0, 15);
         if (!cleanText) return;
 
-        const myName = this.myUser.name;
+        const myName = (typeof window !== 'undefined' && window.GRAVITY_USER_NAME)
+            ? window.GRAVITY_USER_NAME
+            : this.myUser.name;
         const myColor = SNAKE_COLORS[this.mySlot % SNAKE_COLORS.length];
         Danmaku.push(myName, cleanText, myColor);
 
@@ -121,7 +124,7 @@ export const NetworkManager = {
     },
 
     /**
-     * ユーザー情報取得の堅牢化（リトライ機構）
+     * ユーザー情報取得の堅牢化（参考コード完全準拠・リトライ機構）
      */
     async init() {
         if (!this.isSDKAvailable) {
@@ -129,22 +132,35 @@ export const NetworkManager = {
             return this.myUser;
         }
 
-        // 取得できるまで最大3回リトライするポーリング機構
+        // 取得できるまで最大3回ポーリング
         for (let attempt = 1; attempt <= 3; attempt++) {
             try {
                 const res = await window.AgentSDK.user.getMyUserInfo();
-                if (res && res.data && res.data.name) {
+                const uData = res && res.data ? res.data : res;
+                if (uData && (uData.name || uData.user_name || uData.nickname)) {
+                    const resolvedName = uData.name || uData.user_name || uData.nickname;
                     this.myUser = {
-                        user_id: String(res.data.user_id),
-                        name: res.data.name,
-                        portrait: res.data.portrait || res.data.portait || ''
+                        user_id: String(uData.user_id || uData.uid || 'local_user'),
+                        name: resolvedName,
+                        portrait: uData.portrait || uData.portait || ''
                     };
-                    window.GRAVITY_USER_NAME = this.myUser.name;
+                    window.GRAVITY_USER_NAME = resolvedName;
+                    this.slots[0].name = resolvedName;
+                    this.slots[0].userId = this.myUser.user_id;
+
+                    // ロビー挨拶文の即時同期
+                    updateLobbyGreeting(resolvedName);
+
+                    if (window.localPlayerInstance) {
+                        window.localPlayerInstance.name = resolvedName;
+                    }
+
+                    console.log(`[NetworkManager] GRAVITY User Authenticated: ${resolvedName} (UID: ${this.myUser.user_id})`);
                     return this.myUser;
                 }
             } catch (err) {
                 console.warn(`[NetworkManager] Failed to get user info (Attempt ${attempt}/3):`, err);
-                await new Promise(r => setTimeout(r, 500));
+                await new Promise(r => setTimeout(r, 400));
             }
         }
         return this.myUser;
@@ -183,7 +199,7 @@ export const NetworkManager = {
     },
 
     /**
-     * 厳格な公開・プライベートルーム作成
+     * 参考コード完全準拠：柔軟なレスポンス構造判定によるルーム作成
      */
     async createRoom(isPrivate = false) {
         if (!this.isSDKAvailable) {
@@ -199,21 +215,32 @@ export const NetworkManager = {
             const permission = isPrivate ? 1 : 0;
             const res = await window.AgentSDK.room.create({ max_players: MAX_PLAYERS, room_permission: permission });
 
-            const isError = res && (
-                (res.errno !== undefined && res.errno !== 0 && res.errno !== '0') ||
-                (res.code !== undefined && res.code !== 0 && res.code !== '0')
-            );
+            // ★ 参考コード完全準拠の柔軟な判定ロジック
+            let isSuccess = false;
+            let createdRoomId = null;
 
-            if (isError || !res) {
-                const errMsg = (res && (res.errmsg || res.message)) || '不明なエラー';
-                console.error(`[NetworkManager] Create room failed. Errno: ${res?.errno}, Msg: ${errMsg}`);
-                Danmaku.push('作成失敗', `エラー: ${errMsg}`, '#f43f5e', true);
-                return null;
+            if (res) {
+                if (res.errno === 0 || res.errno === '0' || res.code === 0 || res.code === '0') {
+                    isSuccess = true;
+                } else if (res.data && (res.data.room_id || res.data.roomId)) {
+                    isSuccess = true;
+                } else if (res.room_id || res.roomId) {
+                    isSuccess = true;
+                }
             }
 
-            let createdRoomId = null;
-            if (res.data && res.data.room_id) createdRoomId = String(res.data.room_id);
-            else if (res.room_id) createdRoomId = String(res.room_id);
+            if (res && res.data && (res.data.room_id || res.data.roomId)) {
+                createdRoomId = String(res.data.room_id || res.data.roomId);
+            } else if (res && (res.room_id || res.roomId)) {
+                createdRoomId = String(res.room_id || res.roomId);
+            }
+
+            if (!isSuccess && res && (res.errno !== undefined || res.code !== undefined)) {
+                const errMsg = res.errmsg || res.msg || res.message || '部屋の作成に失敗しました';
+                console.error(`[NetworkManager] Failed to create room: ${errMsg}`);
+                Danmaku.push('作成失敗', errMsg, '#f43f5e', true);
+                return null;
+            }
 
             if (!createdRoomId) {
                 Danmaku.push('作成失敗', 'ルームIDが取得できませんでした', '#f43f5e', true);
@@ -264,7 +291,7 @@ export const NetworkManager = {
     },
 
     /**
-     * 厳格なルーム参加と満員エラーハンドリング
+     * 参考コード完全準拠：柔軟なレスポンス構造判定によるルーム参加
      */
     async joinRoom(roomId) {
         if (!this.isSDKAvailable || !roomId) return { success: false, msg: '無効な操作です' };
@@ -276,15 +303,19 @@ export const NetworkManager = {
             this.purgeLocalWorldState();
 
             const res = await window.AgentSDK.room.join({ room_id: safeRoomId });
-            
-            const isError = res && (
-                (res.errno !== undefined && res.errno !== 0 && res.errno !== '0') ||
-                (res.code !== undefined && res.code !== 0 && res.code !== '0')
-            );
 
-            if (isError || !res) {
-                const errMsg = (res && (res.errmsg || res.message)) || '不明なエラー';
-                console.error(`[NetworkManager] Join room failed. Errno: ${res?.errno}, Msg: ${errMsg}`);
+            let isSuccess = false;
+            if (res) {
+                if (res.errno === 0 || res.errno === '0' || res.code === 0 || res.code === '0') {
+                    isSuccess = true;
+                } else if (res.data && (res.data.room_id || res.data.roomId)) {
+                    isSuccess = true;
+                }
+            }
+
+            if (!isSuccess && res && (res.errno !== undefined || res.code !== undefined)) {
+                const errMsg = res.errmsg || res.msg || res.message || '入室できませんでした';
+                console.error(`[NetworkManager] Failed to join room: ${errMsg}`);
                 return { success: false, msg: errMsg };
             }
 
@@ -598,7 +629,6 @@ export const NetworkManager = {
             // 1024バイト（物理限界）の厳格チェック
             if (byteLength >= 1020) {
                 console.warn(`[NetworkManager] パケットサイズが1KB制限に接近 (${byteLength} bytes)。過剰データを切り離して送出します。`);
-                // 万一1KBを超過しそうな場合は、副次的なイベント配列を削除して本体のみ送信
                 delete msgObj.dp;
                 delete msgObj.pk;
                 window.AgentSDK.room.sendMessage({ message: JSON.stringify(msgObj) });
