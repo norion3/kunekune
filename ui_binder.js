@@ -1,13 +1,13 @@
 // ==============================================================================
 // 『くねくねバトル オンライン』UIイベントバインダーモジュール (ui_binder.js)
-// v21.2.0 ゲーム開始全端末ブロードキャスト連動版:
-// ・待機室「ゲーム開始」ボタン押下時の NetworkManager.broadcastStartGame() 連携
+// v24.3.0 不要自動弾幕完全撤去＆操作系専任化版:
+// ・メニュー着せ替え時の不要な「アバターを変更しました」自動弾幕ログを完全削除
+// ・待機室「ゲーム開始」ボタン押下時の NetworkManager.broadcastStartGame() 連携維持
 // ・ホストの開始トリガーにより全ゲスト端末が待機室から一斉始動
 // ・ロビーの作成/参加/更新リスナーは net_lobby_hooks.js へ完全一本化
 // ・操作系（ソロ開始、ズーム、サウンド、ランキング、マップ、待機室、リトライ）の専任化
 // ==============================================================================
 
-import { Danmaku } from './danmaku.js';
 import { Menu } from './menu.js';
 
 /**
@@ -117,7 +117,7 @@ export function initUIBindings(ctx) {
     // ※ ロビーの公開作成・プライベート作成・一覧更新・各参加ボタンは
     //    net_lobby_hooks.js（1秒デバウンス ＆ 先行待機室起動）へ一本化済み
 
-    // 5. 待機室：ホスト専用ゲーム開始ボタン（★全端末一斉開始ブロードキャスト連携）
+    // 5. 待機室：ホスト専用ゲーム開始ボタン（全端末一斉開始ブロードキャスト連携）
     const btnWaitingStart = document.getElementById('btn-waiting-start');
     if (btnWaitingStart && !btnWaitingStart._hasStartBound) {
         btnWaitingStart._hasStartBound = true;
@@ -148,14 +148,13 @@ export function initUIBindings(ctx) {
         };
     }
 
-    // 7. メニュー着せ替えコールバック初期化
+    // 7. メニュー着せ替えコールバック初期化（★不要な「アバターを変更しました」弾幕を完全削除）
     Menu.init((face, color) => {
         const p = getPlayer();
         if (p) {
             p.face = face;
             p.color = color;
         }
-        Danmaku.push('システム', 'アバターを変更しました', color, true);
     });
 
     // 8. リザルト画面：リトライボタン（リザルト画面即時非表示 ＆ 復帰）

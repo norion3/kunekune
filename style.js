@@ -1,13 +1,12 @@
 // ==============================================================================
 // 『くねくねバトル オンライン』iOS WebKit & iPhone 干渉完全マスクスタイル (style.js)
-// v24.2.0 UIレイアウト最適化＆ルーム招待被り完全根絶版:
-// ・右側アクション群（ズーム＋/ー、ランキング、MAP）を上方に大きく引き上げ、公式「ルーム招待」ボタンとの干渉を完全根絶
-// ・左下音量ボタンをMENUの真上に縦並び配置し、左手親指の仮想ジョイスティック操作領域を広大に開放
-// ・待機室リスト枠の最大高さを拡張し、最大6名スロット全員をスクロールなしで完全表示
-// ・弾幕チャットのアニメーション時間を7.0秒へ緩和（ゆったり落ち着いた読破性を実現）
-// ・backdrop-filter を全撤廃し、WebKit特有のCanvas背景フリーズ（非リアルタイム化）を完全解消
-// ・順位パネル（#stats-box）および全操作ボタンをマップ同様の極薄透過アルファに統一
-// ・GRAVITYマイアイコン顔選択ボタン対応 ＆ overscroll-behavior: none 厳格維持
+// v24.3.0 ルーム招待被り完全根絶＆スクロールバー非表示・透過バッジ版:
+// ・右側アクション群を 215px 引き上げ、公式「ルーム招待」ボタンとの物理的被りを100%根絶
+// ・走者リスト（.participants-list）のスクロールバーを完全不可視化＆右パディング確保（文字被り解消）
+// ・弾幕チャットのネームバッジを極薄透過フロスト化し、通過中の背後の敵・餌を遮らない視界を確保
+// ・弾幕コンテナの領域を画面上部に集約し、画面中央の戦闘エリアへの侵入を防止
+// ・左下：MENU真上に音量ボタンを縦並び配置（ジョイスティック領域広大開放維持）
+// ・待機室6名枠（max-height: 320px）のスクロールなし完全表示維持
 // ==============================================================================
 
 export function injectStyles() {
@@ -106,8 +105,7 @@ export function injectStyles() {
 
         /* ==========================================================================
            左下ボタングループ：低頻度操作（MENU、サウンド）
-           ★ 横並びを廃止し、左端に沿って「MENUの真上に音量ボタン」を縦並び配置
-           ＝画面中央寄りへの張り出しをゼロ化し、左手親指の仮想ジョイスティック操作域を広大に開放
+           ★ MENUの真上に音量ボタンを縦並び配置（ジョイスティック領域広大開放）
            ========================================================================== */
         .bottom-left-group {
             position: absolute;
@@ -185,12 +183,12 @@ export function injectStyles() {
 
         /* ==========================================================================
            右側ボタングループ：高頻度操作（ズーム＋/ー、ランキング、マップ）
-           ★ 下部基準位置を大きく引き上げ（calc(var(--safe-bottom) + 162px)）
-           ＝GRAVITY公式の「ルーム招待 [↑]」ボタンや右下BOOSTボタンとの被りを完全根絶
+           ★ 下部基準位置を 215px へ大幅引き上げ
+           ＝GRAVITY公式の「ルーム招待 [↑]」ボタンとの重なりを100%完全に根絶
            ========================================================================== */
         .right-action-group {
             position: absolute;
-            bottom: calc(var(--safe-bottom) + 162px);
+            bottom: calc(var(--safe-bottom) + 215px);
             right: 18px;
             display: flex;
             flex-direction: column;
@@ -267,13 +265,17 @@ export function injectStyles() {
             pointer-events: none;
         }
 
-        /* --- 弾幕チャット（移動速度をゆったり7.0秒へ緩和・二重シャドウ防衛） --- */
+        /* ==========================================================================
+           弾幕チャット
+           ★ 画面最上部（セーフエリア直下）へ退避させ、中央の戦闘視界を妨げない設計
+           ★ バッジ背景を極薄透過フロスト化し、通過中の背後の敵・餌がクリアに透ける
+           ========================================================================== */
         #danmaku-container {
             position: absolute;
             top: 0;
             left: 0;
             width: 100%;
-            height: 100%;
+            height: calc(var(--safe-top) + 80px);
             pointer-events: none;
             overflow: hidden;
             z-index: 100;
@@ -284,21 +286,24 @@ export function injectStyles() {
             white-space: nowrap;
             display: flex;
             align-items: center;
-            gap: 6px;
+            gap: 8px;
             font-size: 13.5px;
             font-weight: 700;
             color: #ffffff;
-            text-shadow: 0 1px 4px rgba(0, 0, 0, 0.95), 0 0 2px rgba(0, 0, 0, 0.8);
+            text-shadow: 0 1px 4px rgba(0, 0, 0, 0.95), 0 0 3px rgba(0, 0, 0, 0.9);
             animation: danmaku-fly 7.0s linear forwards;
             pointer-events: none;
         }
         .danmaku-badge {
             font-size: 11px;
-            font-weight: 900;
-            padding: 2px 8px;
+            font-weight: 800;
+            padding: 2.5px 9px;
             border-radius: 12px;
-            color: #0b051a;
-            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.6);
+            background: rgba(11, 5, 26, 0.38) !important;
+            border: 1.5px solid currentColor;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+            text-shadow: 0 1px 2px rgba(0, 0, 0, 0.95);
+            letter-spacing: 0.3px;
         }
         @keyframes danmaku-fly {
             0% { transform: translateX(0); left: 100%; }
@@ -494,6 +499,10 @@ export function injectStyles() {
             cursor: pointer;
         }
 
+        /* ==========================================================================
+           走者一覧タブ
+           ★ スクロールバー完全不可視化＆右パディング確保により「HOST」や「↗」の文字被りを完全解消
+           ========================================================================== */
         .participants-list {
             display: flex;
             flex-direction: column;
@@ -502,6 +511,14 @@ export function injectStyles() {
             overflow-y: auto;
             -webkit-overflow-scrolling: touch;
             touch-action: pan-y;
+            scrollbar-width: none;
+            -ms-overflow-style: none;
+            padding-right: 6px;
+        }
+        .participants-list::-webkit-scrollbar {
+            display: none;
+            width: 0;
+            height: 0;
         }
         .participant-row {
             display: flex;
@@ -874,7 +891,7 @@ export function injectStyles() {
             cursor: pointer;
         }
 
-        /* 待機室オーバーレイ（★最大高さを320pxへ拡張し、6名スロット全員をスクロールなしで完全表示） */
+        /* 待機室オーバーレイ（最大高さを320pxへ拡張し、6名スロット全員をスクロールなしで完全表示） */
         #waiting-overlay {
             display: none;
             position: absolute;
