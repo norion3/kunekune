@@ -1,10 +1,11 @@
 /**
  * ==============================================================================
- * 『くねくねバトル オンライン』ボトムシートメニュー ＆ ルーター (menu.js)
- * v24.0.0 走者6枠固定確保 ＆ GRAVITYアバター・プロフ完全連携版:
+ * 『くねくねバトル オンライン』ボトムシートメニュー (menu.js)
+ * v25.1.0 ルーター分離＆走者6枠固定・UI専任版:
+ * ・GravityRouter を gravity_router.js へ完全委譲し、ボトムシートUI専任化
  * ・シングル・マルチ共通：走者タブ内に最大定員6名分のスロット枠を常時整然と確保
  * ・GRAVITY公式アバター写真（portrait）の円形トリミング高精細表示
- * ・実走者タップ時のGRAVITYプロフィール画面安全起動（GravityRouter）
+ * ・実走者タップ時のGRAVITYプロフィール画面安全起動
  * ・右上の共有 [↑] ボタン直下の分離型いいね誘導アンカー (#like-guide-anchor) 制御
  * ・チャット送信時の二重表示防止一本化 ＆ 走者タブの変更検知差分更新
  * ==============================================================================
@@ -18,33 +19,9 @@ import {
 } from './constants.js';
 
 import { Danmaku } from './danmaku.js';
+import { GravityRouter } from './gravity_router.js';
 
-// GRAVITYネイティブ画面安全起動ルーター（Universal Links誤爆・404クラッシュ防止）
-export const GravityRouter = {
-    openProfile(internalUid) {
-        if (!internalUid || internalUid === 'local_user') return;
-        const cleanId = String(internalUid).replace(/[^0-9]/g, '');
-        if (!cleanId) return;
-
-        const paramObj = {
-            uid: Number(cleanId),
-            selectedIndex: 0,
-            web_url: 'https://www.gravity.place/user/' + cleanId,
-            s: 'web',
-            b: 'user'
-        };
-        const innerUrl = 'usercenter?0=' + encodeURIComponent(JSON.stringify(paramObj));
-        const deepLink = 'slme://internal?type=5&ani=1&url=' + encodeURIComponent(innerUrl);
-
-        const iframe = document.createElement('iframe');
-        iframe.style.cssText = 'position:absolute;width:0;height:0;opacity:0;pointer-events:none;display:none;';
-        iframe.src = deepLink;
-        document.body.appendChild(iframe);
-        setTimeout(() => {
-            if (document.body.contains(iframe)) document.body.removeChild(iframe);
-        }, 1000);
-    }
-};
+export { GravityRouter };
 
 export class MenuManager {
     constructor() {

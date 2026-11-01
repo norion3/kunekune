@@ -1,7 +1,9 @@
 /**
  * ==============================================================================
  * 『くねくねバトル オンライン』ゼロアロケーション空間ハッシュ衝突判定エンジン (combat.js)
- * v20.2.0 限界突破＆メモリ安定化版:
+ * v25.0.0 メモリプール完全再利用＆キルスコア二重取り解消版:
+ * ・キル時 150pt 加算の重複を解消（main.js 側の相手スコア30%吸収＋撃破点へ一本化）
+ * ・空間グリッド cell 配列の再利用プール化により毎秒数万個のヒープ生成＆GCカクつきを根絶
  * ・ノードプール最大長ガード＆循環参照カットによるメモリリーク完全防止
  * ・リングバッファ O(1) 配列アクセス対応
  * ・理不尽デス回避: 無敵終了時に敵の胴体と重なっていた場合、ノックバック＆無敵延長で保護
@@ -17,10 +19,22 @@ export class SpatialCollisionEngine {
         this.grid = new Map();
         this.nodePool = [];
         this.poolIndex = 0;
+
+        // セル配列再利用バッファ（ヒープ再アロケーション根絶用）
+        this.cellPool = [];
+        this.cellPoolIndex = 0;
     }
 
     clear() {
+        // グリッド内の既存セル配列をプールへ返却
+        for (const cell of this.grid.values()) {
+            cell.length = 0;
+            if (this.cellPool.length < 1024) {
+                this.cellPool.push(cell);
+            }
+        }
         this.grid.clear();
+        this.cellPoolIndex = 0;
 
         // 長時間プレイ時のメモリ肥大化を防ぐ安全トリミング
         if (this.nodePool.length > MAX_POOL_CAPACITY) {
@@ -52,6 +66,13 @@ export class SpatialCollisionEngine {
         return node;
     }
 
+    obtainCell() {
+        if (this.cellPool.length > 0) {
+            return this.cellPool.pop();
+        }
+        return [];
+    }
+
     // 全スネークの胴体体節を空間グリッドに登録
     registerBodies(snakes) {
         this.clear();
@@ -77,7 +98,7 @@ export class SpatialCollisionEngine {
 
                 let cell = this.grid.get(key);
                 if (!cell) {
-                    cell = [];
+                    cell = this.obtainCell();
                     this.grid.set(key, cell);
                 }
                 cell.push(this.obtainNode(s, pt.x, pt.y, radius));
@@ -140,7 +161,7 @@ export class SpatialCollisionEngine {
 
                             victim.isDead = true;
                             killer.kills++;
-                            killer.addScore(150);
+                            // ★ スコア加算は main.js の onKill コールバックへ一本化（150pt二重加算を完全排除）
 
                             if (onKill) {
                                 onKill(killer, victim);

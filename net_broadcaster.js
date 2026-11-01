@@ -1,9 +1,11 @@
 // ==============================================================================
 // 『くねくねバトル オンライン』マルチプレイ送信ループ＆アクションキュー管理 (net_broadcaster.js)
-// v23.0.0 100体AI対応 3層インテリジェントLoD通信＆1KB防衛版:
+// v25.0.0 100体AI対応 3層インテリジェントLoD通信＆AIスロット衝突根絶版:
+// ・AIスロット計算のハードコード先祖返り（4+）を MAX_PLAYERS+ へ完全修正
+// ・最大6名（0〜5）の人間プレイヤーとAIスロット（6以降）の重複・アバター点滅を完全根絶
 // ・10Hzブロードキャスト送信ループの独立管理
 // ・アクション蓄積キュー（餌取得・散布肉片・撃破クラスタ・チャット）の専任管理
-// ・最大96体AI対応：スコア上位Top 5ボス ＋ プレイヤー近接AIを動的抽出して送信
+// ・最大94体AI対応：スコア上位Top 5ボス ＋ プレイヤー近接AIを動的抽出して送信
 // ・非同期・遠隔AIの送信間引きにより、100体規模でも平常時パケットを約450〜550バイトに圧縮
 // ・1024バイト上限厳格ガード（1010バイト接近時の超過データ自動切り離し送出）
 // ==============================================================================
@@ -16,6 +18,8 @@ import {
     packDropFoodTuple,
     packChatTuple
 } from './net_protocol.js';
+
+import { MAX_PLAYERS } from './constants.js';
 
 export const NetBroadcaster = {
     _syncIntervalId: null,
@@ -68,7 +72,7 @@ export const NetBroadcaster = {
             const myTuple = encodeSnakeToTuple(mySnake, netManager.mySlot, netManager.isHost);
             const tuplesList = [myTuple];
 
-            // ★ ホスト端末専用：96体AIの3層インテリジェントLoD抽出送出
+            // ★ ホスト端末専用：94体AIの3層インテリジェントLoD抽出送出
             if (netManager.isHost && Array.isArray(window.allAISnakesInstance)) {
                 const ais = window.allAISnakesInstance;
                 const totalAIs = ais.length;
@@ -118,10 +122,10 @@ export const NetBroadcaster = {
                         }
                     }
 
-                    // タプル化（1体あたり約32バイト × 最大12体 ＝ 約380バイト）
+                    // ★ タプル化（AIスロットは MAX_PLAYERS 以降を厳密に割り当て、P5/P6との衝突を完全防止）
                     for (let c = 0; c < candidates.length; c++) {
                         const ai = candidates[c];
-                        const aiSlot = 4 + (ai.id - 1); // 人間4名以降のスロット
+                        const aiSlot = MAX_PLAYERS + (ai.id - 1);
                         tuplesList.push(encodeSnakeToTuple(ai, aiSlot, false));
                     }
                 }

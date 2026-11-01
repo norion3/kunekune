@@ -1,14 +1,15 @@
 // ==============================================================================
 // 『くねくねバトル オンライン』AgentSDK公式マルチプレイ通信マネージャー (network.js)
-// v24.2.0 主語バッジ統一＆入退室対通知・不要弾幕全廃版:
+// v25.0.0 スロット不変自律ホスト昇格＆DM直接参戦シームレス同期版:
+// ・スロット不変原則遵守：ホスト昇格時も mySlot を保持し、幽霊スネークの多重生成を完全根絶
+// ・ホスト昇格時に onHostPromoted コールバックを発火し、新ホスト端末でのAI維持を確約
+// ・対戦中（playing）の合流検知時、ROOM_MEMBERS_SYNC に act: true を同封し、
+//   さらに途中参加ゲスト専用の即時 START_GAME を自動送出して直接参戦を完全実現
 // ・全弾幕を「[ 名前バッジ ] + アクション（入室！ / 退室！）」へ刷新し主語を統一
-// ・「ルーム作成」「合流」「ホスト昇格」「ゲーム開始」「退出」等の不要システム弾幕を完全全廃
 // ・GRAVITY公式最大上限 6名スロット（0〜5）完全対応
 // ・USER_JOIN および ROOM_MEMBERS_SYNC でのアバター portrait 完全伝播
-// ・送信ループ・アクションキューを net_broadcaster.js へ完全分離（コード半減）
-// ・AgentSDK公式ルームAPI（作成・参加・退出・一覧）の安全トランザクション排他ロック
+// ・送信ループ・アクションキューを net_broadcaster.js へ完全分離
 // ・本命ルーム誤退室（自爆 exit()）の完全防止ガード配備
-// ・自律ホスト昇格（Host Migration）＆ ホスト昇格時待機室UI完全再活性化
 // ==============================================================================
 
 import {
@@ -94,7 +95,8 @@ export const NetworkManager = {
         onDropClusterSpawned: null,
         onSeedReceived: null,
         onGameStart: null,
-        onLeaderboardSync: null
+        onLeaderboardSync: null,
+        onHostPromoted: null // ★ ホスト昇格時イベント（AI引き継ぎ・UI再活性化用）
     },
 
     setCallbacks(cb) {
@@ -137,7 +139,6 @@ export const NetworkManager = {
 
     /**
      * ホスト専用：待機室から全端末へゲーム開始を一斉通知する
-     * ★ 不要な「ゲームを開始します！」弾幕ログは完全撤去
      */
     broadcastStartGame() {
         if (!this.isMultiplayerActive || !this.isHost) return;
@@ -227,7 +228,6 @@ export const NetworkManager = {
 
     /**
      * ルーム作成（最大6名）
-     * ★ 不要な「ルームを作成しました」弾幕ログは完全撤去
      */
     async createRoom(isPrivate = false) {
         if (!this.isSDKAvailable) {
@@ -336,7 +336,6 @@ export const NetworkManager = {
 
     /**
      * ルーム参加
-     * ★ 不要な「ルームに合流しました」弾幕ログは完全撤去
      */
     async joinRoom(roomId) {
         if (!this.isSDKAvailable || !roomId) return { success: false, msg: '無効な操作です' };
@@ -456,7 +455,7 @@ export const NetworkManager = {
 
     /**
      * プレイヤー参加処理
-     * ★ 主語バッジ統一フォーマット：[ ユーザー名 ] 入室！
+     * ★ ゲーム中の合流時は act: true と即時 START_GAME を同封送出し直接参戦を確約
      */
     _handleUserJoined(data) {
         if (!this.isHost || !data) return;
@@ -488,12 +487,24 @@ export const NetworkManager = {
                 joinTime: performance.now()
             };
 
-            // 全端末へ6人スロット確定一覧を一斉同期
+            const isPlaying = (typeof window !== 'undefined' && window.currentGameState === 'playing');
+
+            // 全端末へ6人スロット確定一覧および現在のゲーム状態（act）を一斉同期
             this._sendCustomMessage({
                 e: 'ROOM_MEMBERS_SYNC',
                 slots: this.slots,
-                seed: this.currentSeed
+                seed: this.currentSeed,
+                act: isPlaying
             });
+
+            // ★ ゲーム進行中の場合は、途中参加者向けに即座に出撃通知を送出（直接参戦）
+            if (isPlaying) {
+                this._sendCustomMessage({
+                    e: 'START_GAME',
+                    seed: this.currentSeed,
+                    immediate: true
+                });
+            }
 
             if (typeof window !== 'undefined' && window.UIController && typeof window.UIController.updateWaitingMembersList === 'function') {
                 window.UIController.updateWaitingMembersList();
@@ -508,7 +519,6 @@ export const NetworkManager = {
 
     /**
      * プレイヤー退出処理
-     * ★ 主語バッジ統一フォーマット：[ ユーザー名 ] 退室！
      */
     _handleUserExited(data) {
         if (!data) return;
@@ -543,10 +553,12 @@ export const NetworkManager = {
                 console.warn('[NetworkManager] ホストが退出しました。自律ホスト昇格を実行します。');
                 this.promoteToHost();
             } else if (this.isHost) {
+                const isPlaying = (typeof window !== 'undefined' && window.currentGameState === 'playing');
                 this._sendCustomMessage({
                     e: 'ROOM_MEMBERS_SYNC',
                     slots: this.slots,
-                    seed: this.currentSeed
+                    seed: this.currentSeed,
+                    act: isPlaying
                 });
             }
         }
@@ -581,8 +593,9 @@ export const NetworkManager = {
     },
 
     /**
-     * 自律ホスト昇格
-     * ★ 不要な「あなたが新しいホストに昇格しました」弾幕ログは完全撤去
+     * 自律ホスト昇格（Host Migration）
+     * ★ スロット不変原則遵守：自身の mySlot は変更せず、isHost = true のみ取得
+     * ★ スロット0は退出し空きスロットとなったため AI に復帰
      */
     promoteToHost() {
         if (this._isPromoting || this.isHost) return;
@@ -590,22 +603,23 @@ export const NetworkManager = {
         this._stopHostWatchdog();
 
         this.isHost = true;
-        this.mySlot = 0;
 
-        const myResolvedName = (typeof window !== 'undefined' && window.GRAVITY_USER_NAME)
-            ? window.GRAVITY_USER_NAME
-            : this.myUser.name;
-
+        // 旧ホスト（スロット0）をAI枠へ解放
         this.slots[0] = {
             slot: 0,
-            clientId: this.clientId,
-            userId: this.myUser.user_id,
-            name: myResolvedName,
+            clientId: null,
+            userId: null,
+            name: 'プレイヤー 1',
             color: SNAKE_COLORS[0],
-            portrait: this.myUser.portrait || '',
-            isAI: false,
-            joinTime: performance.now()
+            portrait: '',
+            isAI: true,
+            joinTime: 0
         };
+
+        // 自身のスロット情報は変更せず維持
+        if (this.slots[this.mySlot]) {
+            this.slots[this.mySlot].isAI = false;
+        }
 
         const startBtn = document.getElementById('btn-waiting-start');
         if (startBtn) {
@@ -617,6 +631,21 @@ export const NetworkManager = {
         }
 
         Menu.updateParticipants(this.slots.filter(s => !s.isAI));
+
+        // ★ コールバック通知（main.js 側で AI 稼働の引き継ぎを実行させる）
+        if (this.callbacks.onHostPromoted) {
+            this.callbacks.onHostPromoted();
+        }
+
+        // 新ホストとしてスロット最新状態をブロードキャスト
+        const isPlaying = (typeof window !== 'undefined' && window.currentGameState === 'playing');
+        this._sendCustomMessage({
+            e: 'ROOM_MEMBERS_SYNC',
+            slots: this.slots,
+            seed: this.currentSeed,
+            act: isPlaying
+        });
+
         this._isPromoting = false;
     },
 
@@ -740,6 +769,15 @@ export const NetworkManager = {
                 if (packet.seed && packet.seed !== this.currentSeed) {
                     this.currentSeed = packet.seed;
                     if (this.callbacks.onSeedReceived) this.callbacks.onSeedReceived(packet.seed);
+                }
+
+                // ★ ホストが既にプレイ中の場合（act: true）、直接参戦を促す
+                if (packet.act === true && !this.isHost) {
+                    if (typeof window !== 'undefined' && window.currentGameState !== 'playing') {
+                        if (this.callbacks.onGameStart) {
+                            this.callbacks.onGameStart({ seed: this.currentSeed, direct: true });
+                        }
+                    }
                 }
             }
         } catch (err) {

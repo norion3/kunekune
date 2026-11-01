@@ -1,11 +1,11 @@
 /**
  * ==============================================================================
  * 『くねくねバトル オンライン』入力制御モジュール (input.js)
- * v23.0.0 超巨大化対応 視野ズーム拡張（0.35〜1.50）＆動的追従ジョイスティック版:
- * ・スコア10,000〜30,000超の巨大スネーク時でも周囲を広く見渡せるズームレンジ拡張（0.35〜1.50）
+ * v25.0.0 左手専任58%タッチ制限＆ブースト干渉完全根絶版:
+ * ・ジョイスティック開始判定を画面左側（幅58%以内）に限定し、右手ブースト操作時の誤爆・操作抜けを100%根絶
+ * ・死亡時・リザルト画面表示中の背後ジョイスティック誤反応・表示チラつきを完全防止
+ * ・スコア10,000〜30,000超の巨大スネーク時でも周囲を広く見渡せるズームレンジ（0.35〜1.50）維持
  * ・指の移動に合わせて基点が滑らかに追従する「動的追従型ジョイスティック」完全維持
- * ・画面端での操作抜け・指の疲労感を完全根絶（即時反転・高レスポンス旋回）
- * ・2本指ピンチズーム完全撤廃・1本指タッチへの純化維持
  * ・画面長押しによるブースト誤爆防止（専用ボタン加速）
  * ==============================================================================
  */
@@ -24,7 +24,7 @@ export class InputManager {
         // ブースト状態（専用ボタン押下時のみ true）
         this.boost = false;
 
-        // 視野ズーム倍率（巨大化時の視野確保のため 0.35 〜 1.50 へ拡張）
+        // 視野ズーム倍率（0.35 〜 1.50）
         this.zoomMultiplier = 1.0;
         this.minZoom = 0.35;
         this.maxZoom = 1.50;
@@ -100,34 +100,43 @@ export class InputManager {
     }
 
     handleTouchStart(e) {
+        // 対戦中でない、または自機死亡時はジョイスティック入力を無視
+        if (typeof window !== 'undefined' && window.currentGameState !== 'playing') return;
+        if (typeof window !== 'undefined' && window.localPlayerInstance && window.localPlayerInstance.isDead) return;
+
         e.preventDefault();
 
         if (!this.active && e.touches.length > 0) {
-            const t = e.touches[0];
-            this.touchId = t.identifier;
-            this.startJoystick(t.clientX, t.clientY);
+            // ★ 画面左半分（横幅58%以内）のタッチのみをジョイスティックとして認識
+            const allowableWidth = window.innerWidth * 0.58;
+            for (let i = 0; i < e.touches.length; i++) {
+                const t = e.touches[i];
+                if (t.clientX <= allowableWidth) {
+                    this.touchId = t.identifier;
+                    this.startJoystick(t.clientX, t.clientY);
+                    break;
+                }
+            }
         }
     }
 
     handleTouchMove(e) {
+        if (!this.active) return;
         e.preventDefault();
 
-        if (this.active) {
-            const t = Array.from(e.touches).find(touch => touch.identifier === this.touchId);
-            if (t) {
-                this.moveJoystick(t.clientX, t.clientY);
-            }
+        const t = Array.from(e.touches).find(touch => touch.identifier === this.touchId);
+        if (t) {
+            this.moveJoystick(t.clientX, t.clientY);
         }
     }
 
     handleTouchEnd(e) {
+        if (!this.active) return;
         e.preventDefault();
 
-        if (this.active) {
-            const stillActive = Array.from(e.touches).some(t => t.identifier === this.touchId);
-            if (!stillActive) {
-                this.endJoystick();
-            }
+        const stillActive = Array.from(e.touches).some(t => t.identifier === this.touchId);
+        if (!stillActive) {
+            this.endJoystick();
         }
     }
 
@@ -136,6 +145,8 @@ export class InputManager {
         let isMouseDown = false;
 
         this.canvas.addEventListener('mousedown', (e) => {
+            if (typeof window !== 'undefined' && window.currentGameState !== 'playing') return;
+            if (typeof window !== 'undefined' && window.localPlayerInstance && window.localPlayerInstance.isDead) return;
             isMouseDown = true;
             this.startJoystick(e.clientX, e.clientY);
         });

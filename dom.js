@@ -1,13 +1,12 @@
 // ==============================================================================
 // 『くねくねバトル オンライン』自律DOMマウントモジュール (dom.js)
-// v24.2.0 UIレイアウト刷新＆待機室6名枠完全表示版:
-// ・左下ボタングループ：MENUボタンの真上に音量ボタンを縦並び配置（ジョイスティック領域開放）
-// ・右側ボタングループ：ズーム・ランキング・マップを上方へ引き上げ（公式招待ボタン被り根絶）
+// v25.0.0 DM招待特化・クリーンレイアウト＆待機室6名枠完全表示版:
+// ・手動の部屋IDコピーや手動入力欄を排除し、GRAVITY公式DM招待にフォーカスしたシンプルUI
+// ・左下ボタングループ：MENUボタンの真上に音量ボタンを縦並び配置（ジョイスティック領域広大開放）
+// ・右側ボタングループ：ズーム・ランキング・マップを215px上方へ引き上げ（公式招待ボタン被り根絶）
 // ・待機室リスト枠の拡張（max-height: 320px）：最大6名全員をスクロールなしで綺麗に収容
-// ・ロビー「公開ルーム作成」、待機室「マッチング待機中」のシンプル化表記維持
 // ・CUSTOMタブ：GRAVITYユーザーアイコンを顔にできる「マイアイコン」選択ボタン完備
 // ・ランキングパネル（#stats-box）：総数100体表示（/ 100）へ整合
-// ・mountDOM完了時に hookLobbyNetworkEvents() を確実連動
 // ==============================================================================
 
 import { SNAKE_COLORS, TOTAL_SNAKES } from './constants.js';
@@ -365,13 +364,14 @@ export function mountDOM() {
     `;
     document.body.appendChild(lobbyOverlay);
 
-    // 7. マッチング待機室画面（★max-height: 320pxにより最大6名全員がスクロールなしで綺麗に収容）
+    // 7. マッチング待機室画面（★公式DM招待にフォーカスしたシンプル構成、6名枠完全収容）
     const waitingOverlay = document.createElement('div');
     waitingOverlay.id = 'waiting-overlay';
     waitingOverlay.innerHTML = `
         <div class="waiting-card">
             <div id="waiting-room-tag" class="waiting-room-tag">ROOM #-----</div>
             <div class="waiting-title">マッチング待機中</div>
+            <div style="font-size: 11.5px; color: #bae6fd; margin-top: -4px;">右下の [ルーム招待 ⇧] から友達を呼んでね！</div>
             <div class="waiting-divider"></div>
             <div id="waiting-members-list" class="waiting-members-list"></div>
             <button id="btn-waiting-start" type="button" class="btn-lobby-hero" style="display: none;">ゲーム開始</button>

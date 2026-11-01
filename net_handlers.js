@@ -1,6 +1,7 @@
 // ==============================================================================
 // 『くねくねバトル オンライン』リモートパケット受信反映ハンドラ (net_handlers.js)
-// v24.2.0 ランキング差分ガード＆不要システム弾幕完全全廃版:
+// v25.0.0 DM招待直接参戦＆自律ホストAI引き継ぎ・ランキングチラつき根絶版:
+// ・対戦中（playing）の部屋への途中参加時、待機室を即座にバイパスして戦場へ直接出撃
 // ・ゲスト端末のランキングチラつき（点滅）をシグネチャ差分ガードで完全根絶
 // ・ホスト確定リーダーボード情報（Top 8・生存数）のみを単一情報源として反映
 // ・「バトル開始」「ワールドシード同期」等の不要な自動弾幕チャットを全撤去
@@ -31,14 +32,14 @@ export function setupNetworkHandlers(ctx) {
 
     NetworkManager.setCallbacks({
         /**
-         * ホストからのゲーム開始合図受信ハンドラ（ゲスト端末一斉始動）
-         * ★ 不要な「バトルが開始されました！」弾幕ログは完全撤去
+         * ホストからのゲーム開始・直接参戦合図受信ハンドラ
+         * ★ 途中参加パケット (direct: true) またはホスト開始合図で即座に出撃
          */
         onGameStart(packet) {
             if (typeof initGame === 'function') {
-                initGame();
+                initGame(false);
             } else if (typeof window.initGameInstance === 'function') {
-                window.initGameInstance();
+                window.initGameInstance(false);
             }
         },
 
@@ -183,7 +184,6 @@ export function setupNetworkHandlers(ctx) {
 
         /**
          * ワールドシード同期
-         * ★ 不要な「ワールドシードを同期しました」弾幕ログは完全撤去
          */
         onSeedReceived(seed) {
             if (world) {
