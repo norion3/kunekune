@@ -1,7 +1,9 @@
 // ==============================================================================
 // 『くねくねバトル オンライン』スネークエンティティクラス (snake.js)
-// v25.1.0 表情描画外部モジュール化＆スリム物理専任版:
-// ・表情ベクター描画を snake_face.js へ完全委譲し、ファイルサイズを約40%削減
+// v25.4.0 無敵特攻キル抑止＆ブースト時無敵即時解除版:
+// ・無敵時間中（invulnerableTimer > 0）にブーストを入力した瞬間に無敵を即時強制解除
+// ・無敵特攻による一方的なキルを根絶し、安全離脱 vs 攻撃的加速の戦術的選択を確立
+// ・表情ベクター描画を snake_face.js へ完全委譲し、ファイルサイズ約40%削減維持
 // ・体節描画ステップ間引き（長大スネーク時のドローコール半減・iOS 60FPS死守）
 // ・頭上バッジの ctx.measureText() キャッシュ化（毎フレームの不要文字列レイアウト計算根絶）
 // ・ブースト消費レート適正化（-0.09 -> -0.35：身を削る戦術的駆け引きの復活）
@@ -103,8 +105,13 @@ export class Snake {
     updatePhysics(inputAngle, boostActive) {
         if (this.isDead) return;
 
+        // ★ 無敵特攻キルの抑止：無敵中にブーストを入力した場合、無敵時間を即座に強制解除
         if (this.invulnerableTimer > 0) {
-            this.invulnerableTimer -= 1 / 60;
+            if (boostActive && this.score > 60) {
+                this.invulnerableTimer = 0;
+            } else {
+                this.invulnerableTimer -= 1 / 60;
+            }
         }
 
         this.isBoosting = boostActive && this.score > 60;

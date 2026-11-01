@@ -1,12 +1,13 @@
 /**
  * ==============================================================================
  * 『くねくねバトル オンライン』ゼロアロケーション空間ハッシュ衝突判定エンジン (combat.js)
- * v25.0.0 メモリプール完全再利用＆キルスコア二重取り解消版:
- * ・キル時 150pt 加算の重複を解消（main.js 側の相手スコア30%吸収＋撃破点へ一本化）
+ * v25.4.0 無敵特攻キル完全根絶＆双方安全保護・弾き飛ばし版:
+ * ・加害者（killer）・被害者（victim）のいずれかが無敵時間中なら双方が死亡せずノックバック弾き飛ばし
+ * ・無敵中のスネークの胴体に敵が当たっても敵を一方的に即死させない対戦公平性の確立
+ * ・キル時 150pt 加算の重複を解消（main.js 側の相手スコア吸収＋撃破点へ一本化）
  * ・空間グリッド cell 配列の再利用プール化により毎秒数万個のヒープ生成＆GCカクつきを根絶
  * ・ノードプール最大長ガード＆循環参照カットによるメモリリーク完全防止
  * ・リングバッファ O(1) 配列アクセス対応
- * ・理不尽デス回避: 無敵終了時に敵の胴体と重なっていた場合、ノックバック＆無敵延長で保護
  * ==============================================================================
  */
 
@@ -140,20 +141,23 @@ export class SpatialCollisionEngine {
 
                         // 接触判定（二乗距離判定で平方根計算を回避）
                         if (dx * dx + dy * dy < minDist * minDist) {
-                            const isVictimInvuln = victim.invulnerableTimer && victim.invulnerableTimer > 0;
-                            const isKillerInvuln = killer.invulnerableTimer && killer.invulnerableTimer > 0;
+                            const isVictimInvuln = Boolean(victim.invulnerableTimer && victim.invulnerableTimer > 0);
+                            const isKillerInvuln = Boolean(killer.invulnerableTimer && killer.invulnerableTimer > 0);
 
-                            // 理不尽デス回避（重なり時の無敵延長＆ノックバック）
+                            // ★ 無敵特攻キルの完全根絶：
+                            // 被害者・加害者の「いずれか」が無敵時間中であれば、双方ともに死亡させず、
+                            // ノックバック（弾き飛ばし）ですり抜けさせて安全保護する
                             if (isVictimInvuln || isKillerInvuln) {
                                 if (isVictimInvuln && victim.invulnerableTimer < 0.2) {
-                                    victim.invulnerableTimer = 0.5; // 無敵延長
+                                    victim.invulnerableTimer = 0.4;
                                 }
                                 if (isKillerInvuln && killer.invulnerableTimer < 0.2) {
-                                    killer.invulnerableTimer = 0.5; // 無敵延長
+                                    killer.invulnerableTimer = 0.4;
                                 }
+
                                 // 安全圏への押し出し（ノックバック）
                                 const dist = Math.sqrt(dx * dx + dy * dy) || 1;
-                                const pushForce = (minDist - dist) * 0.15;
+                                const pushForce = (minDist - dist) * 0.18 + 1.2;
                                 victim.x += (dx / dist) * pushForce;
                                 victim.y += (dy / dist) * pushForce;
                                 continue;

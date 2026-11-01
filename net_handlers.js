@@ -1,6 +1,7 @@
 // ==============================================================================
 // 『くねくねバトル オンライン』リモートパケット受信反映ハンドラ (net_handlers.js)
-// v25.0.0 DM招待直接参戦＆自律ホストAI引き継ぎ・ランキングチラつき根絶版:
+// v25.3.0 全スロット正規順位反映＆リモート死亡完全同期版:
+// ・ホスト確定の全スロット順位マップ（lbData.ranks）から自機順位を直接取得し9位固定を根絶
 // ・対戦中（playing）の部屋への途中参加時、待機室を即座にバイパスして戦場へ直接出撃
 // ・ゲスト端末のランキングチラつき（点滅）をシグネチャ差分ガードで完全根絶
 // ・ホスト確定リーダーボード情報（Top 8・生存数）のみを単一情報源として反映
@@ -77,7 +78,12 @@ export function setupNetworkHandlers(ctx) {
             remote.targetLength = data.length;
             remote.score = data.score;
             remote.isBoosting = data.isBoosting;
-            remote.isDead = data.isDead;
+            // ★ ホスト確定フラグに基づくリモート死亡の反映
+            if (data.isDead && !remote.isDead) {
+                remote.die();
+            } else if (!data.isDead && remote.isDead) {
+                remote.isDead = false; // リスポーン復帰
+            }
             remote.kills = data.kills;
             remote.lastPacketTime = performance.now();
             remote.recalculateSize();
@@ -85,7 +91,7 @@ export function setupNetworkHandlers(ctx) {
 
         /**
          * ★ ホストから受信した全体リーダーボード情報をゲスト端末へ同期
-         * シグネチャ差分ガードにより、内容変化時のみDOMを更新してチラつきを完全根絶
+         * ホスト確定順位マップ（lbData.ranks）から自機正規順位を取得（9位固定バグ完全解消）
          */
         onLeaderboardSync(lbData) {
             if (!lbData) return;
@@ -94,12 +100,19 @@ export function setupNetworkHandlers(ctx) {
             const topList = lbData.top || [];
             const totalAlive = lbData.totalAlive || TOTAL_SNAKES;
 
-            // ゲスト端末の自機正規順位算出
-            let higherCount = topList.filter(item => item.score > myScore).length;
-            if (lbData.myRank) {
-                higherCount = lbData.myRank - 1;
+            // ★ ゲスト端末の自機正規順位算出：
+            // 1. ホストから全スロット順位マップ（ranks）が提供されている場合はそれを最優先使用
+            // 2. 単独 myRank があればそれを使用
+            // 3. なければ Top 8 リストからのフォールバック
+            let myRank = 1;
+            if (lbData.ranks && lbData.ranks[NetworkManager.mySlot] !== undefined) {
+                myRank = lbData.ranks[NetworkManager.mySlot];
+            } else if (lbData.myRank) {
+                myRank = lbData.myRank;
+            } else {
+                const higherCount = topList.filter(item => item.score > myScore).length;
+                myRank = higherCount + 1;
             }
-            const myRank = higherCount + 1;
 
             const valRank = document.getElementById('val-rank');
             const valTotal = document.getElementById('val-total');
@@ -107,7 +120,7 @@ export function setupNetworkHandlers(ctx) {
             if (valTotal) valTotal.innerText = totalAlive;
 
             // 差分検知シグネチャ（名前・スコア・順位の文字列化）
-            const newSignature = topList.slice(0, 8).map(item => `${item.name}:${item.score}`).join('|') + `_me:${myScore}`;
+            const newSignature = topList.slice(0, 8).map(item => `${item.name}:${item.score}`).join('|') + `_me:${myScore}_rank:${myRank}`;
             if (newSignature === lastLeaderboardSignature) {
                 return; // 変化がなければDOM書き換えを行わない（点滅完全防止）
             }

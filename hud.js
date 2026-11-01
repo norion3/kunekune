@@ -1,12 +1,17 @@
 /**
  * ==============================================================================
  * 『くねくねバトル オンライン』一体型HUD ＆ 自機中心相対追従レーダー (hud.js)
- * v20.5.0 ゼロアロケーション索敵最適化版:
- * ・レーダーサイズ 140px 大型表示（索敵視認性向上）
- * ・topEnemies 抽出処理のゼロアロケーション化（毎30FPSの filter/sort 配列破棄を根絶）
- * ・2フレームに1回（30FPS）描画スロットリング ＆ Offscreen キャッシュ
+ * v25.3.0 レーダー戦術性刷新＆人間・AI識別・視野ガイド自然化版:
+ * ・真ん中の四角を「極薄ハイライト＋四隅フォーカス枠」へ刷新し、カメラ視野であることを直感化
+ * ・自機中心ドットに進行方向を示す三角矢印（▲）インジケーターを配置
+ * ・人間プレイヤー（P1〜P6）をスロット動的カラー ＋ 外周ネオンパルスリング（二重円）で特別表示
+ * ・画面外にいる人間プレイヤーもレーダー有効範囲内なら100%確実に追従表示（索敵正常化）
+ * ・AIスネークは格上（危険赤ドット）／格下（控えめ小型ドット）で人間と一瞬で識別可能
+ * ・描画負荷軽減：2フレームに1回（30FPS）描画スロットリング ＆ Offscreen キャッシュ維持
  * ==============================================================================
  */
+
+import { MAX_PLAYERS } from './constants.js';
 
 export class HUDManager {
     constructor() {
@@ -73,7 +78,7 @@ export class HUDManager {
 
     /**
      * 自機中心の相対追従レーダーをメインCanvasに直接描画
-     * 描画スロットリング ＆ ゼロアロケーション版
+     * 人間/AI完全識別・動的カラー同期・カメラ視野ハイライト版
      */
     drawRadar(ctx, canvasWidth, safeTop, player, otherEntities, cameraScale) {
         if (!this.showMap || !player) return;
@@ -99,9 +104,9 @@ export class HUDManager {
             const cx = player.x;
             const cy = player.y;
 
-            // 💡 ゼロアロケーション：filter/sort/slice を完全撤廃し、固定長プールへ上位5体を直接収集
+            // 1. トップエネミーの抽出（スコア上位5体）
             this.topEnemyCount = 0;
-            const targetMinScore = player.score * 1.2;
+            const targetMinScore = player.score * 1.15;
 
             if (otherEntities && otherEntities.length > 0) {
                 const len = otherEntities.length;
@@ -109,11 +114,9 @@ export class HUDManager {
                     const s = otherEntities[i];
                     if (s === player || s.isDead || s.isPlayer || s.score <= targetMinScore) continue;
 
-                    // 挿入ソート形式で上位5体に格納
                     if (this.topEnemyCount < 5) {
                         this.topEnemiesPool[this.topEnemyCount++] = s;
                     } else {
-                        // 最小スコアの位置を探索して置換
                         let minIdx = 0;
                         let minScore = this.topEnemiesPool[0].score;
                         for (let k = 1; k < 5; k++) {
@@ -129,62 +132,148 @@ export class HUDManager {
                 }
             }
 
-            // 敵スネークの描画
+            // 2. 他スネーク（人間プレイヤー ＆ AI）の描画
             if (otherEntities && otherEntities.length > 0) {
                 const totalEntities = otherEntities.length;
                 for (let i = 0; i < totalEntities; i++) {
                     const s = otherEntities[i];
                     if (s === player || s.isDead) continue;
 
-                    let isTopEnemy = false;
-                    for (let k = 0; k < this.topEnemyCount; k++) {
-                        if (this.topEnemiesPool[k] === s) {
-                            isTopEnemy = true;
-                            break;
-                        }
-                    }
-
-                    // 視野外の敵は描画しないが、トップエネミーの場合は遠隔表示する
-                    if (!s.isVisible && !isTopEnemy) continue;
+                    // ★ 人間プレイヤー判定（スロット 0〜5 または isPlayer）
+                    const isHuman = s.isPlayer || (s.id !== undefined && s.id < MAX_PLAYERS);
 
                     const drawX = radarCenter + (s.x - cx) * radarRatio;
                     const drawY = radarCenter + (s.y - cy) * radarRatio;
 
-                    // 座標判定による高速クリッピング
-                    if (drawX < 0 || drawX > this.radarSize || drawY < 0 || drawY > this.radarSize) {
+                    // レーダー枠外クリッピング
+                    if (drawX < -8 || drawX > this.radarSize + 8 || drawY < -8 || drawY > this.radarSize + 8) {
                         continue;
                     }
 
-                    const isBigger = s.score > player.score;
-                    rCtx.fillStyle = isBigger ? '#ff3366' : '#33ccff';
-                    const dotRadius = (isTopEnemy && !s.isVisible) ? 1.8 : (isBigger ? 2.8 : 2.0);
+                    if (isHuman) {
+                        // ==========================================================
+                        // ★ 人間プレイヤー描画：動的カスタムカラー ＋ 二重パルスリング
+                        // ==========================================================
+                        const humanColor = s.color || '#ff3366';
+                        const pulseScale = 1.0 + Math.sin(this.radarFrameCount * 0.18 + (s.id || 0)) * 0.22;
 
-                    rCtx.beginPath();
-                    rCtx.arc(drawX, drawY, dotRadius, 0, Math.PI * 2);
-                    rCtx.fill();
+                        // 外周ネオンパルスリング
+                        rCtx.strokeStyle = humanColor;
+                        rCtx.lineWidth = 1.4;
+                        rCtx.beginPath();
+                        rCtx.arc(drawX, drawY, 5.2 * pulseScale, 0, Math.PI * 2);
+                        rCtx.stroke();
+
+                        // 中心コア（クッキリ本体色）
+                        rCtx.fillStyle = humanColor;
+                        rCtx.beginPath();
+                        rCtx.arc(drawX, drawY, 3.2, 0, Math.PI * 2);
+                        rCtx.fill();
+
+                        // コア中心のホワイトハイライト
+                        rCtx.fillStyle = '#ffffff';
+                        rCtx.beginPath();
+                        rCtx.arc(drawX, drawY, 1.2, 0, Math.PI * 2);
+                        rCtx.fill();
+                    } else {
+                        // ==========================================================
+                        // ★ AIスネーク描画：格上（赤）／格下（控えめドット）
+                        // ==========================================================
+                        const isBigger = s.score > player.score;
+                        let isTopEnemy = false;
+                        for (let k = 0; k < this.topEnemyCount; k++) {
+                            if (this.topEnemiesPool[k] === s) {
+                                isTopEnemy = true;
+                                break;
+                            }
+                        }
+
+                        if (isBigger || isTopEnemy) {
+                            // 格上・危険AI（警告レッド）
+                            rCtx.fillStyle = '#ef4444';
+                            const dotRadius = isTopEnemy ? 2.8 : 2.3;
+                            rCtx.beginPath();
+                            rCtx.arc(drawX, drawY, dotRadius, 0, Math.PI * 2);
+                            rCtx.fill();
+                        } else {
+                            // 格下・餌候補AI（控えめな半透明スレートシアン）
+                            rCtx.fillStyle = 'rgba(56, 189, 248, 0.45)';
+                            rCtx.beginPath();
+                            rCtx.arc(drawX, drawY, 1.6, 0, Math.PI * 2);
+                            rCtx.fill();
+                        }
+                    }
                 }
             }
 
-            // 自機の画面カメラ視野枠（白の矩形ライン）を描画
+            // 3. ★ 自機の画面カメラ視野枠（自然なカメラ画角ハイライト ＋ フォーカス枠）
             const camRectW = viewW * radarRatio;
             const camRectH = viewH * radarRatio;
-            rCtx.strokeStyle = 'rgba(255, 255, 255, 0.75)';
-            rCtx.lineWidth = 1.0;
-            rCtx.strokeRect(radarCenter - camRectW / 2, radarCenter - camRectH / 2, camRectW, camRectH);
+            const left = radarCenter - camRectW / 2;
+            const top = radarCenter - camRectH / 2;
 
-            // 自機位置（中心に白ドット ＋ シアンパルス）
+            // 画面内エリアの極薄シアンハイライト（障害物ではなく視野であることが明快）
+            rCtx.fillStyle = 'rgba(56, 189, 248, 0.07)';
+            rCtx.fillRect(left, top, camRectW, camRectH);
+
+            // 四隅のカメラフォーカスブラケット（[ ] 形状）
+            const bracketLen = Math.max(3, Math.min(6, Math.min(camRectW, camRectH) * 0.25));
+            rCtx.strokeStyle = 'rgba(56, 189, 248, 0.65)';
+            rCtx.lineWidth = 1.2;
+            rCtx.beginPath();
+            // 左上
+            rCtx.moveTo(left, top + bracketLen);
+            rCtx.lineTo(left, top);
+            rCtx.lineTo(left + bracketLen, top);
+            // 右上
+            rCtx.moveTo(left + camRectW - bracketLen, top);
+            rCtx.lineTo(left + camRectW, top);
+            rCtx.lineTo(left + camRectW, top + bracketLen);
+            // 左下
+            rCtx.moveTo(left, top + camRectH - bracketLen);
+            rCtx.lineTo(left, top + camRectH);
+            rCtx.lineTo(left + bracketLen, top + camRectH);
+            // 右下
+            rCtx.moveTo(left + camRectW - bracketLen, top + camRectH);
+            rCtx.lineTo(left + camRectW, top + camRectH);
+            rCtx.lineTo(left + camRectW, top + camRectH - bracketLen);
+            rCtx.stroke();
+
+            // 4. ★ 自機中心ドット ＆ 進行方向矢印（▲）インジケーター
+            const pAngle = (player.angle !== undefined) ? player.angle : 0;
+            const arrowTipDist = 7.5;
+            const arrowWingDist = 4.2;
+            const arrowWingAngle = 0.5;
+
+            // 進行方向ポインター（▲）
+            const tipX = radarCenter + Math.cos(pAngle) * arrowTipDist;
+            const tipY = radarCenter + Math.sin(pAngle) * arrowTipDist;
+            const wingLeftX = radarCenter + Math.cos(pAngle + Math.PI - arrowWingAngle) * arrowWingDist;
+            const wingLeftY = radarCenter + Math.sin(pAngle + Math.PI - arrowWingAngle) * arrowWingDist;
+            const wingRightX = radarCenter + Math.cos(pAngle - Math.PI + arrowWingAngle) * arrowWingDist;
+            const wingRightY = radarCenter + Math.sin(pAngle - Math.PI + arrowWingAngle) * arrowWingDist;
+
+            rCtx.fillStyle = '#00e5ff';
+            rCtx.beginPath();
+            rCtx.moveTo(tipX, tipY);
+            rCtx.lineTo(wingLeftX, wingLeftY);
+            rCtx.lineTo(wingRightX, wingRightY);
+            rCtx.closePath();
+            rCtx.fill();
+
+            // 自機中心（白丸 ＋ ネオンリング）
             rCtx.fillStyle = '#ffffff';
             rCtx.beginPath();
             rCtx.arc(radarCenter, radarCenter, 3.2, 0, Math.PI * 2);
             rCtx.fill();
 
             rCtx.strokeStyle = '#00e5ff';
-            rCtx.lineWidth = 1.2;
+            rCtx.lineWidth = 1.4;
             rCtx.beginPath();
             rCtx.arc(radarCenter, radarCenter, 5.0, 0, Math.PI * 2);
             rCtx.stroke();
 
-            // レーダー外枠
+            // 5. レーダー外枠
             rCtx.strokeStyle = 'rgba(0, 229, 255, 0.45)';
             rCtx.lineWidth = 1.5;
             rCtx.strokeRect(0, 0, this.radarSize, this.radarSize);
@@ -192,7 +281,7 @@ export class HUDManager {
 
         this.radarFrameCount++;
 
-        // メインCanvasにはキャッシュされた画像を転送（負荷極小）
+        // メインCanvasにはキャッシュされた画像を高速転送
         ctx.drawImage(this.radarCanvas, rx, ry);
     }
 }

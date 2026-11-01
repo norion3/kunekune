@@ -1,14 +1,12 @@
 // ==============================================================================
 // 『くねくねバトル オンライン』Phase 5 マスター統合オーケストレーター (main.js)
-// v25.1.0 カメラ分離＆スリムオーケストレーター版:
+// v25.3.0 全スロット正規順位同期・他走者誤死亡根絶＆キル経済適正化版:
+// ・ホストから全人間スロット（0〜5）の確定順位マップ（ranks）を同封し、ゲスト順位9位固定バグを完全解消
+// ・ゲスト端末での他走者同士の衝突死亡誤判定を停止し、レイテンシによる他走者幽霊化を根絶
+// ・キル時スコア吸収率を30%から18%へ適正化＆クラスタ上限設定で急激なインフレを防止
 // ・カメラ追従・視野スケーリング・グリッド描画を camera.js へ完全委譲
 // ・新ホスト昇格（Host Migration）時に aiManager.init をシームレス稼働しAI消滅を完全根絶
-// ・キル時スコア二重取りバグを完全解消（相手スコアの30%吸収＋撃破基本点の一本化）
-// ・肉片ドロップの二重散布を防止（ゲスト側は受信クラスタ、ホスト側はクラスタ送出とローカル配置の一致）
 // ・DM招待合流時、ホスト対戦中であれば待機室を自動バイパスし即座にバトルへ直接出撃
-// ・ゲスト側のランキング上書き競合を完全停止し、ホスト確定同期一本化で点滅を根絶
-// ・キルログを「[ キラー名 ] 相手名 を撃破！」の主語バッジ統一フォーマットへ純化
-// ・死亡時の最終順位計算厳格判定（自分よりスコアが高いスネーク数＋1）
 // ・待機室スロット最大6名（0〜5）対応＆アバター画像表示
 // ・ゲームオーバー時もホスト端末のAI演算・他走者同期・物理判定を100%継続
 // ==============================================================================
@@ -500,6 +498,12 @@ function gameLoop() {
         // 空間衝突判定
         collisionEngine.registerBodies(allSnakes);
         collisionEngine.checkHeadCollisions(allSnakes, (killer, victim) => {
+            // ★ ゲスト端末での他走者誤死亡防止：
+            // マルチプレイ中のゲスト端末では、被弾側が自機（player）でない衝突判定はローカルで確定させない（ホストパケットに委譲）
+            if (NetworkManager.isMultiplayerActive && !NetworkManager.isHost && !victim.isPlayer) {
+                return;
+            }
+
             // ★ 肉片生成の一本化：マルチプレイ時はホストがクラスタをブロードキャスト、ソロ時はローカル生成
             if (!NetworkManager.isMultiplayerActive) {
                 world.spawnDeathDrop(victim);
@@ -507,7 +511,8 @@ function gameLoop() {
                 const colorIdx = SNAKE_COLORS.indexOf(victim.color);
                 const safeColorIdx = colorIdx >= 0 ? colorIdx : 0;
                 const dropCount = Math.min(30, Math.max(10, Math.floor((victim.historyLength || 16) / 2)));
-                const totalVal = Math.max(100, Math.floor(victim.score * 0.35));
+                // ★ 撃破クラスタ総スコアの適正化（上限2,500ptでインフレ防止）
+                const totalVal = Math.min(2500, Math.max(100, Math.floor(victim.score * 0.25)));
 
                 NetworkManager.queueDropCluster(
                     victim.x,
@@ -518,9 +523,9 @@ function gameLoop() {
                 );
             }
 
-            // ★ スコア得点計算の一本化：キラー生存時、相手の所持スコアの30%を吸収
+            // ★ スコア得点計算の適正化：キラー生存時、相手の所持スコアの18%を吸収（インフレ抑制）
             if (killer && !killer.isDead) {
-                const absorbedScore = Math.max(150, Math.floor(victim.score * 0.3));
+                const absorbedScore = Math.max(120, Math.floor(victim.score * 0.18));
                 killer.addScore(absorbedScore);
 
                 // ★ 主語バッジ統一キルログ：[ キラー名 ] 相手名 を撃破！
@@ -548,10 +553,23 @@ function gameLoop() {
 
                 const topList = sortedSnakes.filter(s => !s.isDead).slice(0, 8);
 
-                // ホスト端末：全端末同期用に最新リーダーボードパケットをキャッシュ登録
+                // ★ ホスト端末：全スロットの正規順位マップ（ranks）を算出して同封
+                // （ゲスト順位が全員9位になる計算バグを根絶）
                 if (NetworkManager.isHost && NetworkManager.isMultiplayerActive) {
+                    const slotRanks = {};
+                    for (let sIdx = 0; sIdx < MAX_PLAYERS; sIdx++) {
+                        const targetSnake = allSnakes.find(s => s.id === sIdx);
+                        if (targetSnake && !targetSnake.isDead) {
+                            const exactHigher = allSnakes.filter(s => s !== targetSnake && !s.isDead && s.score > targetSnake.score).length;
+                            slotRanks[sIdx] = exactHigher + 1;
+                        } else {
+                            slotRanks[sIdx] = totalAlive;
+                        }
+                    }
+
                     NetBroadcaster.setLatestLeaderboard({
                         totalAlive: totalAlive,
+                        ranks: slotRanks,
                         top: topList.map(s => ({
                             slot: s.id,
                             name: s.name,

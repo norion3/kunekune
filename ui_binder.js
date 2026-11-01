@@ -1,11 +1,11 @@
 // ==============================================================================
 // 『くねくねバトル オンライン』UIイベントバインダーモジュール (ui_binder.js)
-// v24.3.0 不要自動弾幕完全撤去＆操作系専任化版:
-// ・メニュー着せ替え時の不要な「アバターを変更しました」自動弾幕ログを完全削除
-// ・待機室「ゲーム開始」ボタン押下時の NetworkManager.broadcastStartGame() 連携維持
-// ・ホストの開始トリガーにより全ゲスト端末が待機室から一斉始動
-// ・ロビーの作成/参加/更新リスナーは net_lobby_hooks.js へ完全一本化
-// ・操作系（ソロ開始、ズーム、サウンド、ランキング、マップ、待機室、リトライ）の専任化
+// v25.3.0 死亡リトライ直接再戦化＆モバイル高速タッチレスポンス版:
+// ・リトライ時に待機室へ幽閉されるデッドロックを根絶し、マルチ/ソロ問わず即座に戦場へ直接リスポーン再戦
+// ・ホスト死亡リトライ時に戦っている生存ゲストが巻き添えリセットされる事故を完全防止
+// ・ズーム・ランキング・マップ・サウンド操作へ touchend 高速タップリスナーを配備し、300ms操作遅延を解消
+// ・メニュー着せ替え時の不要な自動弾幕ログ完全削除維持
+// ・ホスト開始時の全ゲスト一斉始動 ＆ ロビー操作の net_lobby_hooks.js 一本化維持
 // ==============================================================================
 
 import { Menu } from './menu.js';
@@ -26,6 +26,28 @@ export function updateZoomButtonsState(zoomMultiplier) {
 }
 
 /**
+ * モバイルタップの300ms遅延を解消する安全な高速バインドヘルパー
+ * @param {HTMLElement} element 対象DOM
+ * @param {Function} handler 実行ハンドラ
+ */
+function bindFastTap(element, handler) {
+    if (!element) return;
+    let lastTapTime = 0;
+    const onFastTap = (e) => {
+        if (e) {
+            e.preventDefault();
+            e.stopPropagation();
+        }
+        const now = Date.now();
+        if (now - lastTapTime < 200) return; // 200ms デバウンス
+        lastTapTime = now;
+        handler(e);
+    };
+    element.addEventListener('touchend', onFastTap, { passive: false });
+    element.addEventListener('click', onFastTap);
+}
+
+/**
  * 全UIボタンおよびメニューイベントのバインド初期化
  * @param {Object} ctx 
  */
@@ -41,54 +63,56 @@ export function initUIBindings(ctx) {
         getPlayer
     } = ctx;
 
-    // 1. ズーム操作ボタン
+    // 1. ズーム操作ボタン（高速タップ対応）
     const btnZoomIn = document.getElementById('btn-zoom-in');
     const btnZoomOut = document.getElementById('btn-zoom-out');
 
-    if (btnZoomIn) {
-        btnZoomIn.onclick = (e) => {
-            e.stopPropagation();
+    if (btnZoomIn && !btnZoomIn._hasZoomInBound) {
+        btnZoomIn._hasZoomInBound = true;
+        bindFastTap(btnZoomIn, () => {
             input.zoomMultiplier = Math.min(1.40, input.zoomMultiplier + 0.12);
             updateZoomButtonsState(input.zoomMultiplier);
-        };
-    }
-    if (btnZoomOut) {
-        btnZoomOut.onclick = (e) => {
-            e.stopPropagation();
-            input.zoomMultiplier = Math.max(0.45, input.zoomMultiplier - 0.12);
-            updateZoomButtonsState(input.zoomMultiplier);
-        };
+        });
     }
 
-    // 2. ランキング ＆ レーダーマップトグルボタン
+    if (btnZoomOut && !btnZoomOut._hasZoomOutBound) {
+        btnZoomOut._hasZoomOutBound = true;
+        bindFastTap(btnZoomOut, () => {
+            input.zoomMultiplier = Math.max(0.45, input.zoomMultiplier - 0.12);
+            updateZoomButtonsState(input.zoomMultiplier);
+        });
+    }
+
+    // 2. ランキング ＆ レーダーマップトグルボタン（高速タップ対応）
     const btnToggleRanking = document.getElementById('btn-toggle-ranking');
     const btnToggleMap = document.getElementById('btn-toggle-map');
 
-    if (btnToggleRanking) {
-        btnToggleRanking.onclick = (e) => {
-            e.stopPropagation();
+    if (btnToggleRanking && !btnToggleRanking._hasRankBound) {
+        btnToggleRanking._hasRankBound = true;
+        bindFastTap(btnToggleRanking, () => {
             hud.toggleRanking();
-        };
-    }
-    if (btnToggleMap) {
-        btnToggleMap.onclick = (e) => {
-            e.stopPropagation();
-            hud.toggleMap();
-        };
+        });
     }
 
-    // 3. サウンドON/OFFボタン
+    if (btnToggleMap && !btnToggleMap._hasMapBound) {
+        btnToggleMap._hasMapBound = true;
+        bindFastTap(btnToggleMap, () => {
+            hud.toggleMap();
+        });
+    }
+
+    // 3. サウンドON/OFFボタン（高速タップ対応）
     const soundBtn = document.getElementById('btn-sound');
-    if (soundBtn) {
-        soundBtn.onclick = (e) => {
-            e.stopPropagation();
+    if (soundBtn && !soundBtn._hasSoundBound) {
+        soundBtn._hasSoundBound = true;
+        bindFastTap(soundBtn, () => {
             const isMuted = Sound.toggleMute();
             soundBtn.classList.toggle('active', !isMuted);
             const iconOff = document.getElementById('icon-sound-off');
             const iconOn = document.getElementById('icon-sound-on');
             if (iconOff) iconOff.style.display = isMuted ? 'block' : 'none';
             if (iconOn) iconOn.style.display = isMuted ? 'none' : 'block';
-        };
+        });
     }
 
     // 4. ロビー：ソロプレイ開始ボタン（1秒連打デバウンス付）
@@ -113,9 +137,6 @@ export function initUIBindings(ctx) {
         btnLobbySolo.addEventListener('touchend', onSoloTap, { passive: false });
         btnLobbySolo.addEventListener('click', onSoloTap);
     }
-
-    // ※ ロビーの公開作成・プライベート作成・一覧更新・各参加ボタンは
-    //    net_lobby_hooks.js（1秒デバウンス ＆ 先行待機室起動）へ一本化済み
 
     // 5. 待機室：ホスト専用ゲーム開始ボタン（全端末一斉開始ブロードキャスト連携）
     const btnWaitingStart = document.getElementById('btn-waiting-start');
@@ -148,7 +169,7 @@ export function initUIBindings(ctx) {
         };
     }
 
-    // 7. メニュー着せ替えコールバック初期化（★不要な「アバターを変更しました」弾幕を完全削除）
+    // 7. メニュー着せ替えコールバック初期化
     Menu.init((face, color) => {
         const p = getPlayer();
         if (p) {
@@ -157,22 +178,32 @@ export function initUIBindings(ctx) {
         }
     });
 
-    // 8. リザルト画面：リトライボタン（リザルト画面即時非表示 ＆ 復帰）
+    // 8. ★ リザルト画面：リトライボタン（直接リスポーン再戦化）
+    // マルチプレイ・ソロプレイを問わず、待機室に送還せず即座に戦場へ再出撃！
+    // ゲストの待機室永久幽閉デッドロックと、ホスト操作による生存ゲスト強制リセットを完全解消。
     const btnRetry = document.getElementById('btn-retry');
     if (btnRetry && !btnRetry._hasRetryBound) {
         btnRetry._hasRetryBound = true;
-        btnRetry.onclick = (e) => {
-            if (e) e.stopPropagation();
+        let lastRetryTap = 0;
+        const onRetryTap = (e) => {
+            if (e) {
+                e.preventDefault();
+                e.stopPropagation();
+            }
+            const now = Date.now();
+            if (now - lastRetryTap < 800) return;
+            lastRetryTap = now;
+
             const overScreen = document.getElementById('over-screen');
             if (overScreen) {
                 overScreen.style.display = 'none';
             }
 
-            if (NetworkManager.isMultiplayerActive) {
-                UIController.showWaitingRoom(NetworkManager.currentRoomId);
-            } else {
-                initGame();
-            }
+            // ★ 待機室へ戻らず、その対戦セッション内で即座に直接リスポーン（isRespawn = true）
+            initGame(true);
         };
+
+        btnRetry.addEventListener('touchend', onRetryTap, { passive: false });
+        btnRetry.addEventListener('click', onRetryTap);
     }
 }
