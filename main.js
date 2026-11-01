@@ -1,14 +1,13 @@
 // ==============================================================================
 // 『くねくねバトル オンライン』Phase 5 マスター統合オーケストレーター (main.js)
-// v21.0.0 画面回転二重ガード＆UI完全統合スリム化版:
-// ・画面回転（resize）時の100ms遅延二重計測ガード（Canvas解像度ズレ完全防止）
-// ・UIイベントバインドを ui_binder.js へ完全委譲（コード肥大化解消・保守性向上）
-// ・リトライボタン押下時のリザルト画面即時非表示＆ゲーム/待機室完全復帰
-// ・ゲームオーバー時のGRAVITY公式スコア完全自動送信 (postMessage)
-// ・ズーム倍率限界時のボタン .disabled リアルタイム更新連動
+// v21.2.0 撃破肉片クラスタ同期＆ゲーム開始完全結合版:
+// ・スネーク撃破時の大量肉片クラスタ同期（queueDropCluster）完全接続
+// ・setupNetworkHandlers への initGame 確実引き渡し（待機室一斉始動）
+// ・招待URL（DMリンク）検知時の先行待機室起動（画面フリーズ・無反応を完全解消）
+// ・net_handlers.js によるリモートパケット処理の完全外注化
+// ・net_lobby_hooks.js との連携による連打クラッシュ防止
+// ・画面回転（resize）時の100ms遅延二重計測ガード
 // ・自律生態系AI連携用ワールドインスタンス参照バインド
-// ・GRAVITY公式ユーザーネームの自機スネーク・ロビー即時反映パイプライン
-// ・ゲスト端末でのローカルAI二重生成を完全遮断（ホストのみAI統括）
 // ・二重ループ起動防止 (animFrameId) ＆ EntryShield 通信ロック
 // ==============================================================================
 
@@ -39,6 +38,8 @@ import { WorldManager } from './world.js';
 import { AIManager } from './ai.js';
 import { NetworkManager } from './network.js';
 import { initUIBindings, updateZoomButtonsState } from './ui_binder.js';
+import { setupNetworkHandlers } from './net_handlers.js';
+import './net_lobby_hooks.js';
 
 // --- プラットフォーム環境検知 ---
 export const PlatformDetector = {
@@ -67,7 +68,7 @@ function updateLayout() {
     }
 }
 
-// ★ 画面回転・リサイズ時の二重計測ガード（iOS WebView対策）
+// 画面回転・リサイズ時の二重計測ガード（iOS WebView対策）
 let resizeDebounceTimer = null;
 window.addEventListener('resize', () => {
     updateLayout();
@@ -100,7 +101,7 @@ const collisionEngine = new SpatialCollisionEngine();
 const world = new WorldManager();
 const aiManager = new AIManager();
 
-// ★ 自律生態系AIが肉片ドロップ（ハイエナモード）を検知するためのグローバル参照
+// 自律生態系AIが肉片ドロップ（ハイエナモード）を検知するためのグローバル参照
 window.currentWorldInstance = world;
 
 let player = new Snake(true, 0, 'あなた', SNAKE_COLORS[0], 'normal');
@@ -121,28 +122,43 @@ window.allAISnakesInstance = aiManager.ais;
 export const UIController = {
     showLobby() {
         gameState = 'lobby';
-        document.getElementById('lobby-overlay').style.display = 'flex';
-        document.getElementById('waiting-overlay').style.display = 'none';
-        document.getElementById('over-screen').style.display = 'none';
-        document.getElementById('stats-box').style.display = 'none';
+        const lobby = document.getElementById('lobby-overlay');
+        const waiting = document.getElementById('waiting-overlay');
+        const over = document.getElementById('over-screen');
+        const stats = document.getElementById('stats-box');
+
+        if (lobby) lobby.style.display = 'flex';
+        if (waiting) waiting.style.display = 'none';
+        if (over) over.style.display = 'none';
+        if (stats) stats.style.display = 'none';
         this.refreshLobbyGreeting();
     },
 
     showWaitingRoom(roomId) {
         gameState = 'waiting';
-        document.getElementById('lobby-overlay').style.display = 'none';
-        document.getElementById('waiting-overlay').style.display = 'flex';
-        document.getElementById('over-screen').style.display = 'none';
-        document.getElementById('waiting-room-tag').innerText = `ROOM #${String(roomId).slice(-5)}`;
-        document.getElementById('btn-waiting-start').style.display = NetworkManager.isHost ? 'block' : 'none';
+        const lobby = document.getElementById('lobby-overlay');
+        const waiting = document.getElementById('waiting-overlay');
+        const over = document.getElementById('over-screen');
+        const tag = document.getElementById('waiting-room-tag');
+        const startBtn = document.getElementById('btn-waiting-start');
+
+        if (lobby) lobby.style.display = 'none';
+        if (waiting) waiting.style.display = 'flex';
+        if (over) over.style.display = 'none';
+        if (tag) tag.innerText = `ROOM #${String(roomId).slice(-5)}`;
+        if (startBtn) startBtn.style.display = NetworkManager.isHost ? 'block' : 'none';
         this.updateWaitingMembersList();
     },
 
     showGame() {
         gameState = 'playing';
-        document.getElementById('lobby-overlay').style.display = 'none';
-        document.getElementById('waiting-overlay').style.display = 'none';
-        document.getElementById('over-screen').style.display = 'none';
+        const lobby = document.getElementById('lobby-overlay');
+        const waiting = document.getElementById('waiting-overlay');
+        const over = document.getElementById('over-screen');
+
+        if (lobby) lobby.style.display = 'none';
+        if (waiting) waiting.style.display = 'none';
+        if (over) over.style.display = 'none';
     },
 
     refreshLobbyGreeting() {
@@ -178,8 +194,12 @@ export const UIController = {
     }
 };
 
+if (typeof window !== 'undefined') {
+    window.UIController = UIController;
+}
+
 // --- ゲーム初期化 ---
-function initGame() {
+export function initGame() {
     if (animFrameId) {
         cancelAnimationFrame(animFrameId);
         animFrameId = null;
@@ -224,68 +244,21 @@ function initGame() {
     animFrameId = requestAnimationFrame(gameLoop);
 }
 
-NetworkManager.setCallbacks({
-    onRemoteSnakeUpdate(data) {
-        if (data.slot === NetworkManager.mySlot) return;
+if (typeof window !== 'undefined') {
+    window.initGameInstance = initGame;
+}
 
-        let remote = remoteSnakes.get(data.slot);
-        if (!remote) {
-            const isPlayerSlot = data.slot < 4;
-            const color = SNAKE_COLORS[data.slot % SNAKE_COLORS.length];
-            const name = NetworkManager.slots[data.slot] ? NetworkManager.slots[data.slot].name : (isPlayerSlot ? `P${data.slot + 1}` : `CPU ${data.slot - 3}`);
-
-            remote = new Snake(false, data.slot, name, color, 'normal');
-            remote.reset(data.x, data.y);
-            remoteSnakes.set(data.slot, remote);
-
-            if (!allSnakes.includes(remote)) {
-                allSnakes.push(remote);
-                if (!sortedSnakes.includes(remote)) {
-                    sortedSnakes.push(remote);
-                }
-            }
-        }
-
-        remote.targetNetX = data.x;
-        remote.targetNetY = data.y;
-        remote.targetAngle = data.angle;
-        remote.speed = data.speed;
-        remote.targetLength = data.length;
-        remote.score = data.score;
-        remote.isBoosting = data.isBoosting;
-        remote.isDead = data.isDead;
-        remote.kills = data.kills;
-        remote.lastPacketTime = performance.now();
-        remote.recalculateSize();
-    },
-
-    onFoodPicked(pick) {
-        const key = `${pick.gx}_${pick.gy}`;
-        const list = world.foodGrid.get(key);
-        if (list && list[pick.index]) {
-            list[pick.index] = list[list.length - 1];
-            list.pop();
-        }
-    },
-
-    onDropSpawned(drop) {
-        world.dropFoods.push({
-            x: drop.x,
-            y: drop.y,
-            val: drop.val,
-            size: 7,
-            isBig: true,
-            color: SNAKE_COLORS[drop.colorIdx % SNAKE_COLORS.length]
-        });
-    },
-
-    onSeedReceived(seed) {
-        world.clear();
-        Danmaku.push('同期', 'ワールドシードを同期しました', '#00e5ff', true);
-    }
+// 受信ハンドラモジュール（net_handlers.js）へコールバック処理および initGame を接続
+setupNetworkHandlers({
+    remoteSnakes,
+    allSnakes,
+    getSortedSnakes: () => sortedSnakes,
+    setSortedSnakes: (list) => { sortedSnakes = list; },
+    world,
+    initGame
 });
 
-// ★ UIイベントバインダーの初期化（ui_binder.js へ委譲）
+// UIイベントバインダーの初期化
 initUIBindings({
     input,
     hud,
@@ -331,6 +304,10 @@ function handleGameOver() {
     overScreen.style.display = 'flex';
 }
 
+/**
+ * 起動シーケンス：参考ゲーム（『階段を架けろ！』）準拠
+ * DM招待リンク検知時は先行待機室起動 ＆ joinRoom 連携
+ */
 async function bootSequence() {
     try {
         const userInfo = await NetworkManager.init();
@@ -346,18 +323,29 @@ async function bootSequence() {
                 : (res && res.data && typeof res.data.room_id === 'string' ? res.data.room_id : '');
 
             if (targetRoomId && targetRoomId !== '') {
+                const shortId = targetRoomId.length > 5 ? targetRoomId.slice(-5) : targetRoomId;
                 console.log(`[AutoJoin] DM招待リンク検知: Room #${targetRoomId} へ自動合流開始`);
-                EntryShield.show(`ROOM #${targetRoomId.slice(-5)}`, '招待ルームへ合流中...');
+
+                EntryShield.show(`ROOM #${shortId}`, '招待ルームへ合流中...');
+                UIController.showWaitingRoom(targetRoomId);
+
                 const joinRes = await NetworkManager.joinRoom(targetRoomId);
                 EntryShield.hide();
+
                 if (joinRes.success) {
                     UIController.showWaitingRoom(targetRoomId);
+                    return;
+                } else {
+                    console.warn('[AutoJoin] 自動入室に失敗しました。ロビーへ戻します。');
+                    Danmaku.push('エラー', joinRes.msg || '入室できませんでした', '#f43f5e', true);
+                    UIController.showLobby();
                     return;
                 }
             }
         }
     } catch (err) {
         console.warn('[BootSequence] エラー:', err);
+        EntryShield.hide();
     }
     UIController.showLobby();
 }
@@ -436,11 +424,23 @@ function gameLoop() {
 
         collisionEngine.registerBodies(allSnakes);
         collisionEngine.checkHeadCollisions(allSnakes, (killer, victim) => {
+            // ローカル（ホスト・ソロ）での肉片生成
             world.spawnDeathDrop(victim);
 
+            // ホスト端末：スネーク撃破時に極小クラスタタプル（約20バイト）で全端末へ同期
             if (NetworkManager.isMultiplayerActive && NetworkManager.isHost) {
                 const colorIdx = SNAKE_COLORS.indexOf(victim.color);
-                NetworkManager.queueDropFood(victim.x, victim.y, 25, colorIdx >= 0 ? colorIdx : 0);
+                const safeColorIdx = colorIdx >= 0 ? colorIdx : 0;
+                const dropCount = Math.min(35, Math.max(10, Math.floor((victim.historyLength || 16) / 2)));
+                const totalVal = Math.max(100, Math.floor(victim.score * 0.4));
+
+                NetworkManager.queueDropCluster(
+                    victim.x,
+                    victim.y,
+                    totalVal,
+                    dropCount,
+                    safeColorIdx
+                );
             }
 
             if (victim.isPlayer) {

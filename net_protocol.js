@@ -1,14 +1,15 @@
 // ==============================================================================
 // 『くねくねバトル オンライン』マルチプレイ通信プロトコル ＆ 極小タプルパッカー (net_protocol.js)
-// ・ゼロアロケーション純粋算術丸め（文字列インスタンス生成ゼロ）
-// ・スネーク走者9要素タプル規格（1人あたり約32バイト、1KB制限完全クリア）
-// ・餌取得・散布肉片・チャットの極小タプルシリアライザー
-// ・1KB制限超過防止用 UTF-8 バイト長計算ヘルパー
+// v21.2.0 撃破肉片クラスタタプル規格統合版:
+// ・ゼロアロケーション純粋算術丸め（JSON文字列化時の桁あふれ完全防止）
+// ・スネーク走者9要素タプル規格（1人あたり約32バイト、完全互換維持）
+// ・餌取得・散布肉片・撃破クラスタ・チャットの極小タプルシリアライザー
+// ・1KB制限超過防止用 UTF-8 高速バイト長計算ヘルパー
 // ==============================================================================
 
 // --- 高速・ゼロアロケーション純粋算術丸めヘルパー ---
-export const round1 = (val) => Math.round(val * 10) / 10;
-export const round2 = (val) => Math.round(val * 100) / 100;
+export const round1 = (val) => Math.round((Number(val) || 0) * 10) / 10;
+export const round2 = (val) => Math.round((Number(val) || 0) * 100) / 100;
 
 // --- クライアント固有の一意ID生成 ---
 export function generateClientId() {
@@ -23,13 +24,16 @@ export function generateClientId() {
 export function getUtf8ByteLength(str) {
     if (!str) return 0;
     let bytes = 0;
-    for (let i = 0; i < str.length; i++) {
+    const len = str.length;
+    for (let i = 0; i < len; i++) {
         const code = str.charCodeAt(i);
-        if (code <= 0x7f) bytes += 1;
-        else if (code <= 0x7ff) bytes += 2;
-        else if (code >= 0xd800 && code <= 0xdbff) {
+        if (code <= 0x7f) {
+            bytes += 1;
+        } else if (code <= 0x7ff) {
+            bytes += 2;
+        } else if (code >= 0xd800 && code <= 0xdbff) {
             bytes += 4;
-            i++; // サロゲートペア
+            i++; // サロゲートペアスキップ
         } else {
             bytes += 3;
         }
@@ -144,6 +148,34 @@ export function unpackDropFoodTuple(tuple) {
         y: tuple[1],
         val: tuple[2],
         colorIdx: tuple[3] || 0
+    };
+}
+
+/**
+ * スネーク撃破時の大量肉片クラスタを5要素の極小タプルへエンコード
+ * 形式: [x, y, totalVal, count, colorIdx]（約20バイト）
+ */
+export function packDropClusterTuple(x, y, totalVal, count, colorIdx = 0) {
+    return [
+        round1(x),
+        round1(y),
+        Math.floor(totalVal),
+        Math.floor(count),
+        colorIdx
+    ];
+}
+
+/**
+ * 撃破肉片クラスタタプルを受信側形式へデコード
+ */
+export function unpackDropClusterTuple(tuple) {
+    if (!Array.isArray(tuple)) return tuple;
+    return {
+        x: tuple[0],
+        y: tuple[1],
+        totalVal: tuple[2] || 100,
+        count: tuple[3] || 15,
+        colorIdx: tuple[4] || 0
     };
 }
 

@@ -1,12 +1,16 @@
 // ==============================================================================
-// 『くねくねバトル オンライン』ワールド・動的チャンク餌・パーティクル (world.js)
-// v20.3.0 ゼロアロケーション描画最適化版:
-// ・draw() 内の毎フレーム new Map() / 配列生成を根絶（GCスパイク完全解消）
-// ・事前確保バケットによる色別バッチ描画（GPUドローコール最小化）
+// 『くねくねバトル オンライン』ワールド・動的チャンク餌・決定論的シード生成 (world.js)
+// v21.2.0 決定論的シード乱数＆環境勾配完全統合版:
+// ・ホスト/ゲスト間のシード値（currentSeed）に基づく線形合同法（LCG）疑似乱数
+// ・チャンク座標（gx, gy）から決定論的に初期餌の座標・サイズ・色を生成（完全同期）
+// ・MAP_SIZE = 60000 を活かしたマップ中心（激戦コア）集中ホットスポット勾配
+// ・外周部の安全育成ゾーン（小餌中心・敵過疎）の自律形成
+// ・draw() 内のゼロアロケーション色別バッチ描画（GPUドローコール最小化）
 // ・撃破時ドロップ肉片・チャンク餌の O(1) 末尾スワップ高速消費
 // ==============================================================================
 
 import { MAP_SIZE, GRID_SIZE, FOOD_COLORS } from './constants.js';
+import { NetworkManager } from './network.js';
 
 export class WorldManager {
     constructor() {
@@ -25,6 +29,20 @@ export class WorldManager {
         this.dropFoods = [];
         this.particles = [];
         this.batchBuckets.clear();
+    }
+
+    /**
+     * 決定論的疑似乱数生成器（線形合同法: LCG）
+     * チャンク座標とワールドシードから全端末で寸分違わず同じ乱数列を生成
+     * @param {number} seed 
+     * @returns {function(): number} 0.0 以上 1.0 未満の浮動小数点数を返す乱数関数
+     */
+    createChunkPRNG(seed) {
+        let s = Math.abs(seed | 0) || 12345678;
+        return function() {
+            s = (s * 1664525 + 1013904223) >>> 0;
+            return s / 4294967296;
+        };
     }
 
     // プレイヤー視界周辺のチャンクを動的生成
@@ -67,19 +85,50 @@ export class WorldManager {
     }
 
     spawnChunkFoods(gx, gy) {
-        const isHotspot = Math.random() < 0.04;
-        const count = isHotspot ? Math.floor(Math.random() * 12) + 8 : Math.floor(Math.random() * 4) + 1;
+        // 決定論的シード値の導出：ワールドシードとチャンク座標を混合
+        const baseSeed = (NetworkManager && NetworkManager.currentSeed) ? NetworkManager.currentSeed : 12345678;
+        const chunkSeed = (baseSeed ^ (gx * 73856093) ^ (gy * 19349663)) >>> 0;
+        const prng = this.createChunkPRNG(chunkSeed);
+
+        // 環境勾配アルゴリズム：マップ中心（30000, 30000）に近いほど大餌＆ホットスポット密集
+        const chunkCenterX = gx * GRID_SIZE + GRID_SIZE / 2;
+        const chunkCenterY = gy * GRID_SIZE + GRID_SIZE / 2;
+        const mapCenterX = MAP_SIZE / 2;
+        const mapCenterY = MAP_SIZE / 2;
+
+        const dxCenter = chunkCenterX - mapCenterX;
+        const dyCenter = chunkCenterY - mapCenterY;
+        const distFromCenter = Math.sqrt(dxCenter * dxCenter + dyCenter * dyCenter);
+
+        // 中心度（中心で 1.0、外周で 0.0）
+        const maxDist = MAP_SIZE * 0.5;
+        const centerProximity = Math.max(0, Math.min(1.0, 1.0 - (distFromCenter / maxDist)));
+
+        // 中心に近いほどホットスポット発生率が大幅上昇（外周: 2.5% -> 中心: 15%）
+        const hotspotThreshold = 0.025 + centerProximity * 0.125;
+        const isHotspot = prng() < hotspotThreshold;
+
+        // 餌の個数も中心ほど高密度
+        const baseMin = 1 + Math.floor(centerProximity * 3);
+        const baseMax = 3 + Math.floor(centerProximity * 5);
+        const count = isHotspot 
+            ? Math.floor(prng() * 12) + 8 + Math.floor(centerProximity * 6)
+            : Math.floor(prng() * (baseMax - baseMin + 1)) + baseMin;
+
         const list = [];
 
         for (let i = 0; i < count; i++) {
-            const isBig = isHotspot || Math.random() < 0.08;
+            // 大餌判定（中心に近いほど大餌の比率が上がる）
+            const bigThreshold = 0.05 + centerProximity * 0.12;
+            const isBig = isHotspot || prng() < bigThreshold;
+
             list.push({
-                x: gx * GRID_SIZE + Math.random() * GRID_SIZE,
-                y: gy * GRID_SIZE + Math.random() * GRID_SIZE,
-                size: isBig ? 8 + Math.random() * 3 : 3 + Math.random() * 1.5,
-                val: isBig ? 24 : 4,
+                x: gx * GRID_SIZE + prng() * GRID_SIZE,
+                y: gy * GRID_SIZE + prng() * GRID_SIZE,
+                size: isBig ? 8 + prng() * 3.5 : 3 + prng() * 1.5,
+                val: isBig ? (24 + Math.floor(centerProximity * 8)) : 4,
                 isBig: isBig,
-                color: isBig ? '#ffffff' : FOOD_COLORS[Math.floor(Math.random() * FOOD_COLORS.length)]
+                color: isBig ? '#ffffff' : FOOD_COLORS[Math.floor(prng() * FOOD_COLORS.length)]
             });
         }
 
@@ -90,7 +139,7 @@ export class WorldManager {
     spawnDeathDrop(snake) {
         const histLen = snake.historyLength || 0;
         for (let i = 0; i < histLen; i += 2) {
-            const idx = (snake.headIdx + i) % 2048; // MAX_HISTORY = 2048
+            const idx = (snake.headIdx + i) % 2048;
             const pt = snake.history[idx];
             if (!pt) continue;
             
@@ -136,7 +185,6 @@ export class WorldManager {
                     const dy = snake.y - f.y;
                     if (dx * dx + dy * dy < (headR + f.size) ** 2) {
                         snake.addScore(f.val);
-                        // GC負荷軽減：O(1)末尾スワップによる超高速削除
                         list[i] = list[list.length - 1];
                         list.pop();
                         if (onEat) onEat(snake, f, gx + ox, gy + oy, i);
@@ -152,7 +200,6 @@ export class WorldManager {
             const dy = snake.y - f.y;
             if (dx * dx + dy * dy < (headR + f.size) ** 2) {
                 snake.addScore(f.val);
-                // GC負荷軽減：O(1)末尾スワップによる超高速削除
                 this.dropFoods[i] = this.dropFoods[this.dropFoods.length - 1];
                 this.dropFoods.pop();
                 if (onEat) onEat(snake, f, null, null, i);
@@ -167,7 +214,6 @@ export class WorldManager {
             p.y += p.vy;
             p.life -= 0.04;
             if (p.life <= 0) {
-                // GC負荷軽減：O(1)末尾スワップによる超高速削除
                 this.particles[i] = this.particles[this.particles.length - 1];
                 this.particles.pop();
             }
@@ -180,7 +226,7 @@ export class WorldManager {
         const minGy = Math.floor(cameraY / GRID_SIZE) - 1;
         const maxGy = Math.floor((cameraY + viewH) / GRID_SIZE) + 1;
 
-        // ゼロアロケーション：既存バケットのクリア（新規インスタンスを生成しない）
+        // ゼロアロケーション：既存バケットのクリア
         for (const bucket of this.batchBuckets.values()) {
             bucket.length = 0;
         }
@@ -206,7 +252,6 @@ export class WorldManager {
                         bucket = [];
                         this.batchBuckets.set(f.color, bucket);
                     }
-                    // x, y, size をフラットに蓄積（一時オブジェクト生成ゼロ）
                     bucket.push(f.x, f.y, f.size);
                 }
             }
@@ -226,7 +271,7 @@ export class WorldManager {
             bucket.push(f.x, f.y, f.size * pulse);
         }
 
-        // 一括バッチ描画実行（ドローコールを色数分に激減）
+        // 一括バッチ描画実行（色ごとに単一パス発行）
         for (const [color, coords] of this.batchBuckets.entries()) {
             const len = coords.length;
             if (len === 0) continue;

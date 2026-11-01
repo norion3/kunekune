@@ -1,10 +1,11 @@
 // ==============================================================================
 // 『くねくねバトル オンライン』iOS WebKit & iPhone 干渉完全マスクスタイル (style.js)
-// v20.8.0 安定化版:
+// v20.10.0 レイアウト＆視認性大幅刷新版:
+// ・GRAVITYネイティブ「ルーム招待 ⇧」ボタンとの物理被りを完全解消（MENU/BOOST上部退避）
+// ・順位エリア・ボタン類の高透過フロスト化（背後の敵・背景の動きがクリアに見える設計）
+// ・ズーム限界到達時の .disabled スタイル（半透明化）追加
+// ・右上の共有（↑）ボタン直下にピタリと合わせる分離型「いいね誘導アンカー」スタイル実装
 // ・overscroll-behavior: none によるラバーバンドバウンス完全抑止
-// ・内部スクロールエリア (touch-action: pan-y) のタッチ追従性担保
-// ・EntryShield スタイルの一元統合
-// ・左下SVGボタングループ ＆ 右下MENU底辺完全統一配置
 // ==============================================================================
 
 export function injectStyles() {
@@ -57,21 +58,21 @@ export function injectStyles() {
             --safe-bottom: 24px;
         }
 
-        /* --- 左上：ランキング展開パネル（トグル時のみ表示・文字ボタン廃止） --- */
+        /* --- 左上：ランキング展開パネル（★高透過フロスト化：背後の敵や餌が見える） --- */
         #stats-box {
             position: absolute;
             top: var(--safe-top);
             left: var(--safe-side);
-            background: rgba(15, 23, 42, 0.88);
-            border: 1.5px solid rgba(0, 229, 255, 0.45);
+            background: rgba(11, 5, 26, 0.45);
+            border: 1.5px solid rgba(0, 229, 255, 0.35);
             border-radius: 12px;
             padding: 10px 14px;
             color: #ffffff;
             font-size: 12px;
-            backdrop-filter: blur(10px);
-            -webkit-backdrop-filter: blur(10px);
-            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.65);
-            min-width: 160px;
+            backdrop-filter: blur(6px);
+            -webkit-backdrop-filter: blur(6px);
+            box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+            min-width: 140px;
             pointer-events: auto;
             z-index: 30;
             animation: stats-appear 0.18s ease-out;
@@ -86,20 +87,22 @@ export function injectStyles() {
             align-items: center;
             font-size: 13px;
             margin-bottom: 3px;
+            text-shadow: 0 1px 3px rgba(0, 0, 0, 0.8);
         }
         #stats-box hr {
             border: none;
-            border-top: 1px dashed rgba(255, 255, 255, 0.25);
+            border-top: 1px dashed rgba(255, 255, 255, 0.2);
             margin: 6px 0;
         }
         #leaderboard-list {
             display: flex;
             flex-direction: column;
             gap: 4px;
+            text-shadow: 0 1px 3px rgba(0, 0, 0, 0.9);
         }
 
         /* ==========================================================================
-           左下ボタングループ（底辺 bottom: 24px / 右下MENUと完全同一高さ）
+           左下ボタングループ（底辺 bottom: 24px）
            ========================================================================== */
         .bottom-left-group {
             position: absolute;
@@ -123,17 +126,17 @@ export function injectStyles() {
             width: 36px;
             height: 36px;
             border-radius: 50%;
-            background: rgba(15, 23, 42, 0.82);
-            border: 1.5px solid rgba(0, 229, 255, 0.4);
+            background: rgba(11, 5, 26, 0.45);
+            border: 1.5px solid rgba(0, 229, 255, 0.35);
             color: #ffffff;
             display: flex;
             align-items: center;
             justify-content: center;
             cursor: pointer;
-            box-shadow: 0 4px 10px rgba(0, 0, 0, 0.45);
+            box-shadow: 0 4px 10px rgba(0, 0, 0, 0.35);
             backdrop-filter: blur(6px);
             -webkit-backdrop-filter: blur(6px);
-            transition: transform 0.1s, background 0.15s;
+            transition: transform 0.1s, background 0.15s, opacity 0.2s;
         }
         .btn-zoom:active {
             transform: scale(0.92);
@@ -144,22 +147,31 @@ export function injectStyles() {
             height: 18px;
             fill: #00e5ff;
         }
+        /* ★ズーム限界到達時の無効化スタイル */
+        .btn-zoom.disabled {
+            opacity: 0.25;
+            pointer-events: none;
+            border-color: rgba(255, 255, 255, 0.15);
+        }
+        .btn-zoom.disabled svg {
+            fill: #94a3b8;
+        }
 
-        /* 左下丸型ボタン共通（サウンド、ランキング、マップ） */
+        /* 左下丸型ボタン共通（サウンド、ランキング、マップ：透過フロスト化） */
         .bottom-round-btn {
             width: 44px;
             height: 44px;
             border-radius: 50%;
-            background: rgba(15, 23, 42, 0.85);
-            border: 1.5px solid rgba(255, 255, 255, 0.3);
+            background: rgba(11, 5, 26, 0.45);
+            border: 1.5px solid rgba(255, 255, 255, 0.25);
             color: white;
             display: flex;
             align-items: center;
             justify-content: center;
             cursor: pointer;
-            backdrop-filter: blur(8px);
-            -webkit-backdrop-filter: blur(8px);
-            box-shadow: 0 4px 14px rgba(0, 0, 0, 0.5);
+            backdrop-filter: blur(6px);
+            -webkit-backdrop-filter: blur(6px);
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.35);
             transition: transform 0.1s, border-color 0.15s, background 0.15s;
         }
         .bottom-round-btn:active {
@@ -181,22 +193,60 @@ export function injectStyles() {
         }
 
         /* ==========================================================================
-           右下ボタン（BOOST: 下から168px / MENU: 下から24px・左下と高さ完全一致）
+           右下ボタン（★「ルーム招待 ⇧」ボタンとの物理被り完全解消）
            ========================================================================== */
+        /* MENUボタン：ネイティブ招待ボタン（bottom: 24px, right: 16px）の直上に配置 */
+        #btn-menu {
+            position: absolute;
+            bottom: calc(var(--safe-bottom) + 64px);
+            right: 24px;
+            width: 48px;
+            height: 48px;
+            border-radius: 50%;
+            background: linear-gradient(135deg, rgba(0, 180, 216, 0.85), rgba(0, 119, 182, 0.9));
+            border: 1.5px solid rgba(255, 255, 255, 0.7);
+            color: white;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            font-size: 9px;
+            font-weight: 900;
+            pointer-events: auto;
+            backdrop-filter: blur(6px);
+            -webkit-backdrop-filter: blur(6px);
+            box-shadow: 0 4px 14px rgba(0, 119, 182, 0.45);
+            cursor: pointer;
+            z-index: 50;
+            transition: transform 0.1s ease;
+        }
+        #btn-menu svg {
+            width: 19px;
+            height: 19px;
+            fill: white;
+            margin-bottom: 1px;
+        }
+        #btn-menu:active {
+            transform: scale(0.92);
+        }
+
+        /* BOOSTボタン：MENUボタンのさらに上部へ退避（親指で最も押しやすい黄金位置） */
         #btn-boost {
             position: absolute;
-            bottom: calc(var(--safe-bottom) + 144px);
+            bottom: calc(var(--safe-bottom) + 188px);
             right: 20px;
             width: 66px;
             height: 66px;
             border-radius: 50%;
-            background: radial-gradient(circle, rgba(15, 23, 42, 0.92) 0%, rgba(2, 6, 23, 0.96) 100%);
+            background: radial-gradient(circle, rgba(15, 23, 42, 0.8) 0%, rgba(2, 6, 23, 0.88) 100%);
             border: 2px solid #00e5ff;
             color: #00e5ff;
             display: flex;
             align-items: center;
             justify-content: center;
             pointer-events: auto;
+            backdrop-filter: blur(6px);
+            -webkit-backdrop-filter: blur(6px);
             box-shadow: 0 0 16px rgba(0, 229, 255, 0.35), inset 0 0 10px rgba(0, 229, 255, 0.2);
             transition: transform 0.1s, border-color 0.2s, box-shadow 0.2s;
             cursor: pointer;
@@ -220,38 +270,6 @@ export function injectStyles() {
             transform: scale(1.15);
         }
 
-        /* MENUボタン（右下最下段：bottom: 24px / 左下のサウンドボタンと縦位置完全同一） */
-        #btn-menu {
-            position: absolute;
-            bottom: var(--safe-bottom);
-            right: 16px;
-            width: 48px;
-            height: 48px;
-            border-radius: 50%;
-            background: linear-gradient(135deg, #00b4d8, #0077b6);
-            border: 1.5px solid rgba(255, 255, 255, 0.8);
-            color: white;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
-            font-size: 9px;
-            font-weight: 900;
-            pointer-events: auto;
-            box-shadow: 0 4px 14px rgba(0, 119, 182, 0.5);
-            cursor: pointer;
-            z-index: 50;
-        }
-        #btn-menu svg {
-            width: 19px;
-            height: 19px;
-            fill: white;
-            margin-bottom: 1px;
-        }
-        #btn-menu:active {
-            transform: scale(0.92);
-        }
-
         /* --- 仮想ジョイスティック --- */
         #joystick-base {
             display: none;
@@ -259,8 +277,8 @@ export function injectStyles() {
             width: 90px;
             height: 90px;
             border-radius: 50%;
-            background: rgba(255, 255, 255, 0.1);
-            border: 2px solid rgba(255, 255, 255, 0.3);
+            background: rgba(255, 255, 255, 0.08);
+            border: 1.5px solid rgba(255, 255, 255, 0.25);
             pointer-events: none;
             transform: translate(-50%, -50%);
             z-index: 40;
@@ -318,41 +336,57 @@ export function injectStyles() {
             100% { transform: translateX(-200%); left: -50%; }
         }
 
-        /* --- いいね誘導吹き出し --- */
-        #like-bubble {
-            display: none;
-            position: absolute;
-            top: 54px;
+        /* ==========================================================================
+           ★ 分離型いいね誘導アンカー（右上の共有 [↑] ボタンの直下にピタリ配置）
+           ========================================================================== */
+        #like-guide-anchor {
+            position: fixed;
+            top: max(56px, env(safe-area-inset-top, 24px) + 48px);
             right: 12px;
-            background: #0088cc;
-            color: #ffffff;
-            font-size: 13px;
-            font-weight: 700;
-            padding: 8px 14px;
-            border-radius: 12px;
-            box-shadow: 0 4px 16px rgba(0, 136, 204, 0.5);
-            pointer-events: none;
             z-index: 200;
-            white-space: nowrap;
+            display: flex;
+            flex-direction: column;
+            align-items: flex-end;
+            pointer-events: none;
+            opacity: 0;
+            transform: translateY(-6px);
+            transition: opacity 0.22s ease, transform 0.22s ease;
         }
-        #like-bubble::after {
-            content: '';
-            position: absolute;
-            top: -7px;
-            right: 16px;
+        #like-guide-anchor.show {
+            opacity: 1;
+            transform: translateY(0);
+        }
+
+        /* 上向き三角矢印（共有ボタンの中心線に合わせてアニメーション点滅） */
+        .like-guide-arrow {
             width: 0;
             height: 0;
             border-left: 7px solid transparent;
             border-right: 7px solid transparent;
-            border-bottom: 7px solid #0088cc;
+            border-bottom: 9px solid #38bdf8;
+            margin-right: 14px;
+            margin-bottom: 3px;
+            animation: likeArrowPulse 0.8s ease-in-out infinite alternate;
         }
-        #like-bubble.show {
-            display: block;
-            animation: bubble-pop 0.25s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+        @keyframes likeArrowPulse {
+            0% { transform: translateY(0); }
+            100% { transform: translateY(-4px); }
         }
-        @keyframes bubble-pop {
-            0% { transform: scale(0.6); opacity: 0; }
-            100% { transform: scale(1); opacity: 1; }
+
+        /* 吹き出し本体（自然な左詰め＆高視認性） */
+        .like-guide-bubble {
+            background: linear-gradient(135deg, rgba(2, 132, 199, 0.95) 0%, rgba(3, 105, 161, 0.98) 100%);
+            border: 1.5px solid #38bdf8;
+            border-radius: 14px;
+            padding: 8px 14px;
+            color: #ffffff;
+            font-size: 12px;
+            font-weight: 800;
+            letter-spacing: 0.02em;
+            box-shadow: 0 4px 18px rgba(2, 132, 199, 0.5), 0 0 10px rgba(56, 189, 248, 0.4);
+            text-align: left;
+            line-height: 1.45;
+            white-space: nowrap;
         }
 
         /* ==========================================================================
@@ -550,6 +584,7 @@ export function injectStyles() {
             font-size: 16px;
         }
 
+        /* --- カスタムパネル（顔プレビューボタン対応） --- */
         .custom-panel {
             display: flex;
             flex-direction: column;
@@ -566,26 +601,33 @@ export function injectStyles() {
             justify-content: space-around;
             gap: 8px;
         }
+        .custom-face-btn {
+            flex: 1;
+            height: 48px;
+            background: rgba(0, 0, 0, 0.25);
+            border: 2px solid transparent;
+            border-radius: 10px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            transition: transform 0.1s, border-color 0.15s, background 0.15s;
+        }
+        .custom-face-btn.selected {
+            border-color: #00e5ff;
+            background: rgba(0, 229, 255, 0.2);
+            transform: scale(1.05);
+        }
+        .custom-face-btn svg {
+            width: 36px;
+            height: 36px;
+        }
+
         .custom-colors-grid {
             display: grid;
             grid-template-columns: repeat(4, 1fr);
             gap: 10px;
             justify-items: center;
-        }
-        .custom-face-btn {
-            flex: 1;
-            background: rgba(0, 0, 0, 0.25);
-            border: 2px solid transparent;
-            border-radius: 8px;
-            padding: 8px 4px;
-            color: #ffffff;
-            font-size: 12px;
-            font-weight: 700;
-            cursor: pointer;
-        }
-        .custom-face-btn.selected {
-            border-color: #ffffff;
-            background: rgba(255, 255, 255, 0.25);
         }
         .custom-color-btn {
             width: 34px;
@@ -630,7 +672,7 @@ export function injectStyles() {
             background: rgba(255, 255, 255, 0.2);
         }
 
-        /* --- リザルト画面 --- */
+        /* --- リザルト画面（★得点送信ボタン撤去・リトライ1本化） --- */
         #over-screen {
             display: none;
             position: absolute;
@@ -651,7 +693,7 @@ export function injectStyles() {
             background: linear-gradient(135deg, #0f172a 0%, #1e1b4b 100%);
             border: 2px solid #38bdf8;
             border-radius: 16px;
-            padding: 20px 24px;
+            padding: 24px;
             width: 100%;
             max-width: 360px;
             color: #ffffff;
@@ -665,7 +707,7 @@ export function injectStyles() {
         }
         .result-title {
             color: #ff3366;
-            font-size: 22px;
+            font-size: 24px;
             font-weight: 900;
             letter-spacing: 1.5px;
             margin: 0 0 16px;
@@ -675,7 +717,7 @@ export function injectStyles() {
             display: flex;
             flex-direction: column;
             gap: 10px;
-            margin-bottom: 20px;
+            margin-bottom: 22px;
         }
         .result-row {
             display: flex;
@@ -683,7 +725,7 @@ export function injectStyles() {
             align-items: center;
             font-size: 14px;
             border-bottom: 1px dashed rgba(255, 255, 255, 0.15);
-            padding-bottom: 4px;
+            padding-bottom: 5px;
         }
         .result-row-label {
             color: #94a3b8;
@@ -695,30 +737,23 @@ export function injectStyles() {
         }
         .result-actions {
             display: flex;
-            gap: 10px;
-        }
-        .result-btn {
-            flex: 1;
-            padding: 12px;
-            border-radius: 10px;
-            font-size: 14px;
-            font-weight: 800;
-            border: none;
-            cursor: pointer;
-            transition: transform 0.1s, opacity 0.15s;
-        }
-        .result-btn:active {
-            transform: scale(0.96);
+            width: 100%;
         }
         .btn-retry {
+            width: 100%;
+            padding: 15px;
+            border-radius: 12px;
+            font-size: 16px;
+            font-weight: 900;
+            border: none;
+            cursor: pointer;
             background: linear-gradient(135deg, #0284c7, #0369a1);
             color: #ffffff;
-            box-shadow: 0 4px 12px rgba(2, 132, 199, 0.4);
+            box-shadow: 0 4px 14px rgba(2, 132, 199, 0.45);
+            transition: transform 0.1s, opacity 0.15s;
         }
-        .btn-submit-score {
-            background: linear-gradient(135deg, #e11d48, #be123c);
-            color: #ffffff;
-            box-shadow: 0 4px 12px rgba(225, 29, 72, 0.4);
+        .btn-retry:active {
+            transform: scale(0.96);
         }
 
         /* --- ロビー ＆ 待機室 --- */

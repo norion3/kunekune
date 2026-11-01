@@ -1,9 +1,10 @@
 // ==============================================================================
 // 『くねくねバトル オンライン』UIイベントバインダーモジュール (ui_binder.js)
-// v21.0.0 責務分離・軽量化版:
-// ・main.js から各種UI操作・ボタン配線を完全外注化
-// ・ズーム限界到達時の .disabled リアルタイム更新管理
-// ・ロビー、待機室、リザルト画面のイベントハンドラ集約
+// v21.2.0 ゲーム開始全端末ブロードキャスト連動版:
+// ・待機室「ゲーム開始」ボタン押下時の NetworkManager.broadcastStartGame() 連携
+// ・ホストの開始トリガーにより全ゲスト端末が待機室から一斉始動
+// ・ロビーの作成/参加/更新リスナーは net_lobby_hooks.js へ完全一本化
+// ・操作系（ソロ開始、ズーム、サウンド、ランキング、マップ、待機室、リトライ）の専任化
 // ==============================================================================
 
 import { Danmaku } from './danmaku.js';
@@ -90,12 +91,16 @@ export function initUIBindings(ctx) {
         };
     }
 
-    // 4. ロビー：ソロプレイ開始ボタン（iOS連打デバウンス付）
+    // 4. ロビー：ソロプレイ開始ボタン（1秒連打デバウンス付）
     const btnLobbySolo = document.getElementById('btn-lobby-solo');
-    if (btnLobbySolo) {
+    if (btnLobbySolo && !btnLobbySolo._hasSoloBound) {
+        btnLobbySolo._hasSoloBound = true;
         let lastSoloTap = 0;
         const onSoloTap = (e) => {
-            if (e) { e.preventDefault(); e.stopPropagation(); }
+            if (e) {
+                e.preventDefault();
+                e.stopPropagation();
+            }
             const now = Date.now();
             if (now - lastSoloTap < 1000) return;
             lastSoloTap = now;
@@ -109,115 +114,33 @@ export function initUIBindings(ctx) {
         btnLobbySolo.addEventListener('click', onSoloTap);
     }
 
-    // 5. ロビー：公開ルーム作成ボタン
-    const btnLobbyPublic = document.getElementById('btn-lobby-public');
-    if (btnLobbyPublic) {
-        let lastPubTap = 0;
-        const onPubTap = async (e) => {
-            if (e) { e.preventDefault(); e.stopPropagation(); }
-            const now = Date.now();
-            if (now - lastPubTap < 1000) return;
-            lastPubTap = now;
+    // ※ ロビーの公開作成・プライベート作成・一覧更新・各参加ボタンは
+    //    net_lobby_hooks.js（1秒デバウンス ＆ 先行待機室起動）へ一本化済み
 
-            EntryShield.show('CONNECTING...', '公開ルームを作成中');
-            const roomId = await NetworkManager.createRoom(false);
-            EntryShield.hide();
-            if (roomId) UIController.showWaitingRoom(roomId);
-        };
-        btnLobbyPublic.addEventListener('touchend', onPubTap, { passive: false });
-        btnLobbyPublic.addEventListener('click', onPubTap);
-    }
+    // 5. 待機室：ホスト専用ゲーム開始ボタン（★全端末一斉開始ブロードキャスト連携）
+    const btnWaitingStart = document.getElementById('btn-waiting-start');
+    if (btnWaitingStart && !btnWaitingStart._hasStartBound) {
+        btnWaitingStart._hasStartBound = true;
+        btnWaitingStart.onclick = (e) => {
+            if (e) e.stopPropagation();
+            if (!NetworkManager.isHost) return;
 
-    // 6. ロビー：プライベートルーム作成ボタン
-    const btnLobbyPrivate = document.getElementById('btn-lobby-private');
-    if (btnLobbyPrivate) {
-        let lastPrivTap = 0;
-        const onPrivTap = async (e) => {
-            if (e) { e.preventDefault(); e.stopPropagation(); }
-            const now = Date.now();
-            if (now - lastPrivTap < 1000) return;
-            lastPrivTap = now;
-
-            EntryShield.show('CONNECTING...', 'プライベートルームを作成中');
-            const roomId = await NetworkManager.createRoom(true);
-            EntryShield.hide();
-            if (roomId) UIController.showWaitingRoom(roomId);
-        };
-        btnLobbyPrivate.addEventListener('touchend', onPrivTap, { passive: false });
-        btnLobbyPrivate.addEventListener('click', onPrivTap);
-    }
-
-    // 7. ロビー：公開ルーム一覧更新ボタン
-    const btnRefreshRooms = document.getElementById('btn-refresh-rooms');
-    if (btnRefreshRooms) {
-        let lastRefTap = 0;
-        const onRefTap = async (e) => {
-            if (e) { e.preventDefault(); e.stopPropagation(); }
-            const now = Date.now();
-            if (now - lastRefTap < 1000) return;
-            lastRefTap = now;
-
-            btnRefreshRooms.innerText = '更新中...';
-            const rooms = await NetworkManager.getPublicRooms();
-            btnRefreshRooms.innerText = '更新';
-
-            const container = document.getElementById('room-list-container');
-            if (!container) return;
-
-            if (!rooms || rooms.length === 0) {
-                container.innerHTML = '<div class="room-list-empty">公開ルームはありません</div>';
-                return;
+            // マルチプレイ時は全ゲスト端末へゲーム開始パケットを送信
+            if (NetworkManager.isMultiplayerActive && typeof NetworkManager.broadcastStartGame === 'function') {
+                NetworkManager.broadcastStartGame();
             }
 
-            container.innerHTML = rooms.map(r => `
-                <div class="room-item">
-                    <div class="room-item-info">
-                        <span class="room-item-id">ROOM #${String(r.room_id).slice(-5)}</span>
-                        <span class="room-item-count">参加者: ${r.gamer_num || 1} / 4名</span>
-                    </div>
-                    <button type="button" class="btn-join-room" data-room="${r.room_id}">参加</button>
-                </div>
-            `).join('');
-
-            container.querySelectorAll('.btn-join-room').forEach(btn => {
-                let lastJoinTap = 0;
-                const onJoin = async (ev) => {
-                    if (ev) { ev.preventDefault(); ev.stopPropagation(); }
-                    const jnow = Date.now();
-                    if (jnow - lastJoinTap < 1000) return;
-                    lastJoinTap = jnow;
-
-                    const rid = btn.dataset.room;
-                    EntryShield.show(`ROOM #${rid.slice(-5)}`, '入室しています...');
-                    const res = await NetworkManager.joinRoom(rid);
-                    EntryShield.hide();
-                    if (res.success) {
-                        UIController.showWaitingRoom(rid);
-                    } else {
-                        Danmaku.push('エラー', res.msg, '#f43f5e', true);
-                    }
-                };
-                btn.addEventListener('touchend', onJoin, { passive: false });
-                btn.addEventListener('click', onJoin);
-            });
-        };
-        btnRefreshRooms.addEventListener('touchend', onRefTap, { passive: false });
-        btnRefreshRooms.addEventListener('click', onRefTap);
-    }
-
-    // 8. 待機室：ホスト専用ゲーム開始ボタン
-    const btnWaitingStart = document.getElementById('btn-waiting-start');
-    if (btnWaitingStart) {
-        btnWaitingStart.onclick = () => {
-            if (!NetworkManager.isHost) return;
+            // ホスト自身のゲームを始動
             initGame();
         };
     }
 
-    // 9. 待機室：退室ボタン
+    // 6. 待機室：退室ボタン
     const btnWaitingLeave = document.getElementById('btn-waiting-leave');
-    if (btnWaitingLeave) {
-        btnWaitingLeave.onclick = async () => {
+    if (btnWaitingLeave && !btnWaitingLeave._hasLeaveBound) {
+        btnWaitingLeave._hasLeaveBound = true;
+        btnWaitingLeave.onclick = async (e) => {
+            if (e) e.stopPropagation();
             EntryShield.show('DISCONNECTING...', '退室しています...');
             await NetworkManager.exitRoom();
             EntryShield.hide();
@@ -225,7 +148,7 @@ export function initUIBindings(ctx) {
         };
     }
 
-    // 10. メニュー着せ替えコールバック初期化
+    // 7. メニュー着せ替えコールバック初期化
     Menu.init((face, color) => {
         const p = getPlayer();
         if (p) {
@@ -235,10 +158,12 @@ export function initUIBindings(ctx) {
         Danmaku.push('システム', 'アバターを変更しました', color, true);
     });
 
-    // 11. リザルト画面：リトライボタン（リザルト画面即時非表示 ＆ 復帰）
+    // 8. リザルト画面：リトライボタン（リザルト画面即時非表示 ＆ 復帰）
     const btnRetry = document.getElementById('btn-retry');
-    if (btnRetry) {
-        btnRetry.onclick = () => {
+    if (btnRetry && !btnRetry._hasRetryBound) {
+        btnRetry._hasRetryBound = true;
+        btnRetry.onclick = (e) => {
+            if (e) e.stopPropagation();
             const overScreen = document.getElementById('over-screen');
             if (overScreen) {
                 overScreen.style.display = 'none';
