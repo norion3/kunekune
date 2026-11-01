@@ -20,11 +20,16 @@ import {
 export const NetBroadcaster = {
     _syncIntervalId: null,
     _aiSliceIndex: 0,
+    _latestLeaderboard: null, // ★ ホスト端末の最新リーダーボードキャッシュ
 
     _pendingPicks: [],
     _pendingDrops: [],
     _pendingClusters: [],
     _pendingChats: [],
+
+    setLatestLeaderboard(lbData) {
+        this._latestLeaderboard = lbData;
+    },
 
     queueFoodPick(gx, gy, foodIndex) {
         this._pendingPicks.push(packFoodPickTuple(gx, gy, foodIndex));
@@ -127,6 +132,11 @@ export const NetBroadcaster = {
                 l: tuplesList
             };
 
+            // ★ ホスト端末：全体リーダーボード（Top 8スネークの順位・スコア情報）を同封送出
+            if (netManager.isHost && this._latestLeaderboard) {
+                packet.lb = this._latestLeaderboard;
+            }
+
             // チャットの同封
             if (this._pendingChats.length > 0) {
                 packet.ch = this._pendingChats.splice(0, 3);
@@ -183,11 +193,14 @@ export const NetBroadcaster = {
                 delete msgObj.dp;
                 delete msgObj.pk;
                 delete msgObj.dc;
-                window.AgentSDK.room.sendMessage({ message: JSON.stringify(msgObj) });
+                delete msgObj.lb;
+                const safePayload = JSON.stringify(msgObj);
+                window.AgentSDK.room.sendMessage({ msg_data: safePayload, message: safePayload });
                 return;
             }
 
-            window.AgentSDK.room.sendMessage({ message: rawString });
+            // ★ msg_data と message の両方に格納してSDKの互換性を完全防衛
+            window.AgentSDK.room.sendMessage({ msg_data: rawString, message: rawString });
         } catch (e) {
             console.warn('[NetBroadcaster] sendMessage error:', e);
         }

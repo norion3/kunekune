@@ -1,6 +1,8 @@
 // ==============================================================================
 // 『くねくねバトル オンライン』自律DOMマウントモジュール (dom.js)
-// v24.0.0 最大6名待機室＆100体規模UI完全統合版:
+// v24.1.0 余剰テキスト撤去＆UI純化完全統合版:
+// ・ロビーボタン「公開ルーム作成 (最大6人)」から「(最大6人)」を削除し「公開ルーム作成」へスリム化
+// ・待機室タイトル「マッチング待機中 (最大6名)」から「(最大6名)」を削除し「マッチング待機中」へスリム化
 // ・待機室（#waiting-overlay）：最大6名スロット（0〜5）対応＆アバター写真表示枠
 // ・ランキングパネル（#stats-box）：総数100体表示（/ 100）へ整合
 // ・左下：MENU・サウンドの低頻度ボタンを44px統一デザインで配置（ジョイスティック領域開放）
@@ -336,7 +338,7 @@ export function mountDOM() {
     `;
     document.body.appendChild(overScreen);
 
-    // 6. マルチプレイロビー画面
+    // 6. マルチプレイロビー画面（★「(最大6人)」を削除しシンプル化）
     const lobbyOverlay = document.createElement('div');
     lobbyOverlay.id = 'lobby-overlay';
     lobbyOverlay.innerHTML = `
@@ -347,7 +349,7 @@ export function mountDOM() {
             <button id="btn-lobby-solo" type="button" class="btn-lobby-hero">▶ 1人で遊ぶ (ソロ)</button>
 
             <div class="lobby-btn-row">
-                <button id="btn-lobby-public" type="button" class="btn-lobby-sub btn-green">公開ルーム作成 (最大6人)</button>
+                <button id="btn-lobby-public" type="button" class="btn-lobby-sub btn-green">公開ルーム作成</button>
                 <button id="btn-lobby-private" type="button" class="btn-lobby-sub btn-teal">プライベート作成</button>
             </div>
 
@@ -364,13 +366,13 @@ export function mountDOM() {
     `;
     document.body.appendChild(lobbyOverlay);
 
-    // 7. マッチング待機室画面（最大6名枠）
+    // 7. マッチング待機室画面（★「(最大6名)」を削除しシンプル化）
     const waitingOverlay = document.createElement('div');
     waitingOverlay.id = 'waiting-overlay';
     waitingOverlay.innerHTML = `
         <div class="waiting-card">
             <div id="waiting-room-tag" class="waiting-room-tag">ROOM #-----</div>
-            <div class="waiting-title">マッチング待機中 (最大6名)</div>
+            <div class="waiting-title">マッチング待機中</div>
             <div class="waiting-divider"></div>
             <div id="waiting-members-list" class="waiting-members-list"></div>
             <button id="btn-waiting-start" type="button" class="btn-lobby-hero" style="display: none;">ゲーム開始</button>

@@ -38,6 +38,7 @@ import { SpatialCollisionEngine } from './combat.js';
 import { WorldManager } from './world.js';
 import { AIManager } from './ai.js';
 import { NetworkManager } from './network.js';
+import { NetBroadcaster } from './net_broadcaster.js';
 import { initUIBindings, updateZoomButtonsState } from './ui_binder.js';
 import { setupNetworkHandlers } from './net_handlers.js';
 import { hookLobbyNetworkEvents } from './net_lobby_hooks.js';
@@ -240,6 +241,14 @@ export function initGame(isRespawn = false) {
 
     player.name = resolvedPlayerName;
     player.color = SNAKE_COLORS[NetworkManager.mySlot % SNAKE_COLORS.length];
+
+    // ★ ソロプレイ時でもスロット0に自身のユーザーIDとアバターを確実にバインド（プロフ遷移連携）
+    if (!NetworkManager.isMultiplayerActive) {
+        NetworkManager.slots[0].userId = NetworkManager.myUser.user_id;
+        NetworkManager.slots[0].name = resolvedPlayerName;
+        NetworkManager.slots[0].portrait = NetworkManager.myUser.portrait || '';
+        NetworkManager.slots[0].isAI = false;
+    }
 
     if (!isRespawn) {
         remoteSnakes.clear();
@@ -525,9 +534,22 @@ function gameLoop() {
             const totalAlive = sortedSnakes.filter(s => !s.isDead).length;
             hud.updateStats(myRank, totalAlive, player.score);
 
+            const topList = sortedSnakes.filter(s => !s.isDead).slice(0, 8);
+
+            // ★ ホスト端末：全端末同期用に最新リーダーボードパケットをキャッシュ登録
+            if (NetworkManager.isHost && NetworkManager.isMultiplayerActive) {
+                NetBroadcaster.setLatestLeaderboard({
+                    totalAlive: totalAlive,
+                    top: topList.map(s => ({
+                        slot: s.id,
+                        name: s.name,
+                        score: Math.floor(s.score)
+                    }))
+                });
+            }
+
             const listEl = document.getElementById('leaderboard-list');
             if (listEl && listEl.parentElement && listEl.parentElement.style.display !== 'none') {
-                const topList = sortedSnakes.filter(s => !s.isDead).slice(0, 8);
                 listEl.innerHTML = topList.map((s, idx) => `
                     <div style="display:flex; justify-content:space-between; color:${s === player ? '#ffdd00' : '#ffffff'}; font-weight:${s === player ? 'bold' : 'normal'}; font-size:12px;">
                         <span style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:85px;">${idx + 1}. ${s.name}</span>

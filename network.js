@@ -659,6 +659,11 @@ export const NetworkManager = {
                     }
                 }
 
+                // ★ リーダーボード同期情報の受信処理
+                if (packet.lb && this.callbacks.onLeaderboardSync) {
+                    this.callbacks.onLeaderboardSync(packet.lb);
+                }
+
                 if (Array.isArray(packet.pk)) {
                     packet.pk.forEach(tuple => {
                         const pick = unpackFoodPickTuple(tuple);

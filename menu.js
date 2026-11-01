@@ -446,7 +446,8 @@ export class MenuManager {
             `;
 
             // 実在ユーザー行タップ時：GRAVITY公式プロフィール画面へ即時ジャンプ
-            if (isAssigned && targetUid && targetUid !== 'local_user') {
+            // ★ ソロ時（isMe かつ userId が設定済み）の場合も確実にジャンプ
+            if (isAssigned && targetUid && targetUid !== 'local_user' && targetUid !== 'null' && String(targetUid).trim() !== '') {
                 row.onclick = (e) => {
                     e.stopPropagation();
                     GravityRouter.openProfile(targetUid);

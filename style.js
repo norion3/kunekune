@@ -1,6 +1,7 @@
 // ==============================================================================
 // 『くねくねバトル オンライン』iOS WebKit & iPhone 干渉完全マスクスタイル (style.js)
-// v22.1.0 リアルタイム完全透過＆WebKitキャッシュ固着根絶版:
+// v24.1.0 弾幕チャット速度緩和（7.0秒ゆったり表示）＆リアルタイム完全透過版:
+// ・弾幕チャットのアニメーション時間を4.5秒から7.0秒へ緩和（流れる速度が落ち着き読破性大幅向上）
 // ・backdrop-filter を全撤廃し、WebKit特有のCanvas背景フリーズ（非リアルタイム化）を完全解消
 // ・順位パネル（#stats-box）および全操作ボタンをマップ同様の極薄透過アルファに統一
 // ・背後を通過する敵・星・餌が60FPSで一切濁らずクリアに透けて見える視認性を実現
@@ -262,7 +263,7 @@ export function injectStyles() {
             pointer-events: none;
         }
 
-        /* --- 弾幕チャット --- */
+        /* --- 弾幕チャット（★移動速度をゆったり7.0秒へ緩和） --- */
         #danmaku-container {
             position: absolute;
             top: 0;
@@ -284,7 +285,7 @@ export function injectStyles() {
             font-weight: 700;
             color: #ffffff;
             text-shadow: 1px 1px 3px rgba(0, 0, 0, 0.9);
-            animation: danmaku-fly 4.5s linear forwards;
+            animation: danmaku-fly 7.0s linear forwards;
             pointer-events: none;
         }
         .danmaku-badge {

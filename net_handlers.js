@@ -10,7 +10,7 @@
 import { Snake } from './snake.js';
 import { NetworkManager } from './network.js';
 import { Danmaku } from './danmaku.js';
-import { SNAKE_COLORS } from './constants.js';
+import { SNAKE_COLORS, TOTAL_SNAKES } from './constants.js';
 
 /**
  * ネットワーク受信コールバックのセットアップ
@@ -47,10 +47,10 @@ export function setupNetworkHandlers(ctx) {
 
             let remote = remoteSnakes.get(data.slot);
             if (!remote) {
-                const isPlayerSlot = data.slot < 4;
+                const isPlayerSlot = data.slot < 6;
                 const color = SNAKE_COLORS[data.slot % SNAKE_COLORS.length];
                 const slotData = NetworkManager.slots[data.slot];
-                const name = slotData ? slotData.name : (isPlayerSlot ? `P${data.slot + 1}` : `CPU ${data.slot - 3}`);
+                const name = slotData ? slotData.name : (isPlayerSlot ? `P${data.slot + 1}` : `CPU ${data.slot - 5}`);
 
                 remote = new Snake(false, data.slot, name, color, 'normal');
                 remote.reset(data.x, data.y);
@@ -77,6 +77,42 @@ export function setupNetworkHandlers(ctx) {
             remote.kills = data.kills;
             remote.lastPacketTime = performance.now();
             remote.recalculateSize();
+        },
+
+        /**
+         * ★ ホストから受信した全体リーダーボード情報をゲスト端末のHUD・順位パネルへ同期
+         */
+        onLeaderboardSync(lbData) {
+            if (!lbData) return;
+            const myPlayer = window.localPlayerInstance;
+            const myScore = myPlayer ? myPlayer.score : 0;
+            const topList = lbData.top || [];
+            const totalAlive = lbData.totalAlive || TOTAL_SNAKES;
+
+            // ゲスト端末の自機順位算出
+            let higherCount = topList.filter(item => item.score > myScore).length;
+            if (lbData.myRank) {
+                higherCount = lbData.myRank - 1;
+            }
+            const myRank = higherCount + 1;
+
+            const valRank = document.getElementById('val-rank');
+            const valTotal = document.getElementById('val-total');
+            if (valRank) valRank.innerText = myRank;
+            if (valTotal) valTotal.innerText = totalAlive;
+
+            const listEl = document.getElementById('leaderboard-list');
+            if (listEl && listEl.parentElement && listEl.parentElement.style.display !== 'none') {
+                listEl.innerHTML = topList.slice(0, 8).map((item, idx) => {
+                    const isMe = myPlayer && (item.name === myPlayer.name || item.slot === NetworkManager.mySlot);
+                    return `
+                        <div style="display:flex; justify-content:space-between; color:${isMe ? '#ffdd00' : '#ffffff'}; font-weight:${isMe ? 'bold' : 'normal'}; font-size:12px;">
+                            <span style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:85px;">${idx + 1}. ${item.name}</span>
+                            <span>${Math.floor(item.score)}</span>
+                        </div>
+                    `;
+                }).join('');
+            }
         },
 
         /**
