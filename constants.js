@@ -1,10 +1,10 @@
 /**
  * ==============================================================================
  * 『くねくねバトル オンライン』システム共通定数定義 (constants.js)
- * v20.10.0 マップサイズ厳格維持版:
+ * v24.0.0 GRAVITY公式 最大6人マルチプレイ＆100体規模完全対応版:
  * ・広大で自由度の高い MAP_SIZE = 60000 を厳格固定
- * ・GRAVITY公式上限（4名）に完全整合したルーム設定
- * ・8色カラーパレット (SNAKE_COLORS) 完全維持
+ * ・人間プレイヤー最大6名（MAX_PLAYERS = 6）＋ 自律生態系AI 94体 ＝ 合計100体スネーク
+ * ・8色カラーパレット (SNAKE_COLORS) 完全維持（6名枠を余裕でカバー）
  * ・セーフエリア・ワールド・物理定数の統一管理
  * ==============================================================================
  */
@@ -14,10 +14,10 @@ export const MAP_SIZE = 60000;
 export const GRID_SIZE = 250;
 
 // プレイヤー・AI定数
-// ★ GRAVITY AgentSDK のルーム最大上限 (4名) に整合
-export const TOTAL_SNAKES = 50;
-export const MAX_PLAYERS = 4;
-export const MAX_AIS = 46;
+// ★ GRAVITY AgentSDK 最大6名（ホスト＋ゲスト5名）＋ 自律AI 94体 ＝ 合計100体スネーク
+export const TOTAL_SNAKES = 100;
+export const MAX_PLAYERS = 6;
+export const MAX_AIS = 94;
 
 // 移動速度（黄金比減衰モデル基盤）
 export const BASE_SPEED = 4.2;
@@ -33,7 +33,7 @@ export const SAFE_INSET_BOTTOM = 24;
 export const CREATOR_MAIN_INTERNAL_UID = '1540889251'; // norion (メイン窓口)
 export const CREATOR_SUB_INTERNAL_UID  = '1542253108'; // のりおん (ゲーム開発・告知)
 
-// 8人マルチプレイ対応 8色カラーパレット
+// 8色カラーパレット（最大6人プレイヤーに重複なく個別カラーを割り当て可能）
 export const SNAKE_COLORS = [
     '#00e5ff', // 1. シアン
     '#ff3366', // 2. ローズレッド

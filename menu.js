@@ -1,16 +1,22 @@
 /**
  * ==============================================================================
  * 『くねくねバトル オンライン』ボトムシートメニュー ＆ ルーター (menu.js)
- * v20.10.0 分離型いいね誘導＆顔プレビュー対応版:
+ * v24.0.0 走者6枠固定確保 ＆ GRAVITYアバター・プロフ完全連携版:
+ * ・シングル・マルチ共通：走者タブ内に最大定員6名分のスロット枠を常時整然と確保
+ * ・GRAVITY公式アバター写真（portrait）の円形トリミング高精細表示
+ * ・実走者タップ時のGRAVITYプロフィール画面安全起動（GravityRouter）
  * ・右上の共有 [↑] ボタン直下の分離型いいね誘導アンカー (#like-guide-anchor) 制御
- * ・チャット送信時の Danmaku.push 重複呼び出し撤廃（一本化により二重表示バグ根絶）
- * ・走者一覧の変更検知差分更新（不要な DOM 破棄・ガタつき完全防止）
- * ・シート内スクロールと背景操作貫通遮断 (stopPropagation) の完全両立
- * ・GRAVITYネイティブ安全起動ルーター (GravityRouter: 非表示iframeキック)
+ * ・チャット送信時の二重表示防止一本化 ＆ 走者タブの変更検知差分更新
  * ==============================================================================
  */
 
-import { CREATOR_MAIN_INTERNAL_UID, CREATOR_SUB_INTERNAL_UID, SNAKE_COLORS } from './constants.js';
+import {
+    CREATOR_MAIN_INTERNAL_UID,
+    CREATOR_SUB_INTERNAL_UID,
+    SNAKE_COLORS,
+    MAX_PLAYERS
+} from './constants.js';
+
 import { Danmaku } from './danmaku.js';
 
 // GRAVITYネイティブ画面安全起動ルーター（Universal Links誤爆・404クラッシュ防止）
@@ -131,6 +137,10 @@ export class MenuManager {
             this.close();
         } else {
             this.checkAvatarAvailability();
+            // メニュー展開時に走者一覧を最新スロット情報で再同期
+            if (window.NetworkManager && Array.isArray(window.NetworkManager.slots)) {
+                this.updateParticipants(window.NetworkManager.slots);
+            }
             this.open();
         }
     }
@@ -169,7 +179,12 @@ export class MenuManager {
             content.style.display = content.id === `tab-pane-${tabName}` ? 'block' : 'none';
         });
 
-        // ★「製作者」タブの時のみ、右上の「↑」直下に分離型いいね誘導アンカーを表示
+        // 「走者」タブが開かれた際、常に最新のスロット情報を即時再評価
+        if (tabName === 'players' && window.NetworkManager && Array.isArray(window.NetworkManager.slots)) {
+            this.updateParticipants(window.NetworkManager.slots);
+        }
+
+        // 「製作者」タブの時のみ、右上の「↑」直下に分離型いいね誘導アンカーを表示
         const likeAnchor = document.getElementById('like-guide-anchor');
         if (likeAnchor) {
             if (tabName === 'creator') {
@@ -288,48 +303,158 @@ export class MenuManager {
         }
     }
 
+    /**
+     * ★ 走者一覧の更新：シングルでもマルチでも最大定員6名枠を常時確保し、
+     *    GRAVITYアバター写真表示およびプロフィール遷移（↗）を完全連携
+     */
     updateParticipants(playerList) {
         const listContainer = document.getElementById('participants-list');
         const tabCount = document.getElementById('players-tab-count');
         if (!listContainer) return;
 
-        const list = Array.isArray(playerList) ? playerList : [];
-        const count = list.length > 0 ? list.length : 1;
-        if (tabCount) tabCount.innerText = `(${count})`;
+        // 全スロット（スロット0〜5）の参照を取得
+        const slotsSource = (window.NetworkManager && Array.isArray(window.NetworkManager.slots))
+            ? window.NetworkManager.slots
+            : (Array.isArray(playerList) ? playerList : []);
 
-        const signature = list.map(p => `${p.userId}_${p.name}_${p.color}`).join('|');
-        if (signature === this._lastParticipantSignature && listContainer.children.length > 0) {
+        // 参加中の人間プレイヤー数をカウント
+        let humanCount = 0;
+        for (let i = 0; i < MAX_PLAYERS; i++) {
+            const slot = slotsSource[i];
+            if (slot && !slot.isAI) {
+                humanCount++;
+            }
+        }
+        if (humanCount === 0) humanCount = 1;
+
+        if (tabCount) {
+            tabCount.innerText = `(${humanCount}/${MAX_PLAYERS})`;
+        }
+
+        // 差分検知シグネチャ（不要なDOM再構築防止）
+        const signature = slotsSource.slice(0, MAX_PLAYERS).map(s => {
+            if (!s) return 'empty';
+            return `${s.slot}_${s.userId || ''}_${s.name || ''}_${s.portrait || ''}_${s.isAI}`;
+        }).join('|');
+
+        if (signature === this._lastParticipantSignature && listContainer.children.length === MAX_PLAYERS) {
             return;
         }
         this._lastParticipantSignature = signature;
 
         listContainer.innerHTML = '';
-        if (list.length === 0) {
-            listContainer.innerHTML = '<div style="font-size:12px;color:rgba(255,255,255,0.6);padding:12px;text-align:center;">走者はいません</div>';
-            return;
-        }
 
-        list.forEach(p => {
+        const myUserId = (window.NetworkManager && window.NetworkManager.myUser)
+            ? String(window.NetworkManager.myUser.user_id)
+            : 'local_user';
+        const mySlot = (window.NetworkManager) ? window.NetworkManager.mySlot : 0;
+
+        // スロット0〜5（最大6枠）を必ず固定描画
+        for (let i = 0; i < MAX_PLAYERS; i++) {
+            const slotData = slotsSource[i];
+            const isAssigned = slotData && !slotData.isAI;
+            const isMe = isAssigned && (slotData.slot === mySlot || String(slotData.userId) === myUserId);
+            const isHost = i === 0;
+
+            const slotColor = (slotData && slotData.color) ? slotData.color : SNAKE_COLORS[i % SNAKE_COLORS.length];
+            const displayName = isAssigned 
+                ? (slotData.name || (isHost ? 'ホスト' : `プレイヤー ${i + 1}`))
+                : `CPU ${i + 1} (空き枠)`;
+            const portraitUrl = isAssigned ? (slotData.portrait || '') : '';
+            const targetUid = isAssigned ? slotData.userId : null;
+
             const row = document.createElement('div');
             row.className = 'participant-row';
-            row.innerHTML = `
-                <div class="participant-avatar" style="background-color: ${p.color || '#00e5ff'};">
-                    ${(p.name || 'P').charAt(0)}
-                </div>
-                <div class="participant-info">
-                    <div class="participant-name">${p.name || 'プレイヤー'}</div>
-                    <div class="participant-status">● プレイ中</div>
-                </div>
-                <div class="participant-arrow">↗</div>
+            row.style.cssText = `
+                display: flex;
+                align-items: center;
+                background: ${isAssigned ? 'rgba(255, 255, 255, 0.12)' : 'rgba(255, 255, 255, 0.04)'};
+                border: 1px solid ${isAssigned ? (isMe ? 'rgba(0, 229, 255, 0.5)' : 'rgba(255, 255, 255, 0.2)') : 'rgba(255, 255, 255, 0.08)'};
+                border-radius: 10px;
+                padding: 8px 12px;
+                margin-bottom: 6px;
+                cursor: ${isAssigned && targetUid && targetUid !== 'local_user' ? 'pointer' : 'default'};
+                transition: background 0.15s, border-color 0.15s;
             `;
-            row.onclick = (e) => {
-                e.stopPropagation();
-                if (p.userId && p.userId !== 'local_user') {
-                    GravityRouter.openProfile(p.userId);
-                }
-            };
+
+            // アバター表示：画像があれば高精細円形サムネイル、なければ頭文字/CPUバッジ
+            let avatarHtml = '';
+            if (portraitUrl) {
+                avatarHtml = `
+                    <img src="${portraitUrl}" alt="Avatar" style="
+                        width: 36px;
+                        height: 36px;
+                        border-radius: 50%;
+                        object-fit: cover;
+                        border: 2px solid ${slotColor};
+                        margin-right: 10px;
+                        flex-shrink: 0;
+                    ">
+                `;
+            } else {
+                const badgeInitial = isAssigned ? displayName.charAt(0) : 'CPU';
+                avatarHtml = `
+                    <div class="participant-avatar" style="
+                        width: 36px;
+                        height: 36px;
+                        border-radius: 50%;
+                        background-color: ${isAssigned ? slotColor : 'rgba(255, 255, 255, 0.12)'};
+                        display: flex;
+                        align-items: center;
+                        justify-content: center;
+                        color: #ffffff;
+                        font-weight: 800;
+                        font-size: ${isAssigned ? '14px' : '10px'};
+                        margin-right: 10px;
+                        flex-shrink: 0;
+                        border: 1.5px solid ${isAssigned ? 'rgba(255,255,255,0.4)' : 'rgba(255,255,255,0.1)'};
+                    ">
+                        ${badgeInitial}
+                    </div>
+                `;
+            }
+
+            // 情報カラム（名前・ステータス・HOSTバッジ）
+            const hostBadgeHtml = isHost && isAssigned
+                ? `<span style="font-size: 10px; font-weight: 800; color: #fde047; background: rgba(250, 204, 21, 0.2); border: 1px solid rgba(250, 204, 21, 0.5); padding: 1px 5px; border-radius: 4px; margin-left: 6px;">HOST</span>`
+                : '';
+            
+            const meBadgeHtml = isMe
+                ? `<span style="font-size: 10px; font-weight: 800; color: #38bdf8; margin-left: 4px;">(あなた)</span>`
+                : '';
+
+            const statusHtml = isAssigned
+                ? `<div class="participant-status" style="color: #34d399; font-size: 11px; margin-top: 2px;">● プレイ中</div>`
+                : `<div class="participant-status" style="color: #94a3b8; font-size: 11px; margin-top: 2px;">○ 自動参戦中</div>`;
+
+            // アクションアイコン（実走者の場合はプロフィールジャンプ矢印 ↗）
+            const actionArrowHtml = isAssigned && targetUid && targetUid !== 'local_user'
+                ? `<div class="participant-arrow" style="color: #38bdf8; font-size: 16px; font-weight: bold; margin-left: 8px;">↗</div>`
+                : `<div class="participant-arrow" style="color: rgba(255,255,255,0.2); font-size: 14px; margin-left: 8px;">-</div>`;
+
+            row.innerHTML = `
+                ${avatarHtml}
+                <div class="participant-info" style="flex: 1; text-align: left; overflow: hidden;">
+                    <div class="participant-name" style="color: ${isAssigned ? '#ffffff' : '#94a3b8'}; font-size: 13px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: flex; align-items: center;">
+                        <span>${displayName}</span>
+                        ${meBadgeHtml}
+                        ${hostBadgeHtml}
+                    </div>
+                    ${statusHtml}
+                </div>
+                ${actionArrowHtml}
+            `;
+
+            // 実在ユーザー行タップ時：GRAVITY公式プロフィール画面へ即時ジャンプ
+            if (isAssigned && targetUid && targetUid !== 'local_user') {
+                row.onclick = (e) => {
+                    e.stopPropagation();
+                    GravityRouter.openProfile(targetUid);
+                };
+            }
+
             listContainer.appendChild(row);
-        });
+        }
     }
 }
 

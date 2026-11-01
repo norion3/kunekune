@@ -1,8 +1,9 @@
 /**
  * ==============================================================================
  * 『くねくねバトル オンライン』入力制御モジュール (input.js)
- * v21.0.0 動的追従型ジョイスティック＆操作疲労軽減版:
- * ・指の移動に合わせて基点が滑らかに追従する「動的追従型ジョイスティック」実装
+ * v23.0.0 超巨大化対応 視野ズーム拡張（0.35〜1.50）＆動的追従ジョイスティック版:
+ * ・スコア10,000〜30,000超の巨大スネーク時でも周囲を広く見渡せるズームレンジ拡張（0.35〜1.50）
+ * ・指の移動に合わせて基点が滑らかに追従する「動的追従型ジョイスティック」完全維持
  * ・画面端での操作抜け・指の疲労感を完全根絶（即時反転・高レスポンス旋回）
  * ・2本指ピンチズーム完全撤廃・1本指タッチへの純化維持
  * ・画面長押しによるブースト誤爆防止（専用ボタン加速）
@@ -23,8 +24,10 @@ export class InputManager {
         // ブースト状態（専用ボタン押下時のみ true）
         this.boost = false;
 
-        // 視野ズーム倍率（左下の＋/ーボタンおよびPCマウスホイールで操作）
+        // 視野ズーム倍率（巨大化時の視野確保のため 0.35 〜 1.50 へ拡張）
         this.zoomMultiplier = 1.0;
+        this.minZoom = 0.35;
+        this.maxZoom = 1.50;
 
         // DOM参照
         this.canvas = null;
@@ -153,7 +156,7 @@ export class InputManager {
         this.canvas.addEventListener('wheel', (e) => {
             e.preventDefault();
             const delta = e.deltaY > 0 ? 0.95 : 1.05;
-            this.zoomMultiplier = Math.max(0.45, Math.min(1.40, this.zoomMultiplier * delta));
+            this.zoomMultiplier = Math.max(this.minZoom, Math.min(this.maxZoom, this.zoomMultiplier * delta));
         }, { passive: false });
     }
 
@@ -178,7 +181,7 @@ export class InputManager {
         let dy = cy - this.center.y;
         const distSq = dx * dx + dy * dy;
 
-        // ★ 動的追従アルゴリズム：指が最大半径を超えて移動した場合、基点を指の方向へ引っ張り追従
+        // 動的追従アルゴリズム：指が最大半径を超えて移動した場合、基点を指の方向へ引っ張り追従
         if (distSq > this.maxRadiusSq) {
             const dist = Math.sqrt(distSq);
             const excess = dist - this.maxRadius;

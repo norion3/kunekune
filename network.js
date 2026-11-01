@@ -1,8 +1,9 @@
 // ==============================================================================
 // 『くねくねバトル オンライン』AgentSDK公式マルチプレイ通信マネージャー (network.js)
-// v21.3.0 通信コア純化＆送信モジュール完全分離版:
+// v24.0.0 GRAVITY最大6名対応＆アバターURL双方向同期版:
+// ・GRAVITY公式最大上限 6名スロット（0〜5）完全対応
+// ・USER_JOIN および ROOM_MEMBERS_SYNC でのアバター portrait 完全伝播
 // ・送信ループ・アクションキューを net_broadcaster.js へ完全分離（コード半減）
-// ・外部公開API（queueDropCluster, broadcastStartGame等）の100%完全維持
 // ・AgentSDK公式ルームAPI（作成・参加・退出・一覧）の安全トランザクション排他ロック
 // ・本命ルーム誤退室（自爆 exit()）の完全防止ガード配備
 // ・自律ホスト昇格（Host Migration）＆ ホスト昇格時待機室UI完全再活性化
@@ -58,13 +59,14 @@ export const NetworkManager = {
     clientId: generateClientId(),
     myUser: { name: 'あなた', user_id: 'local_user', portrait: '' },
 
-    // GRAVITY公式上限の 4名スロット（0〜3）に完全整合
+    // ★ GRAVITY公式上限の 6名スロット（0〜5）に完全整合
     slots: Array.from({ length: MAX_PLAYERS }, (_, i) => ({
         slot: i,
         clientId: null,
         userId: null,
         name: i === 0 ? 'ホスト' : `プレイヤー ${i + 1}`,
         color: SNAKE_COLORS[i % SNAKE_COLORS.length],
+        portrait: '',
         isAI: i !== 0,
         joinTime: 0
     })),
@@ -155,10 +157,11 @@ export const NetworkManager = {
                 const uData = res && res.data ? res.data : res;
                 if (uData && (uData.name || uData.user_name || uData.nickname)) {
                     const resolvedName = uData.name || uData.user_name || uData.nickname;
+                    const portraitUrl = uData.portrait || uData.portait || uData.avatar || '';
                     this.myUser = {
                         user_id: String(uData.user_id || uData.uid || 'local_user'),
                         name: resolvedName,
-                        portrait: uData.portrait || uData.portait || ''
+                        portrait: portraitUrl
                     };
                     window.GRAVITY_USER_NAME = resolvedName;
 
@@ -166,6 +169,12 @@ export const NetworkManager = {
 
                     if (window.localPlayerInstance) {
                         window.localPlayerInstance.name = resolvedName;
+                    }
+
+                    // 走者タブ・待機室用に自身のスロットのアバターを更新
+                    if (this.slots[this.mySlot]) {
+                        this.slots[this.mySlot].name = resolvedName;
+                        this.slots[this.mySlot].portrait = portraitUrl;
                     }
 
                     console.log(`[NetworkManager] GRAVITY User Authenticated: ${resolvedName} (UID: ${this.myUser.user_id})`);
@@ -212,7 +221,7 @@ export const NetworkManager = {
     },
 
     /**
-     * ルーム作成
+     * ルーム作成（最大6名）
      */
     async createRoom(isPrivate = false) {
         if (!this.isSDKAvailable) {
@@ -278,16 +287,19 @@ export const NetworkManager = {
                 ? window.GRAVITY_USER_NAME
                 : this.myUser.name;
 
+            // ホスト（スロット0）の確定
             this.slots[0] = {
                 slot: 0,
                 clientId: this.clientId,
                 userId: this.myUser.user_id,
                 name: myResolvedName,
                 color: SNAKE_COLORS[0],
+                portrait: this.myUser.portrait || '',
                 isAI: false,
                 joinTime: performance.now()
             };
 
+            // スロット1〜5を待機状態へ初期化
             for (let i = 1; i < MAX_PLAYERS; i++) {
                 this.slots[i] = {
                     slot: i,
@@ -295,6 +307,7 @@ export const NetworkManager = {
                     userId: null,
                     name: `プレイヤー ${i + 1}`,
                     color: SNAKE_COLORS[i % SNAKE_COLORS.length],
+                    portrait: '',
                     isAI: true,
                     joinTime: 0
                 };
@@ -302,7 +315,7 @@ export const NetworkManager = {
 
             this._stopHostWatchdog();
             this._startBroadcasting();
-            Danmaku.push('システム', `ルーム #${createdRoomId.slice(-4)} を作成しました`, '#00e5ff', true);
+            Danmaku.push('システム', `ルーム #${createdRoomId.slice(-4)} を作成しました (最大${MAX_PLAYERS}名)`, '#00e5ff', true);
 
             return this.currentRoomId;
         } catch (err) {
@@ -364,21 +377,27 @@ export const NetworkManager = {
                 ? window.GRAVITY_USER_NAME
                 : this.myUser.name;
 
-            this.slots[0] = {
-                slot: 0,
-                clientId: null,
-                userId: null,
-                name: 'ホスト',
-                color: SNAKE_COLORS[0],
-                isAI: false,
-                joinTime: 0
-            };
+            // 6枠のスロットをリセットし、スロット1へ仮バインド
+            for (let i = 0; i < MAX_PLAYERS; i++) {
+                this.slots[i] = {
+                    slot: i,
+                    clientId: null,
+                    userId: null,
+                    name: i === 0 ? 'ホスト' : `プレイヤー ${i + 1}`,
+                    color: SNAKE_COLORS[i % SNAKE_COLORS.length],
+                    portrait: '',
+                    isAI: true,
+                    joinTime: 0
+                };
+            }
+
             this.slots[1] = {
                 slot: 1,
                 clientId: this.clientId,
                 userId: this.myUser.user_id,
                 name: myResolvedName,
                 color: SNAKE_COLORS[1],
+                portrait: this.myUser.portrait || '',
                 isAI: false,
                 joinTime: performance.now()
             };
@@ -386,7 +405,7 @@ export const NetworkManager = {
             this._startHostWatchdog();
             this._startBroadcasting();
 
-            // 入室直後にホストへ自発参加通知を送信
+            // 入室直後にホストへ自発参加通知（名前とアバター画像URLを確実に送出）
             setTimeout(() => {
                 this._sendCustomMessage({
                     e: 'USER_JOIN',
@@ -437,9 +456,11 @@ export const NetworkManager = {
         if (!userId || userId === String(this.myUser.user_id)) return;
 
         const guestName = data.name || data.user_name || 'ゲスト';
+        const guestPortrait = data.portrait || data.portait || data.avatar || '';
         let targetSlot = this.slots.findIndex(s => s.userId && String(s.userId) === userId);
 
         if (targetSlot === -1) {
+            // スロット1〜5の空きスロット（isAI === true）を検索
             for (let i = 1; i < this.slots.length; i++) {
                 if (this.slots[i].isAI) {
                     targetSlot = i;
@@ -455,10 +476,12 @@ export const NetworkManager = {
                 userId: userId,
                 name: guestName,
                 color: SNAKE_COLORS[targetSlot % SNAKE_COLORS.length],
+                portrait: guestPortrait,
                 isAI: false,
                 joinTime: performance.now()
             };
 
+            // 全端末へ6人スロット確定一覧を一斉同期
             this._sendCustomMessage({
                 e: 'ROOM_MEMBERS_SYNC',
                 slots: this.slots,
@@ -469,6 +492,7 @@ export const NetworkManager = {
                 window.UIController.updateWaitingMembersList();
             }
 
+            Menu.updateParticipants(this.slots.filter(s => !s.isAI));
             Danmaku.push('参加', `${guestName} が対戦に参加しました`, this.slots[targetSlot].color);
         }
     },
@@ -488,6 +512,7 @@ export const NetworkManager = {
                 userId: null,
                 name: `プレイヤー ${slotIdx + 1}`,
                 color: SNAKE_COLORS[slotIdx % SNAKE_COLORS.length],
+                portrait: '',
                 isAI: true,
                 joinTime: 0
             };
@@ -497,6 +522,8 @@ export const NetworkManager = {
             if (typeof window !== 'undefined' && window.UIController && typeof window.UIController.updateWaitingMembersList === 'function') {
                 window.UIController.updateWaitingMembersList();
             }
+
+            Menu.updateParticipants(this.slots.filter(s => !s.isAI));
 
             if (isHostExited) {
                 console.warn('[NetworkManager] ホストが退出しました。自律ホスト昇格を実行します。');
@@ -557,6 +584,7 @@ export const NetworkManager = {
             userId: this.myUser.user_id,
             name: myResolvedName,
             color: SNAKE_COLORS[0],
+            portrait: this.myUser.portrait || '',
             isAI: false,
             joinTime: performance.now()
         };
@@ -570,6 +598,7 @@ export const NetworkManager = {
             window.UIController.updateWaitingMembersList();
         }
 
+        Menu.updateParticipants(this.slots.filter(s => !s.isAI));
         Danmaku.push('システム', 'あなたが新しいホストに昇格しました', '#ffdd00', true);
         this._isPromoting = false;
     },

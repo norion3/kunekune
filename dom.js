@@ -1,14 +1,15 @@
 // ==============================================================================
 // 『くねくねバトル オンライン』自律DOMマウントモジュール (dom.js)
-// v22.0.0 UI最適化＆GRAVITYアバター顔対応版:
-// ・左下：MENU・サウンドの低頻度ボタンを44px統一デザインで配置（ジョイスティック領域を広々開放）
+// v24.0.0 最大6名待機室＆100体規模UI完全統合版:
+// ・待機室（#waiting-overlay）：最大6名スロット（0〜5）対応＆アバター写真表示枠
+// ・ランキングパネル（#stats-box）：総数100体表示（/ 100）へ整合
+// ・左下：MENU・サウンドの低頻度ボタンを44px統一デザインで配置（ジョイスティック領域開放）
 // ・右側：ズーム（＋/ー・44px化）、ランキング、マップを高頻度操作エリアへ縦並び集約
-// ・ランキングパネル（#stats-box）：レーダー同様の極薄透過フロスト化で背後視認性を向上
-// ・CUSTOMタブ：GRAVITYユーザーアイコンを顔にできる「マイアイコン」選択ボタンを新設
-// ・mountDOM完了時に hookLobbyNetworkEvents() を確実連動（ロビーボタン無反応を完全解消）
+// ・CUSTOMタブ：GRAVITYユーザーアイコンを顔にできる「マイアイコン」選択ボタンを配備
+// ・mountDOM完了時に hookLobbyNetworkEvents() を確実連動
 // ==============================================================================
 
-import { SNAKE_COLORS } from './constants.js';
+import { SNAKE_COLORS, TOTAL_SNAKES } from './constants.js';
 
 // ==============================================================================
 // 接続中・非同期処理保護オーバーレイ (EntryShield)
@@ -27,8 +28,6 @@ export const EntryShield = {
             position: fixed;
             inset: 0;
             background: rgba(11, 5, 26, 0.85);
-            backdrop-filter: blur(8px);
-            -webkit-backdrop-filter: blur(8px);
             z-index: 9999;
             flex-direction: column;
             align-items: center;
@@ -98,10 +97,10 @@ export function mountDOM() {
     const uiLayer = document.createElement('div');
     uiLayer.id = 'ui-layer';
     uiLayer.innerHTML = `
-        <!-- 左上：ランキング展開パネル（極薄透過フロスト・背後の敵が丸見え） -->
+        <!-- 左上：ランキング展開パネル（極薄透過フロスト・背後の敵が丸見え・100体対応） -->
         <div id="stats-box" style="display: none;">
             <div class="stats-header-row">
-                <span>順位: <strong id="val-rank" style="color:#ffdd00; font-size:15px;">1</strong> / <span id="val-total">50</span></span>
+                <span>順位: <strong id="val-rank" style="color:#ffdd00; font-size:15px;">1</strong> / <span id="val-total">${TOTAL_SNAKES}</span></span>
             </div>
             <hr>
             <div id="leaderboard-list"></div>
@@ -113,7 +112,7 @@ export function mountDOM() {
             <div class="like-guide-bubble">メニューから<br>「❤️いいね」してね！</div>
         </div>
 
-        <!-- ★ 左下ボタングループ：低頻度操作（MENU、サウンド）を44px統一フロストデザインで配置 -->
+        <!-- 左下ボタングループ：低頻度操作（MENU、サウンド）を44px統一フロストデザインで配置 -->
         <div class="bottom-left-group">
             <button id="btn-menu" type="button" class="bottom-round-btn btn-menu-round" aria-label="Menu">
                 <svg viewBox="0 0 24 24">
@@ -132,7 +131,7 @@ export function mountDOM() {
             </button>
         </div>
 
-        <!-- ★ 右側ボタングループ：高頻度操作（ズーム＋/ー、ランキング、マップ）を44px統一サイズで右側に集約 -->
+        <!-- 右側ボタングループ：高頻度操作（ズーム＋/ー、ランキング、マップ）を44px統一サイズで右側に集約 -->
         <div class="right-action-group">
             <button id="btn-zoom-in" type="button" class="bottom-round-btn btn-action-44" aria-label="Zoom In">
                 <svg viewBox="0 0 24 24">
@@ -186,7 +185,7 @@ export function mountDOM() {
 
             <div class="sheet-tabs">
                 <button class="sheet-tab-btn active" data-tab="chat">💬 CHAT</button>
-                <button class="sheet-tab-btn" data-tab="players">👥 走者 <span id="players-tab-count">(1)</span></button>
+                <button class="sheet-tab-btn" data-tab="players">👥 走者 <span id="players-tab-count">(1/6)</span></button>
                 <button class="sheet-tab-btn" data-tab="custom">🎨 CUSTOM</button>
                 <button class="sheet-tab-btn" data-tab="creator">+ 製作者</button>
             </div>
@@ -213,7 +212,7 @@ export function mountDOM() {
                 <div id="participants-list" class="participants-list"></div>
             </div>
 
-            <!-- ★ CUSTOMタブ：表情プレビュー ＋ GRAVITYアバター選択枠 -->
+            <!-- CUSTOMタブ：表情プレビュー ＋ GRAVITYアバター選択枠 -->
             <div id="tab-pane-custom" class="sheet-tab-content" style="display: none;">
                 <div class="custom-panel">
                     <div class="custom-label">顔タイプ</div>
@@ -268,7 +267,7 @@ export function mountDOM() {
                                 <circle cx="28.5" cy="18.5" r="1.3" fill="#ffffff"/>
                             </svg>
                         </button>
-                        <!-- 6. ★ GRAVITYマイアイコン顔（アバター取得時に活性化） -->
+                        <!-- 6. GRAVITYマイアイコン顔 -->
                         <button id="btn-face-avatar" class="custom-face-btn" data-face="user_avatar" aria-label="マイアイコン" style="display: none;">
                             <img id="avatar-preview-img" src="" alt="Icon" style="width: 32px; height: 32px; border-radius: 50%; object-fit: cover; border: 1.5px solid #00e5ff;">
                         </button>
@@ -348,7 +347,7 @@ export function mountDOM() {
             <button id="btn-lobby-solo" type="button" class="btn-lobby-hero">▶ 1人で遊ぶ (ソロ)</button>
 
             <div class="lobby-btn-row">
-                <button id="btn-lobby-public" type="button" class="btn-lobby-sub btn-green">公開ルーム作成</button>
+                <button id="btn-lobby-public" type="button" class="btn-lobby-sub btn-green">公開ルーム作成 (最大6人)</button>
                 <button id="btn-lobby-private" type="button" class="btn-lobby-sub btn-teal">プライベート作成</button>
             </div>
 
@@ -365,13 +364,13 @@ export function mountDOM() {
     `;
     document.body.appendChild(lobbyOverlay);
 
-    // 7. マッチング待機室画面
+    // 7. マッチング待機室画面（最大6名枠）
     const waitingOverlay = document.createElement('div');
     waitingOverlay.id = 'waiting-overlay';
     waitingOverlay.innerHTML = `
         <div class="waiting-card">
             <div id="waiting-room-tag" class="waiting-room-tag">ROOM #-----</div>
-            <div class="waiting-title">マッチング待機中</div>
+            <div class="waiting-title">マッチング待機中 (最大6名)</div>
             <div class="waiting-divider"></div>
             <div id="waiting-members-list" class="waiting-members-list"></div>
             <button id="btn-waiting-start" type="button" class="btn-lobby-hero" style="display: none;">ゲーム開始</button>
@@ -390,7 +389,7 @@ export function mountDOM() {
         }, 250);
     }
 
-    // ★ DOM生成完了直後：ロビーの作成・更新・参加ボタンへのイベントバインドを確実に実行
+    // DOM生成完了直後：ロビーの作成・更新・参加ボタンへのイベントバインドを確実に実行
     if (typeof window !== 'undefined' && typeof window.hookLobbyNetworkEvents === 'function') {
         window.hookLobbyNetworkEvents();
     }

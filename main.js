@@ -1,13 +1,13 @@
 // ==============================================================================
 // 『くねくねバトル オンライン』Phase 5 マスター統合オーケストレーター (main.js)
-// v21.2.0 撃破肉片クラスタ同期＆ゲーム開始完全結合版:
+// v24.0.0 最終順位厳格判定＆最大6人待機室・バックグラウンド世界維持版:
+// ・死亡時の最終順位計算バグを根絶（自分よりスコアが高いスネーク数＋1による厳格算出）
+// ・待機室スロットを最大6名（0〜5）対応へ拡張＆アバター画像表示
+// ・ゲームオーバー時もホスト端末のAI演算・他走者同期・物理判定を100%継続（世界停止完全防止）
+// ・死者端末のリアルタイム観戦カメラ（キラーまたは死亡地点をスムーズ追従）
+// ・撃破時スコア吸収（相手スコアの30%即時吸収＋基本点加算）による納得のスコアリング
 // ・スネーク撃破時の大量肉片クラスタ同期（queueDropCluster）完全接続
-// ・setupNetworkHandlers への initGame 確実引き渡し（待機室一斉始動）
-// ・招待URL（DMリンク）検知時の先行待機室起動（画面フリーズ・無反応を完全解消）
-// ・net_handlers.js によるリモートパケット処理の完全外注化
-// ・net_lobby_hooks.js との連携による連打クラッシュ防止
-// ・画面回転（resize）時の100ms遅延二重計測ガード
-// ・自律生態系AI連携用ワールドインスタンス参照バインド
+// ・招待URL（DMリンク）検知時の先行待機室起動 ＆ hookLobbyNetworkEvents 確実バインド
 // ・二重ループ起動防止 (animFrameId) ＆ EntryShield 通信ロック
 // ==============================================================================
 
@@ -20,6 +20,7 @@ mountDOM();
 import {
     MAP_SIZE,
     TOTAL_SNAKES,
+    MAX_PLAYERS,
     MAX_AIS,
     SAFE_INSET_TOP_GRAVITY,
     SAFE_INSET_TOP_WEB,
@@ -116,6 +117,11 @@ let cameraScale = 1.0;
 let animFrameId = null; // 二重ループ防止用
 let lastFrameTime = Date.now(); // DeltaTime計算用
 
+// 観戦カメラ座標（ゲームオーバー時のスムーズ追従用）
+let spectatorCamX = MAP_SIZE / 2;
+let spectatorCamY = MAP_SIZE / 2;
+let killerTargetSnake = null;
+
 window.localPlayerInstance = player;
 window.allAISnakesInstance = aiManager.ais;
 
@@ -174,17 +180,26 @@ export const UIController = {
         }
     },
 
+    /**
+     * 最大6名スロット対応待機室メンバー描画
+     */
     updateWaitingMembersList() {
         const listEl = document.getElementById('waiting-members-list');
         if (!listEl) return;
-        listEl.innerHTML = NetworkManager.slots.slice(0, 4).map(s => {
+        listEl.innerHTML = NetworkManager.slots.slice(0, MAX_PLAYERS).map(s => {
             const isMe = s.slot === NetworkManager.mySlot;
             const isHost = s.slot === 0;
             const badgeText = isMe ? 'YOU' : (s.isAI ? 'CPU' : `P${s.slot + 1}`);
+            
+            // アバター画像がある場合は円形サムネイル、ない場合は頭文字バッジ
+            const avatarHtml = (s.portrait && !s.isAI)
+                ? `<img src="${s.portrait}" alt="avatar" style="width: 24px; height: 24px; border-radius: 50%; object-fit: cover; border: 1.5px solid ${s.color};">`
+                : `<div class="waiting-slot-badge" style="background-color: ${s.color};">${badgeText}</div>`;
+
             return `
                 <div class="waiting-slot">
                     <div class="waiting-slot-left">
-                        <div class="waiting-slot-badge" style="background-color: ${s.color};">${badgeText}</div>
+                        ${avatarHtml}
                         <div class="waiting-slot-name">${s.name} ${isMe ? '(あなた)' : ''}</div>
                     </div>
                     ${isHost ? '<div class="waiting-slot-host">HOST</div>' : ''}
@@ -198,9 +213,9 @@ if (typeof window !== 'undefined') {
     window.UIController = UIController;
 }
 
-// --- ゲーム初期化 ---
-export function initGame() {
-    if (animFrameId) {
+// --- ゲーム初期化 ＆ 即時リスポーン対応 ---
+export function initGame(isRespawn = false) {
+    if (!isRespawn && animFrameId) {
         cancelAnimationFrame(animFrameId);
         animFrameId = null;
     }
@@ -210,10 +225,14 @@ export function initGame() {
     gameStartTime = Date.now();
     frameCount = 0;
     lastFrameTime = Date.now();
+    killerTargetSnake = null;
 
-    const spawnX = MAP_SIZE / 2 + (Math.random() - 0.5) * 4000;
-    const spawnY = MAP_SIZE / 2 + (Math.random() - 0.5) * 4000;
+    // 安全圏スポーン計算（外周安全ゾーンまたは中心から離れた場所）
+    const spawnX = MAP_SIZE / 2 + (Math.random() - 0.5) * 8000;
+    const spawnY = MAP_SIZE / 2 + (Math.random() - 0.5) * 8000;
     player.reset(spawnX, spawnY);
+    spectatorCamX = spawnX;
+    spectatorCamY = spawnY;
 
     const resolvedPlayerName = (typeof window !== 'undefined' && window.GRAVITY_USER_NAME)
         ? window.GRAVITY_USER_NAME
@@ -222,26 +241,34 @@ export function initGame() {
     player.name = resolvedPlayerName;
     player.color = SNAKE_COLORS[NetworkManager.mySlot % SNAKE_COLORS.length];
 
-    remoteSnakes.clear();
-    world.clear();
-    collisionEngine.clear();
+    if (!isRespawn) {
+        remoteSnakes.clear();
+        world.clear();
+        collisionEngine.clear();
 
-    const isGuest = NetworkManager.isMultiplayerActive && !NetworkManager.isHost;
-    if (!isGuest) {
-        aiManager.init(MAX_AIS, player.x, player.y);
-        window.allAISnakesInstance = aiManager.ais;
-        allSnakes = [player, ...aiManager.ais];
+        const isGuest = NetworkManager.isMultiplayerActive && !NetworkManager.isHost;
+        if (!isGuest) {
+            aiManager.init(MAX_AIS, player.x, player.y);
+            window.allAISnakesInstance = aiManager.ais;
+            allSnakes = [player, ...aiManager.ais];
+        } else {
+            aiManager.ais = [];
+            window.allAISnakesInstance = [];
+            allSnakes = [player];
+        }
+
+        sortedSnakes = [...allSnakes];
+        Menu.updateParticipants(NetworkManager.slots.filter(s => !s.isAI));
+        updateZoomButtonsState(input.zoomMultiplier);
+        
+        animFrameId = requestAnimationFrame(gameLoop);
     } else {
-        aiManager.ais = [];
-        window.allAISnakesInstance = [];
-        allSnakes = [player];
+        // リスポーン時：既存の allSnakes 内のプレイヤーインスタンスを即座に再登録
+        if (!allSnakes.includes(player)) {
+            allSnakes.unshift(player);
+        }
+        sortedSnakes = [...allSnakes];
     }
-
-    sortedSnakes = [...allSnakes];
-    Menu.updateParticipants(NetworkManager.slots.filter(s => !s.isAI));
-    updateZoomButtonsState(input.zoomMultiplier);
-    
-    animFrameId = requestAnimationFrame(gameLoop);
 }
 
 if (typeof window !== 'undefined') {
@@ -271,13 +298,18 @@ initUIBindings({
 });
 
 // ゲームオーバー処理 ＆ スコア完全自動送信
-function handleGameOver() {
+function handleGameOver(killer) {
     gameState = 'gameover';
     Sound.stopBoostSound();
     Sound.playCrash();
 
+    killerTargetSnake = (killer && !killer.isDead) ? killer : null;
+    spectatorCamX = player.x;
+    spectatorCamY = player.y;
+
+    const finalScore = Math.floor(player.score);
+
     try {
-        const finalScore = Math.floor(player.score);
         if (window.parent && window.parent !== window) {
             window.parent.postMessage({
                 type: 'gameOver',
@@ -292,11 +324,17 @@ function handleGameOver() {
     const overScreen = document.getElementById('over-screen');
     if (!overScreen) return;
 
-    const rank = sortedSnakes.filter(s => !s.isDead).findIndex(s => s === player) + 1 || sortedSnakes.length;
+    // ★ 最終順位計算バグの完全根絶：
+    //   死亡フラグ（isDead）でフィルタすると自分が除外されて findIndex が -1 になり、
+    //   47位（生存総数）と誤判定されていた。
+    //   死亡直前の自分のスコアより高いスコアを持つスネークの数＋1で厳密に正規順位を算出。
+    const higherCount = allSnakes.filter(s => s !== player && s.score > finalScore).length;
+    const exactRank = higherCount + 1;
+
     const duration = Math.floor((Date.now() - gameStartTime) / 1000);
 
-    document.getElementById('res-rank').innerText = `${rank} 位`;
-    document.getElementById('res-score').innerText = Math.floor(player.score);
+    document.getElementById('res-rank').innerText = `${exactRank} 位`;
+    document.getElementById('res-score').innerText = finalScore;
     document.getElementById('res-kills').innerText = player.kills;
     document.getElementById('res-time').innerText = `${duration} 秒`;
     document.getElementById('res-size').innerText = Math.floor(player.maxSize);
@@ -305,8 +343,7 @@ function handleGameOver() {
 }
 
 /**
- * 起動シーケンス：参考ゲーム（『階段を架けろ！』）準拠
- * DM招待リンク検知時は先行待機室起動 ＆ joinRoom 連携
+ * 起動シーケンス：参考ゲーム準拠
  */
 async function bootSequence() {
     try {
@@ -359,13 +396,18 @@ function gameLoop() {
     const dtSec = Math.min((now - lastFrameTime) / 1000, 0.1);
     lastFrameTime = now;
 
-    if (gameState === 'playing') {
-        let inputAngle = null;
-        if (input.active && (input.x !== 0 || input.y !== 0)) {
-            inputAngle = Math.atan2(input.y, input.x);
+    // 世界シミュレーション：playing および gameover（リトライ待ち）のいずれでもバックグラウンド継続
+    if (gameState === 'playing' || gameState === 'gameover') {
+        // 自機操作は生きている場合のみ更新
+        if (gameState === 'playing' && !player.isDead) {
+            let inputAngle = null;
+            if (input.active && (input.x !== 0 || input.y !== 0)) {
+                inputAngle = Math.atan2(input.y, input.x);
+            }
+            player.updatePhysics(inputAngle, input.boost);
         }
-        player.updatePhysics(inputAngle, input.boost);
 
+        // リモート他走者の座標補間（死んでいてもリアルタイムに滑らか追従）
         remoteSnakes.forEach(remote => {
             if (remote.isDead) return;
 
@@ -389,8 +431,22 @@ function gameLoop() {
             remote.updatePhysics(remote.targetAngle, remote.isBoosting);
         });
 
+        // ホスト端末：自分が死んでいてもAIシミュレーション・生態系思考を100%継続
         if (!NetworkManager.isMultiplayerActive || NetworkManager.isHost) {
             aiManager.update(player, allSnakes, frameCount);
+        }
+
+        // 観戦カメラ座標の更新（生存時は自機、死亡時はキラーまたは死亡地点をスムーズ追従）
+        let activeCamX = player.x;
+        let activeCamY = player.y;
+
+        if (player.isDead) {
+            if (killerTargetSnake && !killerTargetSnake.isDead) {
+                spectatorCamX += (killerTargetSnake.x - spectatorCamX) * 0.08;
+                spectatorCamY += (killerTargetSnake.y - spectatorCamY) * 0.08;
+            }
+            activeCamX = spectatorCamX;
+            activeCamY = spectatorCamY;
         }
 
         const viewW = canvas.width / cameraScale;
@@ -399,15 +455,16 @@ function gameLoop() {
 
         for (let i = 0; i < allSnakes.length; i++) {
             const s = allSnakes[i];
-            if (s === player) continue;
-            const dx = s.x - player.x;
-            const dy = s.y - player.y;
+            if (s === player && !player.isDead) continue;
+            const dx = s.x - activeCamX;
+            const dy = s.y - activeCamY;
             s.isVisible = (dx * dx + dy * dy) < (viewRange * viewRange);
         }
 
-        world.updateChunks(player.x, player.y, viewRange);
+        world.updateChunks(activeCamX, activeCamY, viewRange);
         world.updateParticles();
 
+        // 餌捕食判定の継続
         for (let i = 0; i < allSnakes.length; i++) {
             const s = allSnakes[i];
             if (s.isDead || !s.isVisible) continue;
@@ -423,12 +480,12 @@ function gameLoop() {
             });
         }
 
+        // 空間衝突判定
         collisionEngine.registerBodies(allSnakes);
         collisionEngine.checkHeadCollisions(allSnakes, (killer, victim) => {
-            // ローカル（ホスト・ソロ）での肉片生成
             world.spawnDeathDrop(victim);
 
-            // ホスト端末：スネーク撃破時に極小クラスタタプル（約20バイト）で全端末へ同期
+            // 撃破クラスタ同期
             if (NetworkManager.isMultiplayerActive && NetworkManager.isHost) {
                 const colorIdx = SNAKE_COLORS.indexOf(victim.color);
                 const safeColorIdx = colorIdx >= 0 ? colorIdx : 0;
@@ -444,19 +501,29 @@ function gameLoop() {
                 );
             }
 
+            // スコア得点計算：相手の所持スコアの30%を即時吸収＋撃破基本点
+            if (killer && !killer.isDead) {
+                const absorbedScore = Math.max(150, Math.floor(victim.score * 0.3));
+                killer.addScore(absorbedScore);
+            }
+
             if (victim.isPlayer) {
-                handleGameOver();
+                handleGameOver(killer);
             } else if (killer.isPlayer) {
                 Sound.playCrash();
-                Danmaku.push('撃破！', `${victim.name} を倒した！ (+150)`, '#ff3366');
+                const absorbed = Math.max(150, Math.floor(victim.score * 0.3));
+                Danmaku.push('撃破！', `${victim.name} を撃破！ (+${absorbed} pt)`, '#ff3366');
             }
         });
 
+        // 統計・リーダーボードの定期更新
         if (frameCount % 10 === 0) {
             sortedSnakes = [...allSnakes].sort((a, b) => b.score - a.score);
-            const myRank = sortedSnakes.filter(s => !s.isDead).findIndex(s => s === player) + 1;
+            const myScore = player.score;
+            const higher = allSnakes.filter(s => s !== player && s.score > myScore).length;
+            const myRank = higher + 1;
             const totalAlive = sortedSnakes.filter(s => !s.isDead).length;
-            hud.updateStats(myRank || 1, totalAlive, player.score);
+            hud.updateStats(myRank, totalAlive, player.score);
 
             const listEl = document.getElementById('leaderboard-list');
             if (listEl && listEl.parentElement && listEl.parentElement.style.display !== 'none') {
@@ -471,7 +538,9 @@ function gameLoop() {
         }
     }
 
-    const baseTargetScale = 60.0 / (60.0 + (player.size - 12) * 0.85);
+    // 視野スケーリング
+    const effectiveSize = player.isDead ? 16 : player.size;
+    const baseTargetScale = 60.0 / (60.0 + (effectiveSize - 12) * 0.85);
     const finalTargetScale = baseTargetScale * input.zoomMultiplier;
     cameraScale += (finalTargetScale - cameraScale) * 0.05;
 
@@ -479,15 +548,18 @@ function gameLoop() {
     ctx.fillRect(0, 0, canvas.width, canvas.height);
 
     if (gameState === 'playing' || gameState === 'gameover') {
+        const renderCamX = player.isDead ? spectatorCamX : player.x;
+        const renderCamY = player.isDead ? spectatorCamY : player.y;
+
         ctx.save();
         ctx.translate(canvas.width / 2, canvas.height / 2);
         ctx.scale(cameraScale, cameraScale);
-        ctx.translate(-player.x, -player.y);
+        ctx.translate(-renderCamX, -renderCamY);
 
         const viewW = canvas.width / cameraScale;
         const viewH = canvas.height / cameraScale;
-        const cameraLeft = player.x - viewW / 2;
-        const cameraTop = player.y - viewH / 2;
+        const cameraLeft = renderCamX - viewW / 2;
+        const cameraTop = renderCamY - viewH / 2;
 
         const step = 200;
         const startX = Math.floor(cameraLeft / step) * step;
@@ -514,7 +586,7 @@ function gameLoop() {
 
         for (let i = sortedSnakes.length - 1; i >= 0; i--) {
             const s = sortedSnakes[i];
-            if (s === player || s.isVisible) {
+            if ((s === player && !player.isDead) || s.isVisible) {
                 s.draw(ctx, frameCount, cameraScale);
             }
         }
@@ -522,7 +594,7 @@ function gameLoop() {
         ctx.restore();
 
         const safeTop = PlatformDetector.inGravity ? SAFE_INSET_TOP_GRAVITY : SAFE_INSET_TOP_WEB;
-        hud.drawRadar(ctx, canvas.width, safeTop, player, sortedSnakes, cameraScale);
+        hud.drawRadar(ctx, canvas.width, safeTop, player.isDead ? { x: spectatorCamX, y: spectatorCamY, score: player.score } : player, sortedSnakes, cameraScale);
     }
 }
 
