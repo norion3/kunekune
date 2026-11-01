@@ -1,21 +1,24 @@
 /**
  * ==============================================================================
  * 『くねくねバトル オンライン』ニコニコ風弾幕チャットエンジン (danmaku.js)
- * v20.8.0 メモリリーク防止＆タイマー安全管理版:
- * ・animationend イベントとタイマーの二重安全回収による DOM 破棄漏れ完全防止
- * ・ルーム入退室・リセット時の clear() パージ機構
- * ・画面上部（18%〜36%）視界阻害ゼロの 4レーン横断アニメーション
+ * v25.2.0 ゴールデンゾーン5レーン分散＆高さゆらぎニコニコライブ感版:
+ * ・ヘッダーアイコン・ノッチ直下から画面44%までの「弾幕ゴールデンゾーン」へ再配置
+ * ・中央自機（50%）の索敵視野を遮らない安全な通過高度を完全確保
+ * ・レーンごとに ±8px のランダム高さゆらぎ（ジッター）を付与し、自然な躍動感を創出
+ * ・animationend イベントと安全タイマーの二重回収による DOM 破棄漏れ完全防止
  * ==============================================================================
  */
 
 export class DanmakuManager {
     constructor() {
         this.container = null;
+        // ★ ヘッダー直下〜画面44%に分散配置された5つの通過レーン（自機中央50%の死角化を防止）
         this.lanes = [
-            { top: '18%', busyUntil: 0 },
-            { top: '23%', busyUntil: 0 },
-            { top: '28%', busyUntil: 0 },
-            { top: '33%', busyUntil: 0 }
+            { baseTop: 10, busyUntil: 0 }, // コンテナ内上部（順位パネル下部と並走）
+            { baseTop: 28, busyUntil: 0 },
+            { baseTop: 48, busyUntil: 0 },
+            { baseTop: 68, busyUntil: 0 },
+            { baseTop: 86, busyUntil: 0 }  // コンテナ内最下部（自機頭上手前で安全通過）
         ];
     }
 
@@ -50,17 +53,21 @@ export class DanmakuManager {
             }
         }
 
-        selectedLane.busyUntil = Math.max(now, selectedLane.busyUntil) + 1200; // 同一レーンの最低間隔
+        selectedLane.busyUntil = Math.max(now, selectedLane.busyUntil) + 1400; // 同一レーンの最低通過間隔
+
+        // ★ 完全な機械的一定を崩す「高さゆらぎ（ジッター）」を付与（±6px相当）
+        const jitter = (Math.random() - 0.5) * 6;
+        const computedTopPercent = Math.max(4, Math.min(94, selectedLane.baseTop + jitter));
 
         const item = document.createElement('div');
         item.className = 'danmaku-item' + (isSystem ? ' danmaku-system' : '');
-        item.style.top = selectedLane.top;
+        item.style.top = `${computedTopPercent}%`;
 
         if (isSystem) {
             item.innerHTML = `<span class="danmaku-sys-text">${this.escapeHTML(text)}</span>`;
         } else {
             item.innerHTML = `
-                <span class="danmaku-badge" style="background-color: ${badgeColor};">${this.escapeHTML(senderName)}</span>
+                <span class="danmaku-badge" style="background-color: ${badgeColor}; border-color: ${badgeColor};">${this.escapeHTML(senderName)}</span>
                 <span class="danmaku-content">${this.escapeHTML(text)}</span>
             `;
         }
@@ -78,8 +85,8 @@ export class DanmakuManager {
         // CSSアニメーション終了時の自動破棄
         item.addEventListener('animationend', removeElement, { once: true });
 
-        // フォールバック安全タイマー（4.6秒）
-        setTimeout(removeElement, 4600);
+        // フォールバック安全タイマー（6.8秒）
+        setTimeout(removeElement, 6800);
 
         this.container.appendChild(item);
     }

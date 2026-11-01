@@ -1,10 +1,11 @@
 // ==============================================================================
 // 『くねくねバトル オンライン』iOS WebKit & iPhone 干渉完全マスクスタイル (style.js)
-// v24.3.0 ルーム招待被り完全根絶＆スクロールバー非表示・透過バッジ版:
+// v25.2.0 弾幕ゴールデンゾーン解放＆高コントラスト視認性強化版:
+// ・弾幕コンテナをヘッダーUI直下（var(--safe-top) + 26px）へ引き下げ、ヘッダー被りを完全根絶
+// ・高さ 42vh（画面高さの約42%）の広大な帯域へ解放し、ニコニコ動画風の躍動感を復活
+// ・星屑や白い肉片と重なってもクッキリ読める多層テキストシャドウ＆視認性強化
 // ・右側アクション群を 215px 引き上げ、公式「ルーム招待」ボタンとの物理的被りを100%根絶
-// ・走者リスト（.participants-list）のスクロールバーを完全不可視化＆右パディング確保（文字被り解消）
-// ・弾幕チャットのネームバッジを極薄透過フロスト化し、通過中の背後の敵・餌を遮らない視界を確保
-// ・弾幕コンテナの領域を画面上部に集約し、画面中央の戦闘エリアへの侵入を防止
+// ・走者リスト（.participants-list）のスクロールバーを完全不可視化＆右パディング確保
 // ・左下：MENU真上に音量ボタンを縦並び配置（ジョイスティック領域広大開放維持）
 // ・待機室6名枠（max-height: 320px）のスクロールなし完全表示維持
 // ==============================================================================
@@ -266,19 +267,20 @@ export function injectStyles() {
         }
 
         /* ==========================================================================
-           弾幕チャット
-           ★ 画面最上部（セーフエリア直下）へ退避させ、中央の戦闘視界を妨げない設計
-           ★ バッジ背景を極薄透過フロスト化し、通過中の背後の敵・餌がクリアに透ける
+           弾幕チャット（★ゴールデンゾーン刷新版）
+           ・最上部ヘッダーUIを完全に避け、var(--safe-top) + 26px を起点に配置
+           ・高さ 42vh（画面高さの約42%）の広大な帯域へ解放し、ニコニコ動画風のライブ感を演出
+           ・中央自機（50%）の手前で抜けるため、交戦中の視界を一切塞がない
            ========================================================================== */
         #danmaku-container {
             position: absolute;
-            top: 0;
+            top: calc(var(--safe-top) + 26px);
             left: 0;
             width: 100%;
-            height: calc(var(--safe-top) + 80px);
+            height: 42vh;
             pointer-events: none;
             overflow: hidden;
-            z-index: 100;
+            z-index: 80;
         }
         .danmaku-item {
             position: absolute;
@@ -287,23 +289,35 @@ export function injectStyles() {
             display: flex;
             align-items: center;
             gap: 8px;
-            font-size: 13.5px;
-            font-weight: 700;
+            font-size: 14px;
+            font-weight: 800;
             color: #ffffff;
-            text-shadow: 0 1px 4px rgba(0, 0, 0, 0.95), 0 0 3px rgba(0, 0, 0, 0.9);
-            animation: danmaku-fly 7.0s linear forwards;
+            /* ★ 多層テキストシャドウ：白い星屑や肉片と重なってもクッキリ読める高コントラストフチ取り */
+            text-shadow: 0 1px 3px rgba(0, 0, 0, 0.98), 0 0 5px #000000, 0 0 8px rgba(0, 0, 0, 0.9);
+            animation: danmaku-fly 6.2s linear forwards;
             pointer-events: none;
         }
         .danmaku-badge {
             font-size: 11px;
-            font-weight: 800;
-            padding: 2.5px 9px;
+            font-weight: 900;
+            padding: 3px 10px;
             border-radius: 12px;
-            background: rgba(11, 5, 26, 0.38) !important;
+            background: rgba(11, 5, 26, 0.55) !important;
             border: 1.5px solid currentColor;
-            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
-            text-shadow: 0 1px 2px rgba(0, 0, 0, 0.95);
-            letter-spacing: 0.3px;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
+            text-shadow: 0 1px 2px rgba(0, 0, 0, 0.98);
+            letter-spacing: 0.4px;
+        }
+        .danmaku-content {
+            letter-spacing: 0.2px;
+        }
+        .danmaku-sys-text {
+            color: #38bdf8;
+            font-size: 13px;
+            background: rgba(11, 5, 26, 0.6);
+            padding: 2px 8px;
+            border-radius: 8px;
+            border: 1px solid rgba(56, 189, 248, 0.4);
         }
         @keyframes danmaku-fly {
             0% { transform: translateX(0); left: 100%; }

@@ -1,10 +1,12 @@
 /**
  * ==============================================================================
  * 『くねくねバトル オンライン』Web Audio API プログラム動的音響エンジン (audio.js)
- * v20.6.0 ノード即時解放＆WebKit完全対応版:
+ * v25.2.0 宇宙ジェット光彩加速音＆快適音響デザイン版:
+ * ・不快な110Hz鋸歯状波（電気シェーバー・羽音ブザー）を完全撤廃
+ * ・三角波（260Hz->390Hzスイープ）＋ サイン波（520Hz倍音）による滑らかな宇宙ジェット光速加速音
+ * ・滑らかな linearRamp によるフェード制御でプチッ音（クリップノイズ）を完全根絶
  * ・発音完了時の自動 disconnect によるオーディオグラフ肥大化・メモリリーク完全防止
  * ・iOS WebKit バックグラウンド自動サスペンド/レジューム制御
- * ・外部音源ファイル 0バイト・遅延 0ms
  * ==============================================================================
  */
 
@@ -12,7 +14,10 @@ class AudioManager {
     constructor() {
         this.ctx = null;
         this.isMuted = true; // デフォルトOFF
-        this.boostOsc = null;
+        
+        // ブースト音用ノード群
+        this.boostOsc1 = null; // 主推進オシレーター（三角波スイープ）
+        this.boostOsc2 = null; // 光彩倍音オシレーター（サイン波）
         this.boostGain = null;
         this.boostFilter = null;
 
@@ -120,56 +125,86 @@ class AudioManager {
         } catch (e) {}
     }
 
-    // ブースト加速音（低周波 110Hz 鋸歯状波 + ローパスフィルタ）開始
+    /**
+     * ★ ブースト加速音（宇宙ジェット光速加速音）
+     * 不快な低音ブザー（110Hz鋸歯状波）を完全撤廃。
+     * 滑らかな三角波（260Hz->390Hzスイープ）＋ サイン波（520Hz光彩倍音）を重ね、
+     * 映画の宇宙船推進のような心地よく爽快な加速音を実現。
+     */
     startBoostSound() {
-        if (this.isMuted || !this.ctx || this.boostOsc) return;
+        if (this.isMuted || !this.ctx || this.boostGain) return;
         try {
             const now = this.ctx.currentTime;
-            this.boostOsc = this.ctx.createOscillator();
-            this.boostGain = this.ctx.createGain();
+
+            // 1. 主推進オシレーター（柔らかな三角波で適度な太さを付与）
+            this.boostOsc1 = this.ctx.createOscillator();
+            this.boostOsc1.type = 'triangle';
+            this.boostOsc1.frequency.setValueAtTime(260, now);
+            this.boostOsc1.frequency.exponentialRampToValueAtTime(390, now + 0.18);
+
+            // 2. 光彩倍音オシレーター（サイン波で近未来的な浮遊感を付与）
+            this.boostOsc2 = this.ctx.createOscillator();
+            this.boostOsc2.type = 'sine';
+            this.boostOsc2.frequency.setValueAtTime(520, now);
+            this.boostOsc2.frequency.exponentialRampToValueAtTime(780, now + 0.18);
+
+            // 3. ローパスフィルター（角を取り耳に優しいまろやかな音色に調律）
             this.boostFilter = this.ctx.createBiquadFilter();
-
-            this.boostOsc.type = 'sawtooth';
-            this.boostOsc.frequency.setValueAtTime(110, now);
-
             this.boostFilter.type = 'lowpass';
-            this.boostFilter.frequency.setValueAtTime(320, now);
+            this.boostFilter.frequency.setValueAtTime(750, now);
+            this.boostFilter.frequency.linearRampToValueAtTime(1200, now + 0.2);
 
-            this.boostGain.gain.setValueAtTime(0.01, now);
-            this.boostGain.gain.linearRampToValueAtTime(0.06, now + 0.08);
+            // 4. ゲイン（クリップノイズを防ぐ滑らかなフェードイン）
+            this.boostGain = this.ctx.createGain();
+            this.boostGain.gain.setValueAtTime(0.001, now);
+            this.boostGain.gain.linearRampToValueAtTime(0.07, now + 0.1);
 
-            this.boostOsc.connect(this.boostFilter);
+            // オーディオグラフの接続
+            this.boostOsc1.connect(this.boostFilter);
+            this.boostOsc2.connect(this.boostFilter);
             this.boostFilter.connect(this.boostGain);
             this.boostGain.connect(this.ctx.destination);
 
-            this.boostOsc.start(now);
+            this.boostOsc1.start(now);
+            this.boostOsc2.start(now);
         } catch (e) {}
     }
 
-    // ブースト加速音 停止
+    /**
+     * ブースト加速音 停止
+     */
     stopBoostSound() {
-        if (!this.boostOsc || !this.ctx) return;
+        if (!this.boostGain || !this.ctx) return;
         try {
             const now = this.ctx.currentTime;
-            const currentOsc = this.boostOsc;
+            const currentOsc1 = this.boostOsc1;
+            const currentOsc2 = this.boostOsc2;
             const currentGain = this.boostGain;
             const currentFilter = this.boostFilter;
 
-            currentGain.gain.linearRampToValueAtTime(0.0001, now + 0.05);
-            currentOsc.stop(now + 0.05);
+            // プチッという破裂音を防ぐ滑らかなフェードアウト
+            currentGain.gain.linearRampToValueAtTime(0.0001, now + 0.08);
 
-            currentOsc.onended = () => {
-                currentOsc.disconnect();
-                if (currentFilter) currentFilter.disconnect();
-                currentGain.disconnect();
-            };
+            if (currentOsc1) currentOsc1.stop(now + 0.08);
+            if (currentOsc2) currentOsc2.stop(now + 0.08);
+
+            setTimeout(() => {
+                try {
+                    if (currentOsc1) currentOsc1.disconnect();
+                    if (currentOsc2) currentOsc2.disconnect();
+                    if (currentFilter) currentFilter.disconnect();
+                    currentGain.disconnect();
+                } catch (err) {}
+            }, 100);
         } catch (e) {}
-        this.boostOsc = null;
+
+        this.boostOsc1 = null;
+        this.boostOsc2 = null;
         this.boostGain = null;
         this.boostFilter = null;
     }
 
-    // 激突・撃破音（低音バースト）
+    // 激突・撃破音（重厚な低音バースト）
     playCrash() {
         if (this.isMuted || !this.ctx) return;
         try {
