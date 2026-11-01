@@ -1,11 +1,11 @@
 /**
  * ==============================================================================
  * 『くねくねバトル オンライン』入力制御モジュール (input.js)
- * v20.7.0 操作純化＆低遅延版:
- * ・2本指ピンチズームを完全撤廃し、画面タッチを1本指ジョイスティック操作に純化
- * ・左下ズームボタン（＋/ー）およびPCマウスホイール用の zoomMultiplier を維持
- * ・画面長押しによるブースト誤爆を根絶（専用ボタンのみで加速）
- * ・二乗距離計算によるタッチ追従の低遅延化
+ * v21.0.0 動的追従型ジョイスティック＆操作疲労軽減版:
+ * ・指の移動に合わせて基点が滑らかに追従する「動的追従型ジョイスティック」実装
+ * ・画面端での操作抜け・指の疲労感を完全根絶（即時反転・高レスポンス旋回）
+ * ・2本指ピンチズーム完全撤廃・1本指タッチへの純化維持
+ * ・画面長押しによるブースト誤爆防止（専用ボタン加速）
  * ==============================================================================
  */
 
@@ -17,8 +17,8 @@ export class InputManager {
         this.active = false;
         this.touchId = null;
         this.center = { x: 0, y: 0 };
-        this.maxRadius = 32;
-        this.maxRadiusSq = 32 * 32;
+        this.maxRadius = 34;
+        this.maxRadiusSq = 34 * 34;
 
         // ブースト状態（専用ボタン押下時のみ true）
         this.boost = false;
@@ -48,7 +48,7 @@ export class InputManager {
         this.bindBoostButton();
     }
 
-    // 画面長押し誤爆を根絶：ブーストボタン専用リスナー
+    // ブーストボタン専用リスナー
     bindBoostButton() {
         if (!this.boostBtn) return;
 
@@ -99,7 +99,6 @@ export class InputManager {
     handleTouchStart(e) {
         e.preventDefault();
 
-        // 1本指タッチで画面のどこを押してもジョイスティック開始
         if (!this.active && e.touches.length > 0) {
             const t = e.touches[0];
             this.touchId = t.identifier;
@@ -121,7 +120,6 @@ export class InputManager {
     handleTouchEnd(e) {
         e.preventDefault();
 
-        // 操作中の指が離れたらジョイスティック終了
         if (this.active) {
             const stillActive = Array.from(e.touches).some(t => t.identifier === this.touchId);
             if (!stillActive) {
@@ -152,11 +150,10 @@ export class InputManager {
             }
         });
 
-        // PCマウスホイールによるズーム対応
         this.canvas.addEventListener('wheel', (e) => {
             e.preventDefault();
             const delta = e.deltaY > 0 ? 0.95 : 1.05;
-            this.zoomMultiplier = Math.max(0.45, Math.min(1.35, this.zoomMultiplier * delta));
+            this.zoomMultiplier = Math.max(0.45, Math.min(1.40, this.zoomMultiplier * delta));
         }, { passive: false });
     }
 
@@ -181,10 +178,24 @@ export class InputManager {
         let dy = cy - this.center.y;
         const distSq = dx * dx + dy * dy;
 
+        // ★ 動的追従アルゴリズム：指が最大半径を超えて移動した場合、基点を指の方向へ引っ張り追従
         if (distSq > this.maxRadiusSq) {
             const dist = Math.sqrt(distSq);
-            dx = (dx / dist) * this.maxRadius;
-            dy = (dy / dist) * this.maxRadius;
+            const excess = dist - this.maxRadius;
+            const normX = dx / dist;
+            const normY = dy / dist;
+
+            // 基点（center）を過剰移動分だけ指の進行方向へスライド
+            this.center.x += normX * excess;
+            this.center.y += normY * excess;
+
+            if (this.joyBase) {
+                this.joyBase.style.left = `${this.center.x}px`;
+                this.joyBase.style.top = `${this.center.y}px`;
+            }
+
+            dx = normX * this.maxRadius;
+            dy = normY * this.maxRadius;
         }
 
         if (this.joyKnob) {

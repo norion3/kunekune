@@ -1,9 +1,9 @@
 // ==============================================================================
 // 『くねくねバトル オンライン』46体スネーク.io型 自律生態系AIマネージャー (ai.js)
-// v20.10.0 生態系自律AIモデル (Ecosystem Behavior):
-// ・MAP_SIZE = 60000 の広大さを100%活かした自然な過疎・過密の波
-// ・4大自律ステート【採餌 / 大回遊パトロール / ハイエナ肉片争奪 / 狩猟ハンター】
-// ・死体肉片への一斉殺到による突発的大乱戦の自然発生（スネーク.io本来の緊張と緩和）
+// v21.0.0 ハイエナ感知スケーリング＆中心コア回遊バイアス版:
+// ・MAP_SIZE = 60000 を活かしたマップ環境勾配（外周安全ゾーン・中心激戦コア）
+// ・死体肉片のサイズ・価値に応じたハイエナ感知半径の動的スケーリング（大撃破現場への大集結）
+// ・大回遊（CRUISING）モードにおけるマップ中心への緩やかな引力バイアス
 // ・CPU平方根計算ゼロ化（二乗距離判定）＆ リングバッファ O(1) 完全維持
 // ==============================================================================
 
@@ -52,14 +52,13 @@ export class AIManager {
                 cruiseDirection: Math.random() < 0.5 ? 1 : -1
             });
 
-            // マップ全域への自然な分散スポーン（クラスタリング＆過疎エリアの形成）
+            // マップ全域への分散スポーン
             const angle = Math.random() * Math.PI * 2;
             const dist = 1500 + Math.random() * 22000;
             const sx = Math.max(400, Math.min(MAP_SIZE - 400, playerX + Math.cos(angle) * dist));
             const sy = Math.max(400, Math.min(MAP_SIZE - 400, playerY + Math.sin(angle) * dist));
             ai.reset(sx, sy);
 
-            // 一部のAIを最初から中型〜大型として生成（世界観の深み）
             if (Math.random() < 0.35) {
                 ai.addScore(Math.floor(200 + Math.random() * 1400));
             }
@@ -85,10 +84,10 @@ export class AIManager {
             if (!meta) continue;
 
             if (ai.isDead) {
-                // リスポーン：プレイヤーに過剰に近づけず、自然な距離でマップ内に再配置
+                // リスポーン：自然な距離でマップ内に再配置
                 if (frameCount % 75 === 0) {
                     const ang = Math.random() * Math.PI * 2;
-                    const d = 3500 + Math.random() * 12000;
+                    const d = 3500 + Math.random() * 14000;
                     const rx = Math.max(400, Math.min(MAP_SIZE - 400, player.x + Math.cos(ang) * d));
                     const ry = Math.max(400, Math.min(MAP_SIZE - 400, player.y + Math.sin(ang) * d));
                     ai.reset(rx, ry);
@@ -151,9 +150,7 @@ export class AIManager {
                         while (diff > Math.PI) diff -= Math.PI * 2;
 
                         if (Math.abs(diff) < Math.PI / 2.0) {
-                            // 胴体を避けるように反対方向へ旋回
                             ai.targetAngle = ai.angle + (diff > 0 ? -Math.PI / 1.7 : Math.PI / 1.7);
-                            // 危険度が高い場合のみ緊急ブースト
                             ai.isBoosting = ai.score > 120 && sDistSq < (safeDistLimitSq * 0.45);
                             threatFound = true;
                             break;
@@ -166,32 +163,33 @@ export class AIManager {
 
         if (threatFound) return;
 
-        // 3. 【ハイエナモード判定】近くに死体肉片（ドロップ餌）があるか探知（突発的大混戦の起点）
+        // 3. 【ハイエナモード判定】死体肉片のサイズ・価値に応じた感知半径の動的スケーリング
         if (activeDrops && activeDrops.length > 0 && meta.persona !== 'cruiser') {
-            const smellDistSq = 3200 * 3200; // 餌の匂いを感知する範囲
             let nearestDrop = null;
-            let minDropDistSq = smellDistSq;
+            let minDropDistSq = Infinity;
 
-            // 直近のドロップを数件サンプリング
-            const checkLimit = Math.min(20, activeDrops.length);
+            const checkLimit = Math.min(25, activeDrops.length);
             for (let dIdx = 0; dIdx < checkLimit; dIdx++) {
                 const drop = activeDrops[dIdx];
                 const ddx = drop.x - ai.x;
                 const ddy = drop.y - ai.y;
                 const dropDistSq = ddx * ddx + ddy * ddy;
-                if (dropDistSq < minDropDistSq) {
+
+                // ★ 肉片価値（val）に応じた動的感知半径スケーリング（通常: 2800px 〜 大物残骸: 5500px）
+                const dynamicSmellRadius = 2800 + Math.min(2700, (drop.val || 20) * 85);
+                const smellDistSq = dynamicSmellRadius * dynamicSmellRadius;
+
+                if (dropDistSq < smellDistSq && dropDistSq < minDropDistSq) {
                     minDropDistSq = dropDistSq;
                     nearestDrop = drop;
                 }
             }
 
             if (nearestDrop) {
-                // 肉片を奪いにいく「ハイエナ争奪」モードへ移行
                 meta.state = AI_STATE.SCAVENGER;
                 meta.scavengeTarget = nearestDrop;
                 const toDropAngle = Math.atan2(nearestDrop.y - ai.y, nearestDrop.x - ai.x);
                 ai.targetAngle = toDropAngle;
-                // 肉片争奪時はスネーク.io特有の一斉ブーストダッシュ！
                 ai.isBoosting = ai.score > 90 && Math.random() < 0.65;
                 return;
             }
@@ -199,7 +197,6 @@ export class AIManager {
 
         // 4. 【4大自律ステートの思考ルーチン】
         if (meta.stateTimer <= 0) {
-            // ペルソナに基づき次ステートを自然に切り替え
             if (meta.persona === 'cruiser' && ai.size > 22) {
                 meta.state = AI_STATE.CRUISING;
                 meta.stateTimer = 90 + Math.floor(Math.random() * 120);
@@ -214,14 +211,18 @@ export class AIManager {
 
         switch (meta.state) {
             case AI_STATE.CRUISING: {
-                // 大回遊：広大なマップを緩やかなカーブを描いて悠然と横断
-                ai.targetAngle += meta.cruiseDirection * 0.015;
+                // ★ 大回遊：緩やかなカーブに加え、マップ中心（激戦コア）方向への微細な引力バイアス
+                const angleToCenter = Math.atan2(MAP_SIZE / 2 - ai.y, MAP_SIZE / 2 - ai.x);
+                let centerDiff = angleToCenter - ai.targetAngle;
+                while (centerDiff < -Math.PI) centerDiff += Math.PI * 2;
+                while (centerDiff > Math.PI) centerDiff -= Math.PI * 2;
+
+                ai.targetAngle += meta.cruiseDirection * 0.015 + centerDiff * 0.005;
                 ai.isBoosting = false;
                 break;
             }
 
             case AI_STATE.HUNTER: {
-                // 好戦的ハンター：隙のある近くの敵頭部を狙って旋回
                 let huntTarget = null;
                 let minHuntDistSq = 1400 * 1400;
 
@@ -245,11 +246,9 @@ export class AIManager {
                     const angleToEnemy = Math.atan2(huntTarget.y - ai.y, huntTarget.x - ai.x);
 
                     if (isEnemyHuge) {
-                        // 相手が巨大なら反転して退避
                         ai.targetAngle = angleToEnemy + Math.PI;
                         ai.isBoosting = ai.score > 120 && Math.random() < 0.4;
                     } else {
-                        // 先読みして相手の前方を遮るように追尾
                         const leadDist = 110 + huntTarget.size;
                         const tx = huntTarget.x + Math.cos(huntTarget.angle) * leadDist;
                         const ty = huntTarget.y + Math.sin(huntTarget.angle) * leadDist;
@@ -265,7 +264,6 @@ export class AIManager {
 
             case AI_STATE.FORAGING:
             default: {
-                // マイペース採餌：プレイヤーを完全無視し、自律的に餌を探して緩やかに直進・蛇行
                 if (Math.random() < 0.15) {
                     ai.targetAngle += (Math.random() - 0.5) * 0.7;
                 }

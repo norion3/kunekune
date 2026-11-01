@@ -1,9 +1,11 @@
 // ==============================================================================
 // 『くねくねバトル オンライン』Phase 5 マスター統合オーケストレーター (main.js)
-// v20.10.0 完全統合版:
+// v21.0.0 画面回転二重ガード＆UI完全統合スリム化版:
+// ・画面回転（resize）時の100ms遅延二重計測ガード（Canvas解像度ズレ完全防止）
+// ・UIイベントバインドを ui_binder.js へ完全委譲（コード肥大化解消・保守性向上）
 // ・リトライボタン押下時のリザルト画面即時非表示＆ゲーム/待機室完全復帰
 // ・ゲームオーバー時のGRAVITY公式スコア完全自動送信 (postMessage)
-// ・ズーム倍率限界時のボタン .disabled リアルタイム更新
+// ・ズーム倍率限界時のボタン .disabled リアルタイム更新連動
 // ・自律生態系AI連携用ワールドインスタンス参照バインド
 // ・GRAVITY公式ユーザーネームの自機スネーク・ロビー即時反映パイプライン
 // ・ゲスト端末でのローカルAI二重生成を完全遮断（ホストのみAI統括）
@@ -36,6 +38,7 @@ import { SpatialCollisionEngine } from './combat.js';
 import { WorldManager } from './world.js';
 import { AIManager } from './ai.js';
 import { NetworkManager } from './network.js';
+import { initUIBindings, updateZoomButtonsState } from './ui_binder.js';
 
 // --- プラットフォーム環境検知 ---
 export const PlatformDetector = {
@@ -63,7 +66,16 @@ function updateLayout() {
         root.style.setProperty('--safe-bottom', '20px');
     }
 }
-window.addEventListener('resize', updateLayout);
+
+// ★ 画面回転・リサイズ時の二重計測ガード（iOS WebView対策）
+let resizeDebounceTimer = null;
+window.addEventListener('resize', () => {
+    updateLayout();
+    if (resizeDebounceTimer) clearTimeout(resizeDebounceTimer);
+    resizeDebounceTimer = setTimeout(() => {
+        updateLayout();
+    }, 100);
+});
 updateLayout();
 
 document.addEventListener('gesturestart', (e) => e.preventDefault(), { passive: false });
@@ -166,18 +178,6 @@ export const UIController = {
     }
 };
 
-// --- ズームボタンのdisabled状態更新 ---
-function updateZoomButtonsState() {
-    const btnIn = document.getElementById('btn-zoom-in');
-    const btnOut = document.getElementById('btn-zoom-out');
-    if (btnIn) {
-        btnIn.classList.toggle('disabled', input.zoomMultiplier >= 1.39);
-    }
-    if (btnOut) {
-        btnOut.classList.toggle('disabled', input.zoomMultiplier <= 0.46);
-    }
-}
-
 // --- ゲーム初期化 ---
 function initGame() {
     if (animFrameId) {
@@ -219,7 +219,7 @@ function initGame() {
 
     sortedSnakes = [...allSnakes];
     Menu.updateParticipants(NetworkManager.slots.filter(s => !s.isAI));
-    updateZoomButtonsState();
+    updateZoomButtonsState(input.zoomMultiplier);
     
     animFrameId = requestAnimationFrame(gameLoop);
 }
@@ -285,206 +285,17 @@ NetworkManager.setCallbacks({
     }
 });
 
-// --- UIイベントバインド ---
-
-const btnZoomIn = document.getElementById('btn-zoom-in');
-const btnZoomOut = document.getElementById('btn-zoom-out');
-
-if (btnZoomIn) {
-    btnZoomIn.onclick = (e) => {
-        e.stopPropagation();
-        input.zoomMultiplier = Math.min(1.40, input.zoomMultiplier + 0.12);
-        updateZoomButtonsState();
-    };
-}
-if (btnZoomOut) {
-    btnZoomOut.onclick = (e) => {
-        e.stopPropagation();
-        input.zoomMultiplier = Math.max(0.45, input.zoomMultiplier - 0.12);
-        updateZoomButtonsState();
-    };
-}
-
-const btnToggleRanking = document.getElementById('btn-toggle-ranking');
-const btnToggleMap = document.getElementById('btn-toggle-map');
-
-if (btnToggleRanking) {
-    btnToggleRanking.onclick = (e) => {
-        e.stopPropagation();
-        hud.toggleRanking();
-    };
-}
-if (btnToggleMap) {
-    btnToggleMap.onclick = (e) => {
-        e.stopPropagation();
-        hud.toggleMap();
-    };
-}
-
-const soundBtn = document.getElementById('btn-sound');
-if (soundBtn) {
-    soundBtn.onclick = (e) => {
-        e.stopPropagation();
-        const isMuted = Sound.toggleMute();
-        soundBtn.classList.toggle('active', !isMuted);
-        const iconOff = document.getElementById('icon-sound-off');
-        const iconOn = document.getElementById('icon-sound-on');
-        if (iconOff) iconOff.style.display = isMuted ? 'block' : 'none';
-        if (iconOn) iconOn.style.display = isMuted ? 'none' : 'block';
-    };
-}
-
-const btnLobbySolo = document.getElementById('btn-lobby-solo');
-if (btnLobbySolo) {
-    let lastSoloTap = 0;
-    const onSoloTap = (e) => {
-        if(e) { e.preventDefault(); e.stopPropagation(); }
-        const now = Date.now();
-        if(now - lastSoloTap < 1000) return;
-        lastSoloTap = now;
-        
-        NetworkManager.isMultiplayerActive = false;
-        NetworkManager.isHost = true;
-        NetworkManager.mySlot = 0;
-        initGame();
-    };
-    btnLobbySolo.addEventListener('touchend', onSoloTap, { passive: false });
-    btnLobbySolo.addEventListener('click', onSoloTap);
-}
-
-const btnLobbyPublic = document.getElementById('btn-lobby-public');
-if (btnLobbyPublic) {
-    let lastPubTap = 0;
-    const onPubTap = async (e) => {
-        if(e) { e.preventDefault(); e.stopPropagation(); }
-        const now = Date.now();
-        if(now - lastPubTap < 1000) return;
-        lastPubTap = now;
-
-        EntryShield.show('CONNECTING...', '公開ルームを作成中');
-        const roomId = await NetworkManager.createRoom(false);
-        EntryShield.hide();
-        if (roomId) UIController.showWaitingRoom(roomId);
-    };
-    btnLobbyPublic.addEventListener('touchend', onPubTap, { passive: false });
-    btnLobbyPublic.addEventListener('click', onPubTap);
-}
-
-const btnLobbyPrivate = document.getElementById('btn-lobby-private');
-if (btnLobbyPrivate) {
-    let lastPrivTap = 0;
-    const onPrivTap = async (e) => {
-        if(e) { e.preventDefault(); e.stopPropagation(); }
-        const now = Date.now();
-        if(now - lastPrivTap < 1000) return;
-        lastPrivTap = now;
-
-        EntryShield.show('CONNECTING...', 'プライベートルームを作成中');
-        const roomId = await NetworkManager.createRoom(true);
-        EntryShield.hide();
-        if (roomId) UIController.showWaitingRoom(roomId);
-    };
-    btnLobbyPrivate.addEventListener('touchend', onPrivTap, { passive: false });
-    btnLobbyPrivate.addEventListener('click', onPrivTap);
-}
-
-const btnRefreshRooms = document.getElementById('btn-refresh-rooms');
-if (btnRefreshRooms) {
-    let lastRefTap = 0;
-    const onRefTap = async (e) => {
-        if(e) { e.preventDefault(); e.stopPropagation(); }
-        const now = Date.now();
-        if(now - lastRefTap < 1000) return;
-        lastRefTap = now;
-
-        btnRefreshRooms.innerText = '更新中...';
-        const rooms = await NetworkManager.getPublicRooms();
-        btnRefreshRooms.innerText = '更新';
-
-        const container = document.getElementById('room-list-container');
-        if (!container) return;
-
-        if (!rooms || rooms.length === 0) {
-            container.innerHTML = '<div class="room-list-empty">公開ルームはありません</div>';
-            return;
-        }
-
-        container.innerHTML = rooms.map(r => `
-            <div class="room-item">
-                <div class="room-item-info">
-                    <span class="room-item-id">ROOM #${String(r.room_id).slice(-5)}</span>
-                    <span class="room-item-count">参加者: ${r.gamer_num || 1} / 4名</span>
-                </div>
-                <button type="button" class="btn-join-room" data-room="${r.room_id}">参加</button>
-            </div>
-        `).join('');
-
-        container.querySelectorAll('.btn-join-room').forEach(btn => {
-            let lastJoinTap = 0;
-            const onJoin = async (ev) => {
-                if(ev) { ev.preventDefault(); ev.stopPropagation(); }
-                const jnow = Date.now();
-                if(jnow - lastJoinTap < 1000) return;
-                lastJoinTap = jnow;
-
-                const rid = btn.dataset.room;
-                EntryShield.show(`ROOM #${rid.slice(-5)}`, '入室しています...');
-                const res = await NetworkManager.joinRoom(rid);
-                EntryShield.hide();
-                if (res.success) {
-                    UIController.showWaitingRoom(rid);
-                } else {
-                    Danmaku.push('エラー', res.msg, '#f43f5e', true);
-                }
-            };
-            btn.addEventListener('touchend', onJoin, { passive: false });
-            btn.addEventListener('click', onJoin);
-        });
-    };
-    btnRefreshRooms.addEventListener('touchend', onRefTap, { passive: false });
-    btnRefreshRooms.addEventListener('click', onRefTap);
-}
-
-const btnWaitingStart = document.getElementById('btn-waiting-start');
-if (btnWaitingStart) {
-    btnWaitingStart.onclick = () => {
-        if (!NetworkManager.isHost) return;
-        initGame();
-    };
-}
-
-const btnWaitingLeave = document.getElementById('btn-waiting-leave');
-if (btnWaitingLeave) {
-    btnWaitingLeave.onclick = async () => {
-        EntryShield.show('DISCONNECTING...', '退室しています...');
-        await NetworkManager.exitRoom();
-        EntryShield.hide();
-        UIController.showLobby();
-    };
-}
-
-Menu.init((face, color) => {
-    player.face = face;
-    player.color = color;
-    Danmaku.push('システム', 'アバターを変更しました', color, true);
+// ★ UIイベントバインダーの初期化（ui_binder.js へ委譲）
+initUIBindings({
+    input,
+    hud,
+    Sound,
+    NetworkManager,
+    initGame,
+    UIController,
+    EntryShield,
+    getPlayer: () => player
 });
-
-// ★ リトライボタン：リザルト画面を確実に即時非表示化してゲームまたは待機室に完全復帰
-const btnRetry = document.getElementById('btn-retry');
-if (btnRetry) {
-    btnRetry.onclick = () => {
-        const overScreen = document.getElementById('over-screen');
-        if (overScreen) {
-            overScreen.style.display = 'none';
-        }
-
-        if (NetworkManager.isMultiplayerActive) {
-            UIController.showWaitingRoom(NetworkManager.currentRoomId);
-        } else {
-            initGame();
-        }
-    };
-}
 
 // ゲームオーバー処理 ＆ スコア完全自動送信
 function handleGameOver() {
@@ -492,7 +303,6 @@ function handleGameOver() {
     Sound.stopBoostSound();
     Sound.playCrash();
 
-    // ★ GRAVITY公式仕様：ゲームオーバー時にスコアを即時自動送信
     try {
         const finalScore = Math.floor(player.score);
         if (window.parent && window.parent !== window) {

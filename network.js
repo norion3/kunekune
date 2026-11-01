@@ -1,11 +1,12 @@
 // ==============================================================================
 // 『くねくねバトル オンライン』AgentSDK公式マルチプレイ通信マネージャー (network.js)
-// v20.10.0 ホスト/ゲスト待機室双方向同期＆完全整合版:
-// ・端末B（ゲスト）参加時のスロット0（ホスト枠）誤上書きバグを完全根絶
+// v21.0.0 ホスト送信スマート圧縮＆安全マージン倍増版:
+// ・AI相乗り送信のスマート間引き（バッチサイズ10体化により平常時パケットを約500バイトへ圧縮）
+// ・1024バイト物理上限に対する安全マージンを倍増（帯域圧迫＆パケット詰まり完全根絶）
+// ・端末B（ゲスト）参加時のスロット0（ホスト枠）誤上書きバグ完全根絶
 // ・DM招待合流（AutoJoin）時の USER_JOIN / SYNC_MEMBERS 双方向即時同期
 // ・ホスト/ゲスト双方の待機室UI (updateWaitingMembersList) 自動リアルタイム更新
-// ・GRAVITY公式APIレスポンス構造（res.data.room_id / res.room_id）完全対応
-// ・1024バイト物理限界厳格防衛 ＆ 未入室exitハング防護
+// ・未入室exitハング防護 ＆ 自律ホスト昇格（Host Migration）
 // ==============================================================================
 
 import {
@@ -548,12 +549,13 @@ export const NetworkManager = {
             const myTuple = encodeSnakeToTuple(mySnake, this.mySlot, this.isHost);
             const tuplesList = [myTuple];
 
-            // ホスト端末の場合：管理下のAIスネーク42体を3フレーム分割（14体ずつ）して時分割相乗り
+            // ★ ホスト端末の場合：管理下のAIスネーク46体を「1回あたり10体」にスマート縮小
+            // （自機1体＋AI10体＝計11体・約490〜520バイトで安定送出し、1KB上限に対する安全マージンを倍増）
             if (this.isHost && Array.isArray(window.allAISnakesInstance)) {
                 const ais = window.allAISnakesInstance;
-                const BATCH_SIZE = 14;
+                const BATCH_SIZE = 10;
                 const startIndex = (this._aiSliceIndex * BATCH_SIZE) % ais.length;
-                this._aiSliceIndex = (this._aiSliceIndex + 1) % 3;
+                this._aiSliceIndex = (this._aiSliceIndex + 1) % 5;
 
                 for (let i = startIndex; i < startIndex + BATCH_SIZE && i < ais.length; i++) {
                     const ai = ais[i];
@@ -569,14 +571,17 @@ export const NetworkManager = {
                 l: tuplesList
             };
 
+            // チャットは最優先で同封
             if (this._pendingChats.length > 0) {
                 packet.ch = this._pendingChats.splice(0, 3);
             }
 
+            // 餌取得タプルの安全同封
             if (this._pendingPicks.length > 0) {
                 packet.pk = this._pendingPicks.splice(0, 8);
             }
 
+            // 肉片散布タプルの安全同封
             if (this._pendingDrops.length > 0) {
                 packet.dp = this._pendingDrops.splice(0, 6);
             }
@@ -696,7 +701,8 @@ export const NetworkManager = {
             const rawString = JSON.stringify(msgObj);
             const byteLength = getUtf8ByteLength(rawString);
 
-            if (byteLength >= 1020) {
+            // 1020バイト接近時の安全切り離しガード
+            if (byteLength >= 1010) {
                 console.warn(`[NetworkManager] パケットサイズが1KB制限に接近 (${byteLength} bytes)。過剰データを切り離して送出します。`);
                 delete msgObj.dp;
                 delete msgObj.pk;
