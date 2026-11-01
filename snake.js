@@ -1,9 +1,12 @@
 // ==============================================================================
 // 『くねくねバトル オンライン』スネークエンティティクラス (snake.js)
-// v20.3.0 パス連結・描画負荷劇的軽減版:
-// ・胴体体節の個別 beginPath/fill を単一パス走査へ連結し、GPUドローコールを半減
-// ・リングバッファ O(1) 配列アクセスによるゼロアロケーション維持
-// ・表情描画・無敵点滅・減衰物理モデル完全継承
+// v22.3.0 先端黄金比配置＆顔パーツ適正オーバーレイ版:
+// ・スネーク頭部のカプセル形状に合わせ、顔パーツの重心を進行方向前方（先端寄り）へシフト
+// ・首元への埋もれを解消し、前を見つめる生き生きとした可愛い表情を実現
+// ・メニューアイコン（40×40 SVG）のパーツ比率・ハイライト・チークを完全維持
+// ・キャラ本体の地色をベースに、表情パーツ（目・眉・チーク・光彩）のみを精緻にオーバーレイ
+// ・GRAVITYマイアイコン（user_avatar）選択時の高精細円形アバター描画対応
+// ・体節描画の一括パス連結によるGPUドローコール最小化維持
 // ==============================================================================
 
 import { BASE_SPEED, BOOST_SPEED_MULT, TURN_SPEED_PLAYER, MAP_SIZE } from './constants.js';
@@ -161,7 +164,7 @@ export class Snake {
 
         const histLen = this.historyLength;
 
-        // 💡 描画負荷激減：胴体体節を一括パス連結で描画（ドローコールを1回に削減）
+        // 胴体体節を一括パス連結で描画（ドローコール削減）
         ctx.fillStyle = this.color;
         ctx.beginPath();
         for (let i = histLen - 1; i >= 0; i--) {
@@ -217,14 +220,25 @@ export class Snake {
             ctx.beginPath();
             ctx.arc(0, 0, this.size, 0, Math.PI * 2);
             ctx.clip();
+            // 頭部の進行方向に合わせて自然な向きで描画
+            ctx.rotate(Math.PI / 2);
             ctx.drawImage(window.userAvatarImgInstance, -this.size, -this.size, this.size * 2, this.size * 2);
             ctx.restore();
+
+            // 胴体との一体感を保つ微小リング
+            ctx.strokeStyle = this.color;
+            ctx.lineWidth = 1.5;
+            ctx.beginPath();
+            ctx.arc(0, 0, this.size, 0, Math.PI * 2);
+            ctx.stroke();
         } else {
+            // スネーク頭部ベース円（胴体とシームレスに繋がる地色）
             ctx.fillStyle = this.color;
             ctx.beginPath();
             ctx.arc(0, 0, this.size, 0, Math.PI * 2);
             ctx.fill();
 
+            // ★ メニューSVGの表情パーツ（目・眉・チーク等）のみを適正位置へオーバーレイ
             this.drawFaceExpressions(ctx);
         }
 
@@ -246,169 +260,166 @@ export class Snake {
     }
 
     /**
-     * メニューの可愛いSVGプレビューアイコンと完全一致させた表情描画
+     * メニューSVGの可愛い表情パーツのみをスネーク先端へ適正配置する描画ルーチン
      */
     drawFaceExpressions(ctx) {
-        const s = this.size;
+        ctx.save();
+
+        // 1. スネーク進行方向（+X）をSVGの上方向（-Y）に正対させるため時計回りに90度回転
+        ctx.rotate(Math.PI / 2);
+
+        // 2. スケーリング比率の計算
+        const scale = (this.size * 1.05) / 20;
+        ctx.scale(scale, scale);
+
+        // 3. ★ 前方オフセット（先端黄金比配置）：
+        //    メニューSVGの中心(20, 20)に対し、Y=14.5を回転中心にアラインすることで、
+        //    目（SVGのY=20〜21）がスネーク進行方向の前方（先端から約1/3の位置）へ自然にスライド。
+        //    首元への埋もれを完全解消し、前を見つめる可愛いバランスを実現。
+        ctx.translate(-20, -14.5);
 
         switch (this.face) {
             case 'angry': {
-                // 1. いかり顔：丸い白目 ＋ 鋭い黒眉 ＋ 寄った黒目
-                const eyeR = s * 0.32;
-                const eyeX = s * 0.28;
-                const eyeY = s * 0.40;
-                const pupilR = eyeR * 0.48;
-
                 // 白目
                 ctx.fillStyle = '#ffffff';
-                ctx.beginPath(); ctx.arc(eyeX, -eyeY, eyeR, 0, Math.PI * 2); ctx.fill();
-                ctx.beginPath(); ctx.arc(eyeX, eyeY, eyeR, 0, Math.PI * 2); ctx.fill();
+                ctx.beginPath();
+                ctx.arc(14, 21, 5.5, 0, Math.PI * 2);
+                ctx.arc(26, 21, 5.5, 0, Math.PI * 2);
+                ctx.fill();
 
-                // 黒目
+                // 寄り気味の黒目
                 ctx.fillStyle = '#111827';
-                ctx.beginPath(); ctx.arc(eyeX + 1.5, -eyeY, pupilR, 0, Math.PI * 2); ctx.fill();
-                ctx.beginPath(); ctx.arc(eyeX + 1.5, eyeY, pupilR, 0, Math.PI * 2); ctx.fill();
+                ctx.beginPath();
+                ctx.arc(15.5, 21, 2.6, 0, Math.PI * 2);
+                ctx.arc(27.5, 21, 2.6, 0, Math.PI * 2);
+                ctx.fill();
 
                 // キリッとした眉毛
                 ctx.strokeStyle = '#111827';
-                ctx.lineWidth = Math.max(1.8, s * 0.12);
+                ctx.lineWidth = 2.2;
                 ctx.lineCap = 'round';
                 ctx.beginPath();
-                ctx.moveTo(eyeX - eyeR * 0.8, -eyeY - eyeR * 0.7);
-                ctx.lineTo(eyeX + eyeR * 0.8, -eyeY + eyeR * 0.3);
-                ctx.stroke();
-
-                ctx.beginPath();
-                ctx.moveTo(eyeX - eyeR * 0.8, eyeY + eyeR * 0.7);
-                ctx.lineTo(eyeX + eyeR * 0.8, eyeY - eyeR * 0.3);
+                ctx.moveTo(9, 13);
+                ctx.lineTo(19, 18);
+                ctx.moveTo(31, 13);
+                ctx.lineTo(21, 18);
                 ctx.stroke();
                 break;
             }
 
             case 'happy': {
-                // 2. にこにこ顔：アーチ型の笑顔の目 ＋ ぷっくりピンクチーク
-                const eyeR = s * 0.34;
-                const eyeX = s * 0.28;
-                const eyeY = s * 0.40;
-
                 ctx.strokeStyle = '#111827';
-                ctx.lineWidth = Math.max(2.2, s * 0.14);
+                ctx.lineWidth = 2.5;
                 ctx.lineCap = 'round';
 
-                // アーチ目（上向きカーブ）
+                // 左目の上向き笑顔アーチ
                 ctx.beginPath();
-                ctx.arc(eyeX, -eyeY, eyeR, -Math.PI * 0.8, -Math.PI * 0.2);
+                ctx.arc(14, 22, 4.2, Math.PI, 0);
                 ctx.stroke();
 
+                // 右目の上向き笑顔アーチ
                 ctx.beginPath();
-                ctx.arc(eyeX, eyeY, eyeR, Math.PI * 0.2, Math.PI * 0.8);
+                ctx.arc(26, 22, 4.2, Math.PI, 0);
                 ctx.stroke();
 
-                // ほっぺのチーク
-                ctx.fillStyle = 'rgba(255, 99, 132, 0.8)';
+                // ほっぺのぷっくりピンクチーク（目の外側両サイドの自然な頬位置へフィット）
+                ctx.fillStyle = 'rgba(255, 99, 132, 0.85)';
                 ctx.beginPath();
-                ctx.arc(eyeX - s * 0.15, -eyeY * 1.15, s * 0.18, 0, Math.PI * 2);
-                ctx.arc(eyeX - s * 0.15, eyeY * 1.15, s * 0.18, 0, Math.PI * 2);
+                ctx.arc(8.5, 26, 3.2, 0, Math.PI * 2);
+                ctx.arc(31.5, 26, 3.2, 0, Math.PI * 2);
                 ctx.fill();
                 break;
             }
 
             case 'cool': {
-                // 3. クール：角丸スクエアのサングラス ＋ 青いブリッジ ＋ ハイライト
-                const glassW = s * 0.65;
-                const glassH = s * 0.52;
-                const glassX = s * 0.05;
-                const glassY = s * 0.42;
-
+                // サングラスフレーム
                 ctx.fillStyle = '#0f172a';
                 if (ctx.roundRect) {
                     ctx.beginPath();
-                    ctx.roundRect(glassX, -glassY - glassH / 2, glassW, glassH, 3);
-                    ctx.roundRect(glassX, glassY - glassH / 2, glassW, glassH, 3);
+                    ctx.roundRect(8, 15, 10, 9, 2);
+                    ctx.roundRect(22, 15, 10, 9, 2);
                     ctx.fill();
                 } else {
-                    ctx.fillRect(glassX, -glassY - glassH / 2, glassW, glassH);
-                    ctx.fillRect(glassX, glassY - glassH / 2, glassW, glassH);
+                    ctx.fillRect(8, 15, 10, 9);
+                    ctx.fillRect(22, 15, 10, 9);
                 }
 
-                // フレームの連結ブリッジ
+                // シアンの連結ブリッジ
                 ctx.strokeStyle = '#38bdf8';
-                ctx.lineWidth = Math.max(1.5, s * 0.1);
+                ctx.lineWidth = 2.0;
                 ctx.beginPath();
-                ctx.moveTo(glassX + glassW * 0.6, -glassY + glassH * 0.4);
-                ctx.lineTo(glassX + glassW * 0.6, glassY - glassH * 0.4);
+                ctx.moveTo(18, 18);
+                ctx.lineTo(22, 18);
                 ctx.stroke();
 
-                // レンズのツヤ（斜めの白い光彩）
+                // レンズの光沢ライン
                 ctx.strokeStyle = 'rgba(255, 255, 255, 0.45)';
                 ctx.lineWidth = 1.2;
                 ctx.beginPath();
-                ctx.moveTo(glassX + glassW * 0.2, -glassY);
-                ctx.lineTo(glassX + glassW * 0.7, -glassY);
-                ctx.moveTo(glassX + glassW * 0.2, glassY);
-                ctx.lineTo(glassX + glassW * 0.7, glassY);
+                ctx.moveTo(10, 17);
+                ctx.lineTo(16, 17);
+                ctx.moveTo(24, 17);
+                ctx.lineTo(30, 17);
                 ctx.stroke();
                 break;
             }
 
             case 'cute': {
-                // 4. キュート：大きなうるうる白目 ＋ ダブル光彩ハイライト
-                const eyeR = s * 0.36;
-                const eyeX = s * 0.28;
-                const eyeY = s * 0.40;
-                const pupilR = eyeR * 0.58;
-
-                // 大きな白目
-                ctx.fillStyle = '#ffffff';
-                ctx.beginPath(); ctx.arc(eyeX, -eyeY, eyeR, 0, Math.PI * 2); ctx.fill();
-                ctx.beginPath(); ctx.arc(eyeX, eyeY, eyeR, 0, Math.PI * 2); ctx.fill();
-
-                // 黒目
-                ctx.fillStyle = '#0f172a';
-                ctx.beginPath(); ctx.arc(eyeX + 1.2, -eyeY, pupilR, 0, Math.PI * 2); ctx.fill();
-                ctx.beginPath(); ctx.arc(eyeX + 1.2, eyeY, pupilR, 0, Math.PI * 2); ctx.fill();
-
-                // 主ハイライト（大）
+                // 大きなパッチリ白目
                 ctx.fillStyle = '#ffffff';
                 ctx.beginPath();
-                ctx.arc(eyeX + eyeR * 0.25, -eyeY - eyeR * 0.25, pupilR * 0.42, 0, Math.PI * 2);
-                ctx.arc(eyeX + eyeR * 0.25, eyeY - eyeR * 0.25, pupilR * 0.42, 0, Math.PI * 2);
+                ctx.arc(14, 20, 6.5, 0, Math.PI * 2);
+                ctx.arc(26, 20, 6.5, 0, Math.PI * 2);
                 ctx.fill();
 
-                // 副ハイライト（小）
+                // 瞳孔
+                ctx.fillStyle = '#0f172a';
                 ctx.beginPath();
-                ctx.arc(eyeX - eyeR * 0.15, -eyeY + eyeR * 0.25, pupilR * 0.22, 0, Math.PI * 2);
-                ctx.arc(eyeX - eyeR * 0.15, eyeY + eyeR * 0.25, pupilR * 0.22, 0, Math.PI * 2);
+                ctx.arc(15, 20, 3.5, 0, Math.PI * 2);
+                ctx.arc(27, 20, 3.5, 0, Math.PI * 2);
+                ctx.fill();
+
+                // うるうるダブルハイライト（大）
+                ctx.fillStyle = '#ffffff';
+                ctx.beginPath();
+                ctx.arc(16.5, 18.5, 1.4, 0, Math.PI * 2);
+                ctx.arc(28.5, 18.5, 1.4, 0, Math.PI * 2);
+                ctx.fill();
+
+                // うるうるダブルハイライト（小）
+                ctx.beginPath();
+                ctx.arc(14.0, 21.5, 0.7, 0, Math.PI * 2);
+                ctx.arc(26.0, 21.5, 0.7, 0, Math.PI * 2);
                 ctx.fill();
                 break;
             }
 
             case 'normal':
             default: {
-                // 5. ノーマル：くりくりのパッチリ丸目 ＋ ちいさな瞳孔
-                const eyeR = s * 0.35;
-                const eyeX = s * 0.28;
-                const eyeY = s * 0.38;
-                const pupilR = eyeR * 0.46;
-
-                // 白目
+                // くりくりの丸い白目
                 ctx.fillStyle = '#ffffff';
-                ctx.beginPath(); ctx.arc(eyeX, -eyeY, eyeR, 0, Math.PI * 2); ctx.fill();
-                ctx.beginPath(); ctx.arc(eyeX, eyeY, eyeR, 0, Math.PI * 2); ctx.fill();
-
-                // 黒目
-                ctx.fillStyle = '#111827';
-                ctx.beginPath(); ctx.arc(eyeX + 2, -eyeY, pupilR, 0, Math.PI * 2); ctx.fill();
-                ctx.beginPath(); ctx.arc(eyeX + 2, eyeY, pupilR, 0, Math.PI * 2); ctx.fill();
-
-                // 小さなハイライト
-                ctx.fillStyle = 'rgba(255, 255, 255, 0.7)';
                 ctx.beginPath();
-                ctx.arc(eyeX + 3, -eyeY - 1.5, pupilR * 0.3, 0, Math.PI * 2);
-                ctx.arc(eyeX + 3, eyeY - 1.5, pupilR * 0.3, 0, Math.PI * 2);
+                ctx.arc(15, 20, 6.0, 0, Math.PI * 2);
+                ctx.arc(25, 20, 6.0, 0, Math.PI * 2);
+                ctx.fill();
+
+                // 小さな黒目
+                ctx.fillStyle = '#111827';
+                ctx.beginPath();
+                ctx.arc(16.5, 20, 2.8, 0, Math.PI * 2);
+                ctx.arc(26.5, 20, 2.8, 0, Math.PI * 2);
+                ctx.fill();
+
+                // 愛らしい微小ハイライト
+                ctx.fillStyle = 'rgba(255, 255, 255, 0.85)';
+                ctx.beginPath();
+                ctx.arc(17.5, 19.0, 0.9, 0, Math.PI * 2);
+                ctx.arc(27.5, 19.0, 0.9, 0, Math.PI * 2);
                 ctx.fill();
                 break;
             }
         }
+
+        ctx.restore();
     }
 }

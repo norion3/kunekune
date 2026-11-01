@@ -1,11 +1,11 @@
 // ==============================================================================
 // 『くねくねバトル オンライン』iOS WebKit & iPhone 干渉完全マスクスタイル (style.js)
-// v22.0.0 UI配置刷新＆全ボタン44px統一＆透過フロスト最適化版:
-// ・左下：MENU（44px丸型統一）＋サウンドボタン配置（左手親指の広大なジョグ可動域を確保）
-// ・右側：ズーム（＋/ー・44px化）、ランキング、マップを縦並び集約（右手親指エリア）
-// ・順位パネル（#stats-box）：レーダー同様の極薄透過フロスト化で背後が透けて見え敵がすぐ判別可能
-// ・GRAVITYマイアイコン顔選択ボタン（.custom-face-btn #btn-face-avatar）対応
-// ・overscroll-behavior: none によるラバーバンドバウンス完全抑止
+// v22.1.0 リアルタイム完全透過＆WebKitキャッシュ固着根絶版:
+// ・backdrop-filter を全撤廃し、WebKit特有のCanvas背景フリーズ（非リアルタイム化）を完全解消
+// ・順位パネル（#stats-box）および全操作ボタンをマップ同様の極薄透過アルファに統一
+// ・背後を通過する敵・星・餌が60FPSで一切濁らずクリアに透けて見える視認性を実現
+// ・左下：MENU（44px丸型）＋サウンド、右側：ズーム（＋/ー・44px）・順位・マップ・ブースト黄金配置
+// ・GRAVITYマイアイコン顔選択ボタン対応 ＆ overscroll-behavior: none 厳格維持
 // ==============================================================================
 
 export function injectStyles() {
@@ -58,20 +58,21 @@ export function injectStyles() {
             --safe-bottom: 24px;
         }
 
-        /* --- 左上：ランキング展開パネル（★レーダー同様の極薄透過フロスト化：背後の敵や肉片がクリアに見える） --- */
+        /* ==========================================================================
+           左上：ランキング展開パネル
+           ★ backdrop-filter を完全撤廃し、Canvasの背景がリアルタイムに透けて見える極薄アルファ化
+           ========================================================================== */
         #stats-box {
             position: absolute;
             top: var(--safe-top);
             left: var(--safe-side);
-            background: rgba(11, 5, 26, 0.22);
-            border: 1.5px solid rgba(0, 229, 255, 0.28);
+            background: rgba(11, 5, 26, 0.20);
+            border: 1.5px solid rgba(0, 229, 255, 0.35);
             border-radius: 12px;
             padding: 8px 12px;
             color: #ffffff;
             font-size: 12px;
-            backdrop-filter: blur(3px);
-            -webkit-backdrop-filter: blur(3px);
-            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
+            box-shadow: 0 4px 14px rgba(0, 0, 0, 0.25);
             min-width: 136px;
             pointer-events: auto;
             z-index: 30;
@@ -87,18 +88,18 @@ export function injectStyles() {
             align-items: center;
             font-size: 13px;
             margin-bottom: 3px;
-            text-shadow: 0 1px 3px rgba(0, 0, 0, 0.95), 0 0 4px rgba(0, 0, 0, 0.8);
+            text-shadow: 0 1px 3px rgba(0, 0, 0, 0.95), 0 0 5px rgba(0, 0, 0, 0.9);
         }
         #stats-box hr {
             border: none;
-            border-top: 1px dashed rgba(255, 255, 255, 0.18);
+            border-top: 1px dashed rgba(255, 255, 255, 0.22);
             margin: 5px 0;
         }
         #leaderboard-list {
             display: flex;
             flex-direction: column;
             gap: 3px;
-            text-shadow: 0 1px 3px rgba(0, 0, 0, 0.95), 0 0 5px rgba(0, 0, 0, 0.85);
+            text-shadow: 0 1px 3px rgba(0, 0, 0, 0.95), 0 0 5px rgba(0, 0, 0, 0.9);
         }
 
         /* ==========================================================================
@@ -116,12 +117,12 @@ export function injectStyles() {
             z-index: 50;
         }
 
-        /* 全丸型ボタン共通規格（44px・高透過フロスト調・シアン枠） */
+        /* 全丸型ボタン共通規格（44px・リアルタイム高透過・シアン枠） */
         .bottom-round-btn {
             width: 44px;
             height: 44px;
             border-radius: 50%;
-            background: rgba(11, 5, 26, 0.45);
+            background: rgba(11, 5, 26, 0.25);
             border: 1.5px solid rgba(0, 229, 255, 0.35);
             color: white;
             display: flex;
@@ -129,31 +130,30 @@ export function injectStyles() {
             align-items: center;
             justify-content: center;
             cursor: pointer;
-            backdrop-filter: blur(6px);
-            -webkit-backdrop-filter: blur(6px);
-            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.35);
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
             transition: transform 0.1s, border-color 0.15s, background 0.15s, opacity 0.2s;
         }
         .bottom-round-btn:active {
             transform: scale(0.92);
-            background: rgba(0, 229, 255, 0.22);
+            background: rgba(0, 229, 255, 0.25);
         }
         .bottom-round-btn svg {
             width: 20px;
             height: 20px;
             fill: #94a3b8;
             transition: fill 0.15s;
+            filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.8));
         }
         .bottom-round-btn.active {
             border-color: #00e5ff;
-            background: rgba(0, 229, 255, 0.18);
+            background: rgba(0, 229, 255, 0.20);
         }
         .bottom-round-btn.active svg {
             fill: #00e5ff;
-            filter: drop-shadow(0 0 5px rgba(0, 229, 255, 0.6));
+            filter: drop-shadow(0 0 6px rgba(0, 229, 255, 0.8));
         }
 
-        /* MENUボタン：青い楕円を廃止し、44px丸型に統一 */
+        /* MENUボタン：44px丸型規格 */
         .btn-menu-round svg {
             fill: #00e5ff;
             width: 17px;
@@ -166,16 +166,17 @@ export function injectStyles() {
             letter-spacing: 0.5px;
             line-height: 1;
             margin-top: 1px;
+            text-shadow: 0 1px 2px rgba(0, 0, 0, 0.9);
         }
 
         /* ズーム限界到達時の無効化スタイル */
         .bottom-round-btn.disabled {
-            opacity: 0.25;
+            opacity: 0.22;
             pointer-events: none;
             border-color: rgba(255, 255, 255, 0.15);
         }
         .bottom-round-btn.disabled svg {
-            fill: #94a3b8;
+            fill: #64748b;
         }
 
         /* ==========================================================================
@@ -197,7 +198,7 @@ export function injectStyles() {
             fill: #00e5ff;
         }
 
-        /* BOOSTボタン：右手親指が最も自然に届く黄金位置 */
+        /* BOOSTボタン：右手親指が最も自然に届く黄金位置（リアルタイム高透過） */
         #btn-boost {
             position: absolute;
             bottom: var(--safe-bottom);
@@ -205,16 +206,14 @@ export function injectStyles() {
             width: 66px;
             height: 66px;
             border-radius: 50%;
-            background: radial-gradient(circle, rgba(15, 23, 42, 0.8) 0%, rgba(2, 6, 23, 0.88) 100%);
+            background: radial-gradient(circle, rgba(15, 23, 42, 0.45) 0%, rgba(2, 6, 23, 0.65) 100%);
             border: 2px solid #00e5ff;
             color: #00e5ff;
             display: flex;
             align-items: center;
             justify-content: center;
             pointer-events: auto;
-            backdrop-filter: blur(6px);
-            -webkit-backdrop-filter: blur(6px);
-            box-shadow: 0 0 16px rgba(0, 229, 255, 0.35), inset 0 0 10px rgba(0, 229, 255, 0.2);
+            box-shadow: 0 0 16px rgba(0, 229, 255, 0.30), inset 0 0 10px rgba(0, 229, 255, 0.2);
             transition: transform 0.1s, border-color 0.2s, box-shadow 0.2s;
             cursor: pointer;
             z-index: 50;
@@ -359,8 +358,6 @@ export function injectStyles() {
             width: 100%;
             height: 100%;
             background: transparent;
-            backdrop-filter: none;
-            -webkit-backdrop-filter: none;
             z-index: 150;
             pointer-events: none;
         }
@@ -643,8 +640,6 @@ export function injectStyles() {
             width: 100%;
             height: 100%;
             background: rgba(11, 5, 26, 0.85);
-            backdrop-filter: blur(6px);
-            -webkit-backdrop-filter: blur(6px);
             align-items: center;
             justify-content: center;
             pointer-events: auto;
@@ -801,10 +796,8 @@ export function injectStyles() {
         }
         .room-list-box {
             width: 100%;
-            background: rgba(255, 255, 255, 0.08);
+            background: rgba(255, 255, 255, 0.10);
             border: 1px solid rgba(255, 255, 255, 0.18);
-            backdrop-filter: blur(12px);
-            -webkit-backdrop-filter: blur(12px);
             border-radius: 14px;
             padding: 14px 16px;
             margin-top: 4px;
