@@ -39,7 +39,7 @@ import { AIManager } from './ai.js';
 import { NetworkManager } from './network.js';
 import { initUIBindings, updateZoomButtonsState } from './ui_binder.js';
 import { setupNetworkHandlers } from './net_handlers.js';
-import './net_lobby_hooks.js';
+import { hookLobbyNetworkEvents } from './net_lobby_hooks.js';
 
 // --- プラットフォーム環境検知 ---
 export const PlatformDetector = {
@@ -315,6 +315,7 @@ async function bootSequence() {
             player.name = userInfo.name;
         }
         UIController.refreshLobbyGreeting();
+        hookLobbyNetworkEvents();
 
         if (window.AgentSDK && window.AgentSDK.room && typeof window.AgentSDK.room.getRoomId === 'function') {
             const res = await window.AgentSDK.room.getRoomId();

@@ -1,10 +1,10 @@
 // ==============================================================================
 // 『くねくねバトル オンライン』iOS WebKit & iPhone 干渉完全マスクスタイル (style.js)
-// v20.10.0 レイアウト＆視認性大幅刷新版:
-// ・GRAVITYネイティブ「ルーム招待 ⇧」ボタンとの物理被りを完全解消（MENU/BOOST上部退避）
-// ・順位エリア・ボタン類の高透過フロスト化（背後の敵・背景の動きがクリアに見える設計）
-// ・ズーム限界到達時の .disabled スタイル（半透明化）追加
-// ・右上の共有（↑）ボタン直下にピタリと合わせる分離型「いいね誘導アンカー」スタイル実装
+// v22.0.0 UI配置刷新＆全ボタン44px統一＆透過フロスト最適化版:
+// ・左下：MENU（44px丸型統一）＋サウンドボタン配置（左手親指の広大なジョグ可動域を確保）
+// ・右側：ズーム（＋/ー・44px化）、ランキング、マップを縦並び集約（右手親指エリア）
+// ・順位パネル（#stats-box）：レーダー同様の極薄透過フロスト化で背後が透けて見え敵がすぐ判別可能
+// ・GRAVITYマイアイコン顔選択ボタン（.custom-face-btn #btn-face-avatar）対応
 // ・overscroll-behavior: none によるラバーバンドバウンス完全抑止
 // ==============================================================================
 
@@ -58,21 +58,21 @@ export function injectStyles() {
             --safe-bottom: 24px;
         }
 
-        /* --- 左上：ランキング展開パネル（★高透過フロスト化：背後の敵や餌が見える） --- */
+        /* --- 左上：ランキング展開パネル（★レーダー同様の極薄透過フロスト化：背後の敵や肉片がクリアに見える） --- */
         #stats-box {
             position: absolute;
             top: var(--safe-top);
             left: var(--safe-side);
-            background: rgba(11, 5, 26, 0.45);
-            border: 1.5px solid rgba(0, 229, 255, 0.35);
+            background: rgba(11, 5, 26, 0.22);
+            border: 1.5px solid rgba(0, 229, 255, 0.28);
             border-radius: 12px;
-            padding: 10px 14px;
+            padding: 8px 12px;
             color: #ffffff;
             font-size: 12px;
-            backdrop-filter: blur(6px);
-            -webkit-backdrop-filter: blur(6px);
-            box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
-            min-width: 140px;
+            backdrop-filter: blur(3px);
+            -webkit-backdrop-filter: blur(3px);
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
+            min-width: 136px;
             pointer-events: auto;
             z-index: 30;
             animation: stats-appear 0.18s ease-out;
@@ -87,99 +87,60 @@ export function injectStyles() {
             align-items: center;
             font-size: 13px;
             margin-bottom: 3px;
-            text-shadow: 0 1px 3px rgba(0, 0, 0, 0.8);
+            text-shadow: 0 1px 3px rgba(0, 0, 0, 0.95), 0 0 4px rgba(0, 0, 0, 0.8);
         }
         #stats-box hr {
             border: none;
-            border-top: 1px dashed rgba(255, 255, 255, 0.2);
-            margin: 6px 0;
+            border-top: 1px dashed rgba(255, 255, 255, 0.18);
+            margin: 5px 0;
         }
         #leaderboard-list {
             display: flex;
             flex-direction: column;
-            gap: 4px;
-            text-shadow: 0 1px 3px rgba(0, 0, 0, 0.9);
+            gap: 3px;
+            text-shadow: 0 1px 3px rgba(0, 0, 0, 0.95), 0 0 5px rgba(0, 0, 0, 0.85);
         }
 
         /* ==========================================================================
-           左下ボタングループ（底辺 bottom: 24px）
+           左下ボタングループ：低頻度操作（MENU、サウンド）
+           ＝左手親指の広大な可動スペースを確保し、仮想ジョイスティック操作を一切邪魔しない
            ========================================================================== */
         .bottom-left-group {
             position: absolute;
             bottom: var(--safe-bottom);
             left: var(--safe-side);
             display: flex;
-            align-items: flex-end;
-            gap: 8px;
+            align-items: center;
+            gap: 10px;
             pointer-events: auto;
             z-index: 50;
         }
 
-        /* ズーム（＋/ー）縦並びコンテナ */
-        .zoom-controls-col {
-            display: flex;
-            flex-direction: column;
-            gap: 6px;
-            margin-bottom: 2px;
-        }
-        .btn-zoom {
-            width: 36px;
-            height: 36px;
-            border-radius: 50%;
-            background: rgba(11, 5, 26, 0.45);
-            border: 1.5px solid rgba(0, 229, 255, 0.35);
-            color: #ffffff;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            cursor: pointer;
-            box-shadow: 0 4px 10px rgba(0, 0, 0, 0.35);
-            backdrop-filter: blur(6px);
-            -webkit-backdrop-filter: blur(6px);
-            transition: transform 0.1s, background 0.15s, opacity 0.2s;
-        }
-        .btn-zoom:active {
-            transform: scale(0.92);
-            background: rgba(0, 229, 255, 0.25);
-        }
-        .btn-zoom svg {
-            width: 18px;
-            height: 18px;
-            fill: #00e5ff;
-        }
-        /* ★ズーム限界到達時の無効化スタイル */
-        .btn-zoom.disabled {
-            opacity: 0.25;
-            pointer-events: none;
-            border-color: rgba(255, 255, 255, 0.15);
-        }
-        .btn-zoom.disabled svg {
-            fill: #94a3b8;
-        }
-
-        /* 左下丸型ボタン共通（サウンド、ランキング、マップ：透過フロスト化） */
+        /* 全丸型ボタン共通規格（44px・高透過フロスト調・シアン枠） */
         .bottom-round-btn {
             width: 44px;
             height: 44px;
             border-radius: 50%;
             background: rgba(11, 5, 26, 0.45);
-            border: 1.5px solid rgba(255, 255, 255, 0.25);
+            border: 1.5px solid rgba(0, 229, 255, 0.35);
             color: white;
             display: flex;
+            flex-direction: column;
             align-items: center;
             justify-content: center;
             cursor: pointer;
             backdrop-filter: blur(6px);
             -webkit-backdrop-filter: blur(6px);
             box-shadow: 0 4px 12px rgba(0, 0, 0, 0.35);
-            transition: transform 0.1s, border-color 0.15s, background 0.15s;
+            transition: transform 0.1s, border-color 0.15s, background 0.15s, opacity 0.2s;
         }
         .bottom-round-btn:active {
             transform: scale(0.92);
+            background: rgba(0, 229, 255, 0.22);
         }
         .bottom-round-btn svg {
-            width: 22px;
-            height: 22px;
+            width: 20px;
+            height: 20px;
             fill: #94a3b8;
             transition: fill 0.15s;
         }
@@ -192,49 +153,55 @@ export function injectStyles() {
             filter: drop-shadow(0 0 5px rgba(0, 229, 255, 0.6));
         }
 
-        /* ==========================================================================
-           右下ボタン（★「ルーム招待 ⇧」ボタンとの物理被り完全解消）
-           ========================================================================== */
-        /* MENUボタン：ネイティブ招待ボタン（bottom: 24px, right: 16px）の直上に配置 */
-        #btn-menu {
-            position: absolute;
-            bottom: calc(var(--safe-bottom) + 64px);
-            right: 24px;
-            width: 48px;
-            height: 48px;
-            border-radius: 50%;
-            background: linear-gradient(135deg, rgba(0, 180, 216, 0.85), rgba(0, 119, 182, 0.9));
-            border: 1.5px solid rgba(255, 255, 255, 0.7);
-            color: white;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
-            font-size: 9px;
+        /* MENUボタン：青い楕円を廃止し、44px丸型に統一 */
+        .btn-menu-round svg {
+            fill: #00e5ff;
+            width: 17px;
+            height: 17px;
+        }
+        .btn-subtext {
+            font-size: 8px;
             font-weight: 900;
-            pointer-events: auto;
-            backdrop-filter: blur(6px);
-            -webkit-backdrop-filter: blur(6px);
-            box-shadow: 0 4px 14px rgba(0, 119, 182, 0.45);
-            cursor: pointer;
-            z-index: 50;
-            transition: transform 0.1s ease;
-        }
-        #btn-menu svg {
-            width: 19px;
-            height: 19px;
-            fill: white;
-            margin-bottom: 1px;
-        }
-        #btn-menu:active {
-            transform: scale(0.92);
+            color: #bae6fd;
+            letter-spacing: 0.5px;
+            line-height: 1;
+            margin-top: 1px;
         }
 
-        /* BOOSTボタン：MENUボタンのさらに上部へ退避（親指で最も押しやすい黄金位置） */
+        /* ズーム限界到達時の無効化スタイル */
+        .bottom-round-btn.disabled {
+            opacity: 0.25;
+            pointer-events: none;
+            border-color: rgba(255, 255, 255, 0.15);
+        }
+        .bottom-round-btn.disabled svg {
+            fill: #94a3b8;
+        }
+
+        /* ==========================================================================
+           右側ボタングループ：高頻度操作（ズーム＋/ー、ランキング、マップ）
+           ＝右手親指の可動域に合わせて縦並びに44px統一配置
+           ========================================================================== */
+        .right-action-group {
+            position: absolute;
+            bottom: calc(var(--safe-bottom) + 98px);
+            right: 18px;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            align-items: center;
+            pointer-events: auto;
+            z-index: 50;
+        }
+        .btn-action-44 svg {
+            fill: #00e5ff;
+        }
+
+        /* BOOSTボタン：右手親指が最も自然に届く黄金位置 */
         #btn-boost {
             position: absolute;
-            bottom: calc(var(--safe-bottom) + 188px);
-            right: 20px;
+            bottom: var(--safe-bottom);
+            right: 18px;
             width: 66px;
             height: 66px;
             border-radius: 50%;
@@ -336,9 +303,7 @@ export function injectStyles() {
             100% { transform: translateX(-200%); left: -50%; }
         }
 
-        /* ==========================================================================
-           ★ 分離型いいね誘導アンカー（右上の共有 [↑] ボタンの直下にピタリ配置）
-           ========================================================================== */
+        /* 分離型いいね誘導アンカー */
         #like-guide-anchor {
             position: fixed;
             top: max(56px, env(safe-area-inset-top, 24px) + 48px);
@@ -356,8 +321,6 @@ export function injectStyles() {
             opacity: 1;
             transform: translateY(0);
         }
-
-        /* 上向き三角矢印（共有ボタンの中心線に合わせてアニメーション点滅） */
         .like-guide-arrow {
             width: 0;
             height: 0;
@@ -372,8 +335,6 @@ export function injectStyles() {
             0% { transform: translateY(0); }
             100% { transform: translateY(-4px); }
         }
-
-        /* 吹き出し本体（自然な左詰め＆高視認性） */
         .like-guide-bubble {
             background: linear-gradient(135deg, rgba(2, 132, 199, 0.95) 0%, rgba(3, 105, 161, 0.98) 100%);
             border: 1.5px solid #38bdf8;
@@ -389,9 +350,7 @@ export function injectStyles() {
             white-space: nowrap;
         }
 
-        /* ==========================================================================
-           ボトムシートメニュー（全画面暗転・ブラー撤廃 ＆ ゲームプレイ継続）
-           ========================================================================== */
+        /* --- ボトムシートメニュー --- */
         #menu-overlay {
             display: none;
             position: absolute;
@@ -584,7 +543,7 @@ export function injectStyles() {
             font-size: 16px;
         }
 
-        /* --- カスタムパネル（顔プレビューボタン対応） --- */
+        /* --- カスタムパネル --- */
         .custom-panel {
             display: flex;
             flex-direction: column;
@@ -599,10 +558,13 @@ export function injectStyles() {
         .custom-row {
             display: flex;
             justify-content: space-around;
-            gap: 8px;
+            gap: 6px;
+            overflow-x: auto;
+            padding-bottom: 4px;
         }
         .custom-face-btn {
             flex: 1;
+            min-width: 44px;
             height: 48px;
             background: rgba(0, 0, 0, 0.25);
             border: 2px solid transparent;
@@ -672,7 +634,7 @@ export function injectStyles() {
             background: rgba(255, 255, 255, 0.2);
         }
 
-        /* --- リザルト画面（★得点送信ボタン撤去・リトライ1本化） --- */
+        /* --- リザルト画面 --- */
         #over-screen {
             display: none;
             position: absolute;

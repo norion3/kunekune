@@ -152,6 +152,7 @@ if (typeof window !== 'undefined') {
     window.hookLobbyNetworkEvents = hookLobbyNetworkEvents;
 }
 
+// DOMマウント直後またはDOMContentLoadedでのバインド呼び出し
 if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', hookLobbyNetworkEvents);
 } else {

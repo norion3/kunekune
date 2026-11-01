@@ -98,12 +98,39 @@ export class MenuManager {
         this.bindChatInput();
         this.bindCustomPicker();
         this.bindCreatorLinks();
+        this.checkAvatarAvailability();
+    }
+
+    /**
+     * GRAVITYユーザーアバター画像の存在確認と「マイアイコン」ボタンの活性化
+     */
+    checkAvatarAvailability() {
+        const btnAvatar = document.getElementById('btn-face-avatar');
+        const imgAvatar = document.getElementById('avatar-preview-img');
+        if (!btnAvatar || !imgAvatar) return;
+
+        const portraitUrl = (window.NetworkManager && window.NetworkManager.myUser && window.NetworkManager.myUser.portrait)
+            ? window.NetworkManager.myUser.portrait
+            : '';
+
+        if (portraitUrl) {
+            imgAvatar.src = portraitUrl;
+            btnAvatar.style.display = 'flex';
+
+            if (!window.userAvatarImgInstance) {
+                const img = new Image();
+                img.crossOrigin = 'anonymous';
+                img.src = portraitUrl;
+                window.userAvatarImgInstance = img;
+            }
+        }
     }
 
     toggle() {
         if (this.isOpen) {
             this.close();
         } else {
+            this.checkAvatarAvailability();
             this.open();
         }
     }
@@ -218,7 +245,7 @@ export class MenuManager {
     }
 
     bindCustomPicker() {
-        // 顔選択（SVG表情アイコンプレビューボタン）
+        // 顔選択（SVG表情アイコンプレビューボタン ＆ マイアイコン）
         const faceBtns = document.querySelectorAll('.custom-face-btn');
         faceBtns.forEach(btn => {
             btn.onclick = (e) => {

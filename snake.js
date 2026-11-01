@@ -211,10 +211,22 @@ export class Snake {
         ctx.translate(this.x, this.y);
         ctx.rotate(this.angle);
 
-        ctx.fillStyle = this.color;
-        ctx.beginPath();
-        ctx.arc(0, 0, this.size, 0, Math.PI * 2);
-        ctx.fill();
+        // ★ GRAVITYユーザーアバター顔スキンの場合：円形マスクでポートレート写真を描画
+        if (this.face === 'user_avatar' && window.userAvatarImgInstance && window.userAvatarImgInstance.complete) {
+            ctx.save();
+            ctx.beginPath();
+            ctx.arc(0, 0, this.size, 0, Math.PI * 2);
+            ctx.clip();
+            ctx.drawImage(window.userAvatarImgInstance, -this.size, -this.size, this.size * 2, this.size * 2);
+            ctx.restore();
+        } else {
+            ctx.fillStyle = this.color;
+            ctx.beginPath();
+            ctx.arc(0, 0, this.size, 0, Math.PI * 2);
+            ctx.fill();
+
+            this.drawFaceExpressions(ctx);
+        }
 
         if (this.isBoosting) {
             ctx.strokeStyle = '#ffffff';
@@ -222,7 +234,6 @@ export class Snake {
             ctx.stroke();
         }
 
-        this.drawFaceExpressions(ctx);
         ctx.restore();
 
         ctx.globalAlpha = 1.0;
@@ -234,65 +245,170 @@ export class Snake {
         ctx.fillText(this.name, this.x, this.y - this.size - 6);
     }
 
+    /**
+     * メニューの可愛いSVGプレビューアイコンと完全一致させた表情描画
+     */
     drawFaceExpressions(ctx) {
-        const eyeR = this.size * 0.35;
-        const eyeX = this.size * 0.32;
-        const eyeY = this.size * 0.38;
-        const pupilR = eyeR * 0.45;
+        const s = this.size;
 
         switch (this.face) {
-            case 'angry':
+            case 'angry': {
+                // 1. いかり顔：丸い白目 ＋ 鋭い黒眉 ＋ 寄った黒目
+                const eyeR = s * 0.32;
+                const eyeX = s * 0.28;
+                const eyeY = s * 0.40;
+                const pupilR = eyeR * 0.48;
+
+                // 白目
                 ctx.fillStyle = '#ffffff';
                 ctx.beginPath(); ctx.arc(eyeX, -eyeY, eyeR, 0, Math.PI * 2); ctx.fill();
                 ctx.beginPath(); ctx.arc(eyeX, eyeY, eyeR, 0, Math.PI * 2); ctx.fill();
+
+                // 黒目
                 ctx.fillStyle = '#111827';
-                ctx.beginPath(); ctx.arc(eyeX + 2, -eyeY, pupilR, 0, Math.PI * 2); ctx.fill();
-                ctx.beginPath(); ctx.arc(eyeX + 2, eyeY, pupilR, 0, Math.PI * 2); ctx.fill();
-                ctx.strokeStyle = '#111827';
-                ctx.lineWidth = Math.max(1.5, this.size * 0.12);
-                ctx.beginPath(); ctx.moveTo(eyeX - eyeR, -eyeY - 3); ctx.lineTo(eyeX + eyeR, -eyeY + 3); ctx.stroke();
-                ctx.beginPath(); ctx.moveTo(eyeX - eyeR, eyeY + 3); ctx.lineTo(eyeX + eyeR, eyeY - 3); ctx.stroke();
-                break;
+                ctx.beginPath(); ctx.arc(eyeX + 1.5, -eyeY, pupilR, 0, Math.PI * 2); ctx.fill();
+                ctx.beginPath(); ctx.arc(eyeX + 1.5, eyeY, pupilR, 0, Math.PI * 2); ctx.fill();
 
-            case 'happy':
+                // キリッとした眉毛
                 ctx.strokeStyle = '#111827';
-                ctx.lineWidth = Math.max(2, this.size * 0.14);
-                ctx.beginPath(); ctx.arc(eyeX, -eyeY, eyeR * 0.8, -Math.PI / 2, Math.PI / 2); ctx.stroke();
-                ctx.beginPath(); ctx.arc(eyeX, eyeY, eyeR * 0.8, -Math.PI / 2, Math.PI / 2); ctx.stroke();
-                ctx.fillStyle = 'rgba(255, 99, 132, 0.7)';
-                ctx.beginPath(); ctx.arc(eyeX - 2, 0, this.size * 0.25, 0, Math.PI * 2); ctx.fill();
-                break;
+                ctx.lineWidth = Math.max(1.8, s * 0.12);
+                ctx.lineCap = 'round';
+                ctx.beginPath();
+                ctx.moveTo(eyeX - eyeR * 0.8, -eyeY - eyeR * 0.7);
+                ctx.lineTo(eyeX + eyeR * 0.8, -eyeY + eyeR * 0.3);
+                ctx.stroke();
 
-            case 'cool':
+                ctx.beginPath();
+                ctx.moveTo(eyeX - eyeR * 0.8, eyeY + eyeR * 0.7);
+                ctx.lineTo(eyeX + eyeR * 0.8, eyeY - eyeR * 0.3);
+                ctx.stroke();
+                break;
+            }
+
+            case 'happy': {
+                // 2. にこにこ顔：アーチ型の笑顔の目 ＋ ぷっくりピンクチーク
+                const eyeR = s * 0.34;
+                const eyeX = s * 0.28;
+                const eyeY = s * 0.40;
+
+                ctx.strokeStyle = '#111827';
+                ctx.lineWidth = Math.max(2.2, s * 0.14);
+                ctx.lineCap = 'round';
+
+                // アーチ目（上向きカーブ）
+                ctx.beginPath();
+                ctx.arc(eyeX, -eyeY, eyeR, -Math.PI * 0.8, -Math.PI * 0.2);
+                ctx.stroke();
+
+                ctx.beginPath();
+                ctx.arc(eyeX, eyeY, eyeR, Math.PI * 0.2, Math.PI * 0.8);
+                ctx.stroke();
+
+                // ほっぺのチーク
+                ctx.fillStyle = 'rgba(255, 99, 132, 0.8)';
+                ctx.beginPath();
+                ctx.arc(eyeX - s * 0.15, -eyeY * 1.15, s * 0.18, 0, Math.PI * 2);
+                ctx.arc(eyeX - s * 0.15, eyeY * 1.15, s * 0.18, 0, Math.PI * 2);
+                ctx.fill();
+                break;
+            }
+
+            case 'cool': {
+                // 3. クール：角丸スクエアのサングラス ＋ 青いブリッジ ＋ ハイライト
+                const glassW = s * 0.65;
+                const glassH = s * 0.52;
+                const glassX = s * 0.05;
+                const glassY = s * 0.42;
+
                 ctx.fillStyle = '#0f172a';
-                ctx.beginPath(); ctx.roundRect ? ctx.roundRect(eyeX - eyeR, -eyeY - 2, eyeR * 2, eyeR * 1.5, 3) : ctx.rect(eyeX - eyeR, -eyeY - 2, eyeR * 2, eyeR * 1.5); ctx.fill();
-                ctx.beginPath(); ctx.roundRect ? ctx.roundRect(eyeX - eyeR, eyeY - eyeR * 0.7, eyeR * 2, eyeR * 1.5, 3) : ctx.rect(eyeX - eyeR, eyeY - eyeR * 0.7, eyeR * 2, eyeR * 1.5); ctx.fill();
+                if (ctx.roundRect) {
+                    ctx.beginPath();
+                    ctx.roundRect(glassX, -glassY - glassH / 2, glassW, glassH, 3);
+                    ctx.roundRect(glassX, glassY - glassH / 2, glassW, glassH, 3);
+                    ctx.fill();
+                } else {
+                    ctx.fillRect(glassX, -glassY - glassH / 2, glassW, glassH);
+                    ctx.fillRect(glassX, glassY - glassH / 2, glassW, glassH);
+                }
+
+                // フレームの連結ブリッジ
                 ctx.strokeStyle = '#38bdf8';
-                ctx.lineWidth = 1.2;
-                ctx.beginPath(); ctx.moveTo(eyeX - eyeR, 0); ctx.lineTo(eyeX + eyeR, 0); ctx.stroke();
-                break;
+                ctx.lineWidth = Math.max(1.5, s * 0.1);
+                ctx.beginPath();
+                ctx.moveTo(glassX + glassW * 0.6, -glassY + glassH * 0.4);
+                ctx.lineTo(glassX + glassW * 0.6, glassY - glassH * 0.4);
+                ctx.stroke();
 
-            case 'cute':
-                ctx.fillStyle = '#ffffff';
-                ctx.beginPath(); ctx.arc(eyeX, -eyeY, eyeR * 1.1, 0, Math.PI * 2); ctx.fill();
-                ctx.beginPath(); ctx.arc(eyeX, eyeY, eyeR * 1.1, 0, Math.PI * 2); ctx.fill();
-                ctx.fillStyle = '#0f172a';
-                ctx.beginPath(); ctx.arc(eyeX + 1, -eyeY, pupilR * 1.1, 0, Math.PI * 2); ctx.fill();
-                ctx.beginPath(); ctx.arc(eyeX + 1, eyeY, pupilR * 1.1, 0, Math.PI * 2); ctx.fill();
-                ctx.fillStyle = '#ffffff';
-                ctx.beginPath(); ctx.arc(eyeX + 3, -eyeY - 2, pupilR * 0.4, 0, Math.PI * 2); ctx.fill();
-                ctx.beginPath(); ctx.arc(eyeX + 3, eyeY - 2, pupilR * 0.4, 0, Math.PI * 2); ctx.fill();
+                // レンズのツヤ（斜めの白い光彩）
+                ctx.strokeStyle = 'rgba(255, 255, 255, 0.45)';
+                ctx.lineWidth = 1.2;
+                ctx.beginPath();
+                ctx.moveTo(glassX + glassW * 0.2, -glassY);
+                ctx.lineTo(glassX + glassW * 0.7, -glassY);
+                ctx.moveTo(glassX + glassW * 0.2, glassY);
+                ctx.lineTo(glassX + glassW * 0.7, glassY);
+                ctx.stroke();
                 break;
+            }
+
+            case 'cute': {
+                // 4. キュート：大きなうるうる白目 ＋ ダブル光彩ハイライト
+                const eyeR = s * 0.36;
+                const eyeX = s * 0.28;
+                const eyeY = s * 0.40;
+                const pupilR = eyeR * 0.58;
+
+                // 大きな白目
+                ctx.fillStyle = '#ffffff';
+                ctx.beginPath(); ctx.arc(eyeX, -eyeY, eyeR, 0, Math.PI * 2); ctx.fill();
+                ctx.beginPath(); ctx.arc(eyeX, eyeY, eyeR, 0, Math.PI * 2); ctx.fill();
+
+                // 黒目
+                ctx.fillStyle = '#0f172a';
+                ctx.beginPath(); ctx.arc(eyeX + 1.2, -eyeY, pupilR, 0, Math.PI * 2); ctx.fill();
+                ctx.beginPath(); ctx.arc(eyeX + 1.2, eyeY, pupilR, 0, Math.PI * 2); ctx.fill();
+
+                // 主ハイライト（大）
+                ctx.fillStyle = '#ffffff';
+                ctx.beginPath();
+                ctx.arc(eyeX + eyeR * 0.25, -eyeY - eyeR * 0.25, pupilR * 0.42, 0, Math.PI * 2);
+                ctx.arc(eyeX + eyeR * 0.25, eyeY - eyeR * 0.25, pupilR * 0.42, 0, Math.PI * 2);
+                ctx.fill();
+
+                // 副ハイライト（小）
+                ctx.beginPath();
+                ctx.arc(eyeX - eyeR * 0.15, -eyeY + eyeR * 0.25, pupilR * 0.22, 0, Math.PI * 2);
+                ctx.arc(eyeX - eyeR * 0.15, eyeY + eyeR * 0.25, pupilR * 0.22, 0, Math.PI * 2);
+                ctx.fill();
+                break;
+            }
 
             case 'normal':
-            default:
+            default: {
+                // 5. ノーマル：くりくりのパッチリ丸目 ＋ ちいさな瞳孔
+                const eyeR = s * 0.35;
+                const eyeX = s * 0.28;
+                const eyeY = s * 0.38;
+                const pupilR = eyeR * 0.46;
+
+                // 白目
                 ctx.fillStyle = '#ffffff';
                 ctx.beginPath(); ctx.arc(eyeX, -eyeY, eyeR, 0, Math.PI * 2); ctx.fill();
                 ctx.beginPath(); ctx.arc(eyeX, eyeY, eyeR, 0, Math.PI * 2); ctx.fill();
+
+                // 黒目
                 ctx.fillStyle = '#111827';
                 ctx.beginPath(); ctx.arc(eyeX + 2, -eyeY, pupilR, 0, Math.PI * 2); ctx.fill();
                 ctx.beginPath(); ctx.arc(eyeX + 2, eyeY, pupilR, 0, Math.PI * 2); ctx.fill();
+
+                // 小さなハイライト
+                ctx.fillStyle = 'rgba(255, 255, 255, 0.7)';
+                ctx.beginPath();
+                ctx.arc(eyeX + 3, -eyeY - 1.5, pupilR * 0.3, 0, Math.PI * 2);
+                ctx.arc(eyeX + 3, eyeY - 1.5, pupilR * 0.3, 0, Math.PI * 2);
+                ctx.fill();
                 break;
+            }
         }
     }
 }
