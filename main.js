@@ -1,14 +1,12 @@
 // ==============================================================================
 // 『くねくねバトル オンライン』Phase 5 マスター統合オーケストレーター (main.js)
-// v24.0.0 最終順位厳格判定＆最大6人待機室・バックグラウンド世界維持版:
-// ・死亡時の最終順位計算バグを根絶（自分よりスコアが高いスネーク数＋1による厳格算出）
-// ・待機室スロットを最大6名（0〜5）対応へ拡張＆アバター画像表示
-// ・ゲームオーバー時もホスト端末のAI演算・他走者同期・物理判定を100%継続（世界停止完全防止）
-// ・死者端末のリアルタイム観戦カメラ（キラーまたは死亡地点をスムーズ追従）
-// ・撃破時スコア吸収（相手スコアの30%即時吸収＋基本点加算）による納得のスコアリング
-// ・スネーク撃破時の大量肉片クラスタ同期（queueDropCluster）完全接続
-// ・招待URL（DMリンク）検知時の先行待機室起動 ＆ hookLobbyNetworkEvents 確実バインド
-// ・二重ループ起動防止 (animFrameId) ＆ EntryShield 通信ロック
+// v24.2.0 ランキングチラつき根絶＆主語バッジ統一キルログ版:
+// ・ゲスト側のランキング上書き競合を完全停止し、ホスト確定同期一本化で点滅を根絶
+// ・キルログを「[ キラー名 ] 相手名 を撃破！」の主語バッジ統一フォーマットへ純化（重複根絶）
+// ・死亡時の最終順位計算厳格判定（自分よりスコアが高いスネーク数＋1）
+// ・待機室スロット最大6名（0〜5）対応＆アバター画像表示
+// ・ゲームオーバー時もホスト端末のAI演算・他走者同期・物理判定を100%継続
+// ・死者端末のリアルタイム観戦カメラ＆即時リスポーン
 // ==============================================================================
 
 import { injectStyles } from './style.js';
@@ -242,7 +240,7 @@ export function initGame(isRespawn = false) {
     player.name = resolvedPlayerName;
     player.color = SNAKE_COLORS[NetworkManager.mySlot % SNAKE_COLORS.length];
 
-    // ★ ソロプレイ時でもスロット0に自身のユーザーIDとアバターを確実にバインド（プロフ遷移連携）
+    // ソロプレイ時でもスロット0に自身のユーザーIDとアバターを確実にバインド
     if (!NetworkManager.isMultiplayerActive) {
         NetworkManager.slots[0].userId = NetworkManager.myUser.user_id;
         NetworkManager.slots[0].name = resolvedPlayerName;
@@ -333,10 +331,7 @@ function handleGameOver(killer) {
     const overScreen = document.getElementById('over-screen');
     if (!overScreen) return;
 
-    // ★ 最終順位計算バグの完全根絶：
-    //   死亡フラグ（isDead）でフィルタすると自分が除外されて findIndex が -1 になり、
-    //   47位（生存総数）と誤判定されていた。
-    //   死亡直前の自分のスコアより高いスコアを持つスネークの数＋1で厳密に正規順位を算出。
+    // 最終順位計算：死亡直前のスコアより高いスコアを持つスネークの数＋1
     const higherCount = allSnakes.filter(s => s !== player && s.score > finalScore).length;
     const exactRank = higherCount + 1;
 
@@ -514,14 +509,16 @@ function gameLoop() {
             if (killer && !killer.isDead) {
                 const absorbedScore = Math.max(150, Math.floor(victim.score * 0.3));
                 killer.addScore(absorbedScore);
+
+                // ★ 主語バッジ統一キルログ：[ キラー名 ] 相手名 を撃破！
+                // 「撃破」の文字重複を完全根絶し、得点なしでスッキリ通知
+                Danmaku.push(killer.name, `${victim.name} を撃破！`, killer.color || '#ff3366');
             }
 
             if (victim.isPlayer) {
                 handleGameOver(killer);
             } else if (killer.isPlayer) {
                 Sound.playCrash();
-                const absorbed = Math.max(150, Math.floor(victim.score * 0.3));
-                Danmaku.push('撃破！', `${victim.name} を撃破！ (+${absorbed} pt)`, '#ff3366');
             }
         });
 
@@ -532,30 +529,36 @@ function gameLoop() {
             const higher = allSnakes.filter(s => s !== player && s.score > myScore).length;
             const myRank = higher + 1;
             const totalAlive = sortedSnakes.filter(s => !s.isDead).length;
-            hud.updateStats(myRank, totalAlive, player.score);
 
-            const topList = sortedSnakes.filter(s => !s.isDead).slice(0, 8);
+            // ★ ホスト端末およびソロ時のみ、ローカルのHUD統計を更新
+            // （ゲスト端末は net_handlers.js の onLeaderboardSync でホスト確定データにより同期）
+            if (!NetworkManager.isMultiplayerActive || NetworkManager.isHost) {
+                hud.updateStats(myRank, totalAlive, player.score);
 
-            // ★ ホスト端末：全端末同期用に最新リーダーボードパケットをキャッシュ登録
-            if (NetworkManager.isHost && NetworkManager.isMultiplayerActive) {
-                NetBroadcaster.setLatestLeaderboard({
-                    totalAlive: totalAlive,
-                    top: topList.map(s => ({
-                        slot: s.id,
-                        name: s.name,
-                        score: Math.floor(s.score)
-                    }))
-                });
-            }
+                const topList = sortedSnakes.filter(s => !s.isDead).slice(0, 8);
 
-            const listEl = document.getElementById('leaderboard-list');
-            if (listEl && listEl.parentElement && listEl.parentElement.style.display !== 'none') {
-                listEl.innerHTML = topList.map((s, idx) => `
-                    <div style="display:flex; justify-content:space-between; color:${s === player ? '#ffdd00' : '#ffffff'}; font-weight:${s === player ? 'bold' : 'normal'}; font-size:12px;">
-                        <span style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:85px;">${idx + 1}. ${s.name}</span>
-                        <span>${Math.floor(s.score)}</span>
-                    </div>
-                `).join('');
+                // ホスト端末：全端末同期用に最新リーダーボードパケットをキャッシュ登録
+                if (NetworkManager.isHost && NetworkManager.isMultiplayerActive) {
+                    NetBroadcaster.setLatestLeaderboard({
+                        totalAlive: totalAlive,
+                        top: topList.map(s => ({
+                            slot: s.id,
+                            name: s.name,
+                            score: Math.floor(s.score)
+                        }))
+                    });
+                }
+
+                // ★ チラつき根絶：ゲスト端末ではこのブロックを実行せず、ホストおよびソロ時のみリスト描画
+                const listEl = document.getElementById('leaderboard-list');
+                if (listEl && listEl.parentElement && listEl.parentElement.style.display !== 'none') {
+                    listEl.innerHTML = topList.map((s, idx) => `
+                        <div style="display:flex; justify-content:space-between; color:${s === player ? '#ffdd00' : '#ffffff'}; font-weight:${s === player ? 'bold' : 'normal'}; font-size:12px;">
+                            <span style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:85px;">${idx + 1}. ${s.name}</span>
+                            <span>${Math.floor(s.score)}</span>
+                        </div>
+                    `).join('');
+                }
             }
         }
     }

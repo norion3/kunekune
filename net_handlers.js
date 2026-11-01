@@ -1,16 +1,19 @@
 // ==============================================================================
 // 『くねくねバトル オンライン』リモートパケット受信反映ハンドラ (net_handlers.js)
-// v21.2.0 ゲーム開始一斉キック連携版:
-// ・ホストからの START_GAME 受信時に全ゲスト端末で initGame() を自動キック
+// v24.2.0 ランキング差分ガード＆不要システム弾幕完全全廃版:
+// ・ゲスト端末のランキングチラつき（点滅）をシグネチャ差分ガードで完全根絶
+// ・ホスト確定リーダーボード情報（Top 8・生存数）のみを単一情報源として反映
+// ・「バトル開始」「ワールドシード同期」等の不要な自動弾幕チャットを全撤去
 // ・リモート走者（他プレイヤー/他AI）の位置・向き・速度・スコア同期
-// ・餌捕食イベント (pk) ＆ 撃破肉片散布 (dp) の世界反映
-// ・ワールドシード同期 ＆ 弾幕チャット通知
+// ・餌捕食イベント (pk) ＆ 撃破肉片クラスタ散布 (dc) の世界反映
 // ==============================================================================
 
 import { Snake } from './snake.js';
 import { NetworkManager } from './network.js';
-import { Danmaku } from './danmaku.js';
 import { SNAKE_COLORS, TOTAL_SNAKES } from './constants.js';
+
+// ランキングDOM書き換えチラつき防止用シグネチャキャッシュ
+let lastLeaderboardSignature = '';
 
 /**
  * ネットワーク受信コールバックのセットアップ
@@ -28,7 +31,8 @@ export function setupNetworkHandlers(ctx) {
 
     NetworkManager.setCallbacks({
         /**
-         * ★ ホストからのゲーム開始合図受信ハンドラ（ゲスト端末一斉始動）
+         * ホストからのゲーム開始合図受信ハンドラ（ゲスト端末一斉始動）
+         * ★ 不要な「バトルが開始されました！」弾幕ログは完全撤去
          */
         onGameStart(packet) {
             if (typeof initGame === 'function') {
@@ -36,7 +40,6 @@ export function setupNetworkHandlers(ctx) {
             } else if (typeof window.initGameInstance === 'function') {
                 window.initGameInstance();
             }
-            Danmaku.push('システム', 'バトルが開始されました！', '#34d399', true);
         },
 
         /**
@@ -80,7 +83,8 @@ export function setupNetworkHandlers(ctx) {
         },
 
         /**
-         * ★ ホストから受信した全体リーダーボード情報をゲスト端末のHUD・順位パネルへ同期
+         * ★ ホストから受信した全体リーダーボード情報をゲスト端末へ同期
+         * シグネチャ差分ガードにより、内容変化時のみDOMを更新してチラつきを完全根絶
          */
         onLeaderboardSync(lbData) {
             if (!lbData) return;
@@ -89,7 +93,7 @@ export function setupNetworkHandlers(ctx) {
             const topList = lbData.top || [];
             const totalAlive = lbData.totalAlive || TOTAL_SNAKES;
 
-            // ゲスト端末の自機順位算出
+            // ゲスト端末の自機正規順位算出
             let higherCount = topList.filter(item => item.score > myScore).length;
             if (lbData.myRank) {
                 higherCount = lbData.myRank - 1;
@@ -100,6 +104,13 @@ export function setupNetworkHandlers(ctx) {
             const valTotal = document.getElementById('val-total');
             if (valRank) valRank.innerText = myRank;
             if (valTotal) valTotal.innerText = totalAlive;
+
+            // 差分検知シグネチャ（名前・スコア・順位の文字列化）
+            const newSignature = topList.slice(0, 8).map(item => `${item.name}:${item.score}`).join('|') + `_me:${myScore}`;
+            if (newSignature === lastLeaderboardSignature) {
+                return; // 変化がなければDOM書き換えを行わない（点滅完全防止）
+            }
+            lastLeaderboardSignature = newSignature;
 
             const listEl = document.getElementById('leaderboard-list');
             if (listEl && listEl.parentElement && listEl.parentElement.style.display !== 'none') {
@@ -144,7 +155,7 @@ export function setupNetworkHandlers(ctx) {
         },
 
         /**
-         * Phase 2 先行配備：撃破肉片クラスタ受信ハンドラ
+         * 撃破肉片クラスタ受信ハンドラ
          */
         onDropClusterSpawned(cluster) {
             if (!world || !world.dropFoods || !Array.isArray(cluster)) return;
@@ -172,12 +183,12 @@ export function setupNetworkHandlers(ctx) {
 
         /**
          * ワールドシード同期
+         * ★ 不要な「ワールドシードを同期しました」弾幕ログは完全撤去
          */
         onSeedReceived(seed) {
             if (world) {
                 world.clear();
             }
-            Danmaku.push('同期', 'ワールドシードを同期しました', '#00e5ff', true);
         }
     });
 }

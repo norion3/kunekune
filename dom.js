@@ -1,13 +1,12 @@
 // ==============================================================================
 // 『くねくねバトル オンライン』自律DOMマウントモジュール (dom.js)
-// v24.1.0 余剰テキスト撤去＆UI純化完全統合版:
-// ・ロビーボタン「公開ルーム作成 (最大6人)」から「(最大6人)」を削除し「公開ルーム作成」へスリム化
-// ・待機室タイトル「マッチング待機中 (最大6名)」から「(最大6名)」を削除し「マッチング待機中」へスリム化
-// ・待機室（#waiting-overlay）：最大6名スロット（0〜5）対応＆アバター写真表示枠
+// v24.2.0 UIレイアウト刷新＆待機室6名枠完全表示版:
+// ・左下ボタングループ：MENUボタンの真上に音量ボタンを縦並び配置（ジョイスティック領域開放）
+// ・右側ボタングループ：ズーム・ランキング・マップを上方へ引き上げ（公式招待ボタン被り根絶）
+// ・待機室リスト枠の拡張（max-height: 320px）：最大6名全員をスクロールなしで綺麗に収容
+// ・ロビー「公開ルーム作成」、待機室「マッチング待機中」のシンプル化表記維持
+// ・CUSTOMタブ：GRAVITYユーザーアイコンを顔にできる「マイアイコン」選択ボタン完備
 // ・ランキングパネル（#stats-box）：総数100体表示（/ 100）へ整合
-// ・左下：MENU・サウンドの低頻度ボタンを44px統一デザインで配置（ジョイスティック領域開放）
-// ・右側：ズーム（＋/ー・44px化）、ランキング、マップを高頻度操作エリアへ縦並び集約
-// ・CUSTOMタブ：GRAVITYユーザーアイコンを顔にできる「マイアイコン」選択ボタンを配備
 // ・mountDOM完了時に hookLobbyNetworkEvents() を確実連動
 // ==============================================================================
 
@@ -114,7 +113,7 @@ export function mountDOM() {
             <div class="like-guide-bubble">メニューから<br>「❤️いいね」してね！</div>
         </div>
 
-        <!-- 左下ボタングループ：低頻度操作（MENU、サウンド）を44px統一フロストデザインで配置 -->
+        <!-- ★ 左下ボタングループ：低頻度操作（MENU、サウンド）を縦並び配置（ジョイスティック領域広大開放） -->
         <div class="bottom-left-group">
             <button id="btn-menu" type="button" class="bottom-round-btn btn-menu-round" aria-label="Menu">
                 <svg viewBox="0 0 24 24">
@@ -133,7 +132,7 @@ export function mountDOM() {
             </button>
         </div>
 
-        <!-- 右側ボタングループ：高頻度操作（ズーム＋/ー、ランキング、マップ）を44px統一サイズで右側に集約 -->
+        <!-- ★ 右側ボタングループ：高頻度操作（ズーム＋/ー、ランキング、マップ）を上方へ引き上げ集約（招待ボタン被り根絶） -->
         <div class="right-action-group">
             <button id="btn-zoom-in" type="button" class="bottom-round-btn btn-action-44" aria-label="Zoom In">
                 <svg viewBox="0 0 24 24">
@@ -338,7 +337,7 @@ export function mountDOM() {
     `;
     document.body.appendChild(overScreen);
 
-    // 6. マルチプレイロビー画面（★「(最大6人)」を削除しシンプル化）
+    // 6. マルチプレイロビー画面
     const lobbyOverlay = document.createElement('div');
     lobbyOverlay.id = 'lobby-overlay';
     lobbyOverlay.innerHTML = `
@@ -366,7 +365,7 @@ export function mountDOM() {
     `;
     document.body.appendChild(lobbyOverlay);
 
-    // 7. マッチング待機室画面（★「(最大6名)」を削除しシンプル化）
+    // 7. マッチング待機室画面（★max-height: 320pxにより最大6名全員がスクロールなしで綺麗に収容）
     const waitingOverlay = document.createElement('div');
     waitingOverlay.id = 'waiting-overlay';
     waitingOverlay.innerHTML = `

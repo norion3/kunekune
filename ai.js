@@ -1,11 +1,11 @@
 // ==============================================================================
 // 『くねくねバトル オンライン』スネーク.io型 自律生態系AIマネージャー (ai.js)
-// v23.0.0 好戦的ちょっかい3大行動＆動的プレッシャー完全統合版:
-// ・プレイヤーに対する3大ちょっかい行動（進路横切り・餌横取りダッシュ・併走プレッシャー）
-// ・臆病な即座逃走ルーチンを撤廃し、適度なスリルと駆け引きを生む攻撃的迎撃
-// ・MAP_SIZE = 60000 を活かしたマップ環境勾配（外周安全ゾーン・中心激戦コア）
-// ・死体肉片のサイズ・価値に応じたハイエナ感知半径の動的スケーリング
-// ・大回遊（CRUISING）モードにおけるマップ中心への緩やかな引力バイアス
+// v24.2.0 マイルドちょっかい調律＆適正緊張感バランス版:
+// ・ちょっかい行動（HARASS）の過剰粘着を根絶し、適度なスリルを与える10%前後の発動率へ調律
+// ・索敵反応距離を 1,800px から 1,200px へ縮小（画面内に近づいた時のみ自然に反応）
+// ・ちょっかい発動後のクールダウンを2〜3秒へ延長し、連続執拗アタックを完全防止
+// ・MAP_SIZE = 60000 を活かしたマップ環境勾配（外周安全ゾーン・中心激戦コア）維持
+// ・死体肉片のサイズ・価値に応じたハイエナ感知半径の動的スケーリング維持
 // ・CPU平方根計算ゼロ化（二乗距離判定）＆ リングバッファ O(1) 完全維持
 // ==============================================================================
 
@@ -40,21 +40,22 @@ export class AIManager {
             const face = this.faces[i % this.faces.length];
             const ai = new Snake(false, i, `CPU ${i}`, color, face);
 
-            // 性格ペルソナの初期化
+            // ★ 性格ペルソナの適正配分（大半を平和な採餌型とし、ちょっかい型はほどよい比率に抑制）
             const randVal = Math.random();
-            let persona = 'forager'; // デフォルト採餌型
-            if (randVal < 0.25) persona = 'hunter';       // 25%: 好戦的ハンター
-            else if (randVal < 0.50) persona = 'harasser'; // 25%: ちょっかいトリックスター
-            else if (randVal < 0.75) persona = 'cruiser';  // 25%: 大回遊スネーク
+            let persona = 'forager'; // デフォルト採餌型（50%）
+            if (randVal < 0.15) persona = 'hunter';        // 15%: たまに狩りを仕掛ける個体
+            else if (randVal < 0.30) persona = 'harasser'; // 15%: 生意気に前を横切るトリックスター
+            else if (randVal < 0.50) persona = 'cruiser';  // 20%: 悠然と回遊する大型予備軍
 
             this.aiMeta.push({
                 state: AI_STATE.FORAGING,
                 persona: persona,
                 targetFoodPos: null,
-                stateTimer: 30 + Math.floor(Math.random() * 60),
+                stateTimer: 40 + Math.floor(Math.random() * 60),
                 scavengeTarget: null,
                 cruiseDirection: Math.random() < 0.5 ? 1 : -1,
-                harassSubtype: 0 // 0: 進路横切り, 1: 餌横取り, 2: 併走プレッシャー
+                harassSubtype: 0, // 0: 進路横切り, 1: 餌横取り, 2: 併走プレッシャー
+                harassCooldown: Math.floor(Math.random() * 60) // ちょっかい連続発生防止タイマー
             });
 
             // マップ全域への分散スポーン
@@ -101,7 +102,8 @@ export class AIManager {
                     const ry = Math.max(400, Math.min(MAP_SIZE - 400, pY + Math.sin(ang) * d));
                     ai.reset(rx, ry);
                     meta.state = AI_STATE.FORAGING;
-                    meta.stateTimer = 40;
+                    meta.stateTimer = 50;
+                    meta.harassCooldown = 90;
                 }
                 continue;
             }
@@ -117,6 +119,9 @@ export class AIManager {
 
     think(ai, meta, player, allSnakes, activeDrops) {
         meta.stateTimer--;
+        if (meta.harassCooldown > 0) {
+            meta.harassCooldown--;
+        }
 
         // 1. 【最優先】外壁激突回避
         const wallMargin = 400 + ai.size * 2;
@@ -184,7 +189,7 @@ export class AIManager {
                 const ddy = drop.y - ai.y;
                 const dropDistSq = ddx * ddx + ddy * ddy;
 
-                const dynamicSmellRadius = 2800 + Math.min(2700, (drop.val || 20) * 85);
+                const dynamicSmellRadius = 2400 + Math.min(2000, (drop.val || 20) * 60);
                 const smellDistSq = dynamicSmellRadius * dynamicSmellRadius;
 
                 if (dropDistSq < smellDistSq && dropDistSq < minDropDistSq) {
@@ -198,50 +203,55 @@ export class AIManager {
                 meta.scavengeTarget = nearestDrop;
                 const toDropAngle = Math.atan2(nearestDrop.y - ai.y, nearestDrop.x - ai.x);
                 ai.targetAngle = toDropAngle;
-                ai.isBoosting = ai.score > 90 && Math.random() < 0.65;
+                ai.isBoosting = ai.score > 90 && Math.random() < 0.50;
                 return;
             }
         }
 
-        // 4. 【プレイヤー接近時の「ちょっかい行動」トリガー判定】
+        // 4. 【プレイヤー接近時の「ちょっかい行動」トリガー判定（★マイルド調律）】
         const isPlayerActive = player && !player.isDead && player.isVisible;
-        if (isPlayerActive) {
+        if (isPlayerActive && meta.harassCooldown <= 0 && meta.state !== AI_STATE.HARASS) {
             const pdx = player.x - ai.x;
             const pdy = player.y - ai.y;
             const pDistSq = pdx * pdx + pdy * pdy;
-            const harassRangeSq = 1800 * 1800; // 半径1800px以内でちょっかい発動
 
-            if (pDistSq < harassRangeSq && (meta.persona === 'harasser' || meta.persona === 'hunter' || Math.random() < 0.28)) {
-                meta.state = AI_STATE.HARASS;
-                if (meta.stateTimer <= 0) {
-                    meta.stateTimer = 45 + Math.floor(Math.random() * 50);
+            // 索敵反応距離を 1,800px → 1,200px へ縮小（目の前に近づいた時のみ適度に反応）
+            const harassRangeSq = 1200 * 1200;
+
+            if (pDistSq < harassRangeSq) {
+                // 発動率を約10%〜15%に抑制（10回に1回程度、たまに前を横切るくらいの絶妙な頻度）
+                const triggerRate = meta.persona === 'harasser' ? 0.20 : 0.08;
+                if (Math.random() < triggerRate) {
+                    meta.state = AI_STATE.HARASS;
+                    meta.stateTimer = 35 + Math.floor(Math.random() * 30); // 0.6〜1.0秒程度でサッと終わる
                     meta.harassSubtype = Math.floor(Math.random() * 3);
+                    meta.harassCooldown = 120 + Math.floor(Math.random() * 90); // 実行後は2〜3.5秒間のクールダウン
                 }
             }
         }
 
-        // 5. 【ステートタイマー満了時の自然遷移】
+        // 5. 【ステートタイマー満了時の自然遷移（採餌への復帰を促進）】
         if (meta.stateTimer <= 0) {
-            if (meta.persona === 'cruiser' && ai.size > 22) {
+            if (meta.state === AI_STATE.HARASS) {
+                // ちょっかい行動完了後は、粘着せずに必ず平和な採餌モードへ復帰
+                meta.state = AI_STATE.FORAGING;
+                meta.stateTimer = 80 + Math.floor(Math.random() * 70);
+                ai.isBoosting = false;
+            } else if (meta.persona === 'cruiser' && ai.size > 22) {
                 meta.state = AI_STATE.CRUISING;
                 meta.stateTimer = 90 + Math.floor(Math.random() * 120);
             } else if (meta.persona === 'hunter') {
-                meta.state = (Math.random() < 0.60) ? AI_STATE.HUNTER : AI_STATE.FORAGING;
-                meta.stateTimer = 50 + Math.floor(Math.random() * 60);
-            } else if (meta.persona === 'harasser') {
-                meta.state = (Math.random() < 0.50) ? AI_STATE.HARASS : AI_STATE.FORAGING;
-                meta.stateTimer = 40 + Math.floor(Math.random() * 50);
-                meta.harassSubtype = Math.floor(Math.random() * 3);
+                meta.state = (Math.random() < 0.40) ? AI_STATE.HUNTER : AI_STATE.FORAGING;
+                meta.stateTimer = 50 + Math.floor(Math.random() * 50);
             } else {
                 meta.state = AI_STATE.FORAGING;
-                meta.stateTimer = 60 + Math.floor(Math.random() * 80);
+                meta.stateTimer = 70 + Math.floor(Math.random() * 80);
             }
         }
 
         // 6. 【各ステートの行動実行】
         switch (meta.state) {
             case AI_STATE.HARASS: {
-                // ★ 3大ちょっかいアルゴリズムの実装
                 if (!isPlayerActive) {
                     meta.state = AI_STATE.FORAGING;
                     ai.isBoosting = false;
@@ -250,27 +260,27 @@ export class AIManager {
 
                 if (meta.harassSubtype === 0) {
                     // ①「進路横切り（Cut-In Harassment）」
-                    // プレイヤーの前方400〜600pxを予測し、横からブーストで突っ切る
-                    const leadDist = 420 + player.size * 2;
+                    // プレイヤーの前方を予測して軽く横切り、すぐに離脱する
+                    const leadDist = 380 + player.size * 1.5;
                     const predictX = player.x + Math.cos(player.angle) * leadDist;
                     const predictY = player.y + Math.sin(player.angle) * leadDist;
                     ai.targetAngle = Math.atan2(predictY - ai.y, predictX - ai.x);
-                    ai.isBoosting = ai.score > 90 && Math.random() < 0.70;
+                    ai.isBoosting = ai.score > 90 && Math.random() < 0.45;
                 } else if (meta.harassSubtype === 1) {
                     // ②「併走・プレッシャー（Shoulder Pressure）」
-                    // プレイヤーと並走しながら、横からジワジワ頭部を近づけて威嚇
-                    const lateralAngle = player.angle + (Math.random() < 0.5 ? Math.PI / 2.3 : -Math.PI / 2.3);
-                    const flankX = player.x + Math.cos(lateralAngle) * (player.size * 2.8 + ai.size * 2.0);
-                    const flankY = player.y + Math.sin(lateralAngle) * (player.size * 2.8 + ai.size * 2.0);
-                    ai.targetAngle = Math.atan2(flankY - ai.y, flankX - ai.x) * 0.4 + player.angle * 0.6;
-                    ai.isBoosting = ai.score > 100 && player.isBoosting;
+                    // 適度な距離を保ちながら横並びで並走
+                    const lateralAngle = player.angle + (Math.random() < 0.5 ? Math.PI / 2.2 : -Math.PI / 2.2);
+                    const flankX = player.x + Math.cos(lateralAngle) * (player.size * 3.2 + ai.size * 2.2);
+                    const flankY = player.y + Math.sin(lateralAngle) * (player.size * 3.2 + ai.size * 2.2);
+                    ai.targetAngle = Math.atan2(flankY - ai.y, flankX - ai.x) * 0.3 + player.angle * 0.7;
+                    ai.isBoosting = ai.score > 100 && player.isBoosting && Math.random() < 0.40;
                 } else {
                     // ③「餌横取りダッシュ（Greedy Snatch）」
-                    // プレイヤーの進行方向にある餌を先回りしてブースト強奪
-                    const frontX = player.x + Math.cos(player.angle) * 320;
-                    const frontY = player.y + Math.sin(player.angle) * 320;
+                    // プレイヤーの進行方向にある餌を先回りして奪う
+                    const frontX = player.x + Math.cos(player.angle) * 280;
+                    const frontY = player.y + Math.sin(player.angle) * 280;
                     ai.targetAngle = Math.atan2(frontY - ai.y, frontX - ai.x);
-                    ai.isBoosting = ai.score > 80;
+                    ai.isBoosting = ai.score > 85 && Math.random() < 0.55;
                 }
                 break;
             }
@@ -289,7 +299,7 @@ export class AIManager {
 
             case AI_STATE.HUNTER: {
                 let huntTarget = null;
-                let minHuntDistSq = 1500 * 1500;
+                let minHuntDistSq = 1300 * 1300;
 
                 for (let i = 0; i < allSnakes.length; i++) {
                     const other = allSnakes[i];
@@ -312,17 +322,17 @@ export class AIManager {
 
                     if (isEnemyHuge) {
                         ai.targetAngle = angleToEnemy + Math.PI;
-                        ai.isBoosting = ai.score > 120 && Math.random() < 0.45;
+                        ai.isBoosting = ai.score > 120 && Math.random() < 0.35;
                     } else {
-                        // 偏差射撃のように相手の頭部の前方を狙ってブースト突撃
-                        const leadDist = 130 + huntTarget.size;
+                        // 偏差射撃のように相手の頭部の前方を狙う
+                        const leadDist = 110 + huntTarget.size;
                         const tx = huntTarget.x + Math.cos(huntTarget.angle) * leadDist;
                         const ty = huntTarget.y + Math.sin(huntTarget.angle) * leadDist;
                         ai.targetAngle = Math.atan2(ty - ai.y, tx - ai.x);
-                        ai.isBoosting = ai.score > 110 && Math.random() < 0.55;
+                        ai.isBoosting = ai.score > 110 && Math.random() < 0.40;
                     }
                 } else {
-                    ai.targetAngle += (Math.random() - 0.5) * 0.4;
+                    ai.targetAngle += (Math.random() - 0.5) * 0.3;
                     ai.isBoosting = false;
                 }
                 break;
@@ -330,8 +340,8 @@ export class AIManager {
 
             case AI_STATE.FORAGING:
             default: {
-                if (Math.random() < 0.15) {
-                    ai.targetAngle += (Math.random() - 0.5) * 0.7;
+                if (Math.random() < 0.12) {
+                    ai.targetAngle += (Math.random() - 0.5) * 0.6;
                 }
                 ai.isBoosting = false;
                 break;

@@ -1,6 +1,8 @@
 // ==============================================================================
 // 『くねくねバトル オンライン』AgentSDK公式マルチプレイ通信マネージャー (network.js)
-// v24.0.0 GRAVITY最大6名対応＆アバターURL双方向同期版:
+// v24.2.0 主語バッジ統一＆入退室対通知・不要弾幕全廃版:
+// ・全弾幕を「[ 名前バッジ ] + アクション（入室！ / 退室！）」へ刷新し主語を統一
+// ・「ルーム作成」「合流」「ホスト昇格」「ゲーム開始」「退出」等の不要システム弾幕を完全全廃
 // ・GRAVITY公式最大上限 6名スロット（0〜5）完全対応
 // ・USER_JOIN および ROOM_MEMBERS_SYNC でのアバター portrait 完全伝播
 // ・送信ループ・アクションキューを net_broadcaster.js へ完全分離（コード半減）
@@ -59,7 +61,7 @@ export const NetworkManager = {
     clientId: generateClientId(),
     myUser: { name: 'あなた', user_id: 'local_user', portrait: '' },
 
-    // ★ GRAVITY公式上限の 6名スロット（0〜5）に完全整合
+    // GRAVITY公式上限の 6名スロット（0〜5）に完全整合
     slots: Array.from({ length: MAX_PLAYERS }, (_, i) => ({
         slot: i,
         clientId: null,
@@ -91,7 +93,8 @@ export const NetworkManager = {
         onDropSpawned: null,
         onDropClusterSpawned: null,
         onSeedReceived: null,
-        onGameStart: null
+        onGameStart: null,
+        onLeaderboardSync: null
     },
 
     setCallbacks(cb) {
@@ -123,6 +126,8 @@ export const NetworkManager = {
             ? window.GRAVITY_USER_NAME
             : this.myUser.name;
         const myColor = SNAKE_COLORS[this.mySlot % SNAKE_COLORS.length];
+        
+        // ★ 主語バッジ統一チャット：[ ユーザー名 ] 本文
         Danmaku.push(myName, cleanText, myColor);
 
         if (this.isMultiplayerActive) {
@@ -132,6 +137,7 @@ export const NetworkManager = {
 
     /**
      * ホスト専用：待機室から全端末へゲーム開始を一斉通知する
+     * ★ 不要な「ゲームを開始します！」弾幕ログは完全撤去
      */
     broadcastStartGame() {
         if (!this.isMultiplayerActive || !this.isHost) return;
@@ -139,7 +145,6 @@ export const NetworkManager = {
             e: 'START_GAME',
             seed: this.currentSeed
         });
-        Danmaku.push('システム', 'ゲームを開始します！', '#38bdf8', true);
     },
 
     /**
@@ -222,6 +227,7 @@ export const NetworkManager = {
 
     /**
      * ルーム作成（最大6名）
+     * ★ 不要な「ルームを作成しました」弾幕ログは完全撤去
      */
     async createRoom(isPrivate = false) {
         if (!this.isSDKAvailable) {
@@ -315,7 +321,6 @@ export const NetworkManager = {
 
             this._stopHostWatchdog();
             this._startBroadcasting();
-            Danmaku.push('システム', `ルーム #${createdRoomId.slice(-4)} を作成しました (最大${MAX_PLAYERS}名)`, '#00e5ff', true);
 
             return this.currentRoomId;
         } catch (err) {
@@ -331,6 +336,7 @@ export const NetworkManager = {
 
     /**
      * ルーム参加
+     * ★ 不要な「ルームに合流しました」弾幕ログは完全撤去
      */
     async joinRoom(roomId) {
         if (!this.isSDKAvailable || !roomId) return { success: false, msg: '無効な操作です' };
@@ -405,7 +411,7 @@ export const NetworkManager = {
             this._startHostWatchdog();
             this._startBroadcasting();
 
-            // 入室直後にホストへ自発参加通知（名前とアバター画像URLを確実に送出）
+            // 入室直後にホストへ自発参加通知
             setTimeout(() => {
                 this._sendCustomMessage({
                     e: 'USER_JOIN',
@@ -415,8 +421,6 @@ export const NetworkManager = {
                     portrait: this.myUser.portrait || ''
                 });
             }, 100);
-
-            Danmaku.push('システム', `ルーム #${safeRoomId.slice(-4)} に合流しました`, '#34d399', true);
 
             return { success: true };
         } catch (err) {
@@ -450,6 +454,10 @@ export const NetworkManager = {
         return [];
     },
 
+    /**
+     * プレイヤー参加処理
+     * ★ 主語バッジ統一フォーマット：[ ユーザー名 ] 入室！
+     */
     _handleUserJoined(data) {
         if (!this.isHost || !data) return;
         const userId = String(data.user_id || data.userId || '');
@@ -460,7 +468,6 @@ export const NetworkManager = {
         let targetSlot = this.slots.findIndex(s => s.userId && String(s.userId) === userId);
 
         if (targetSlot === -1) {
-            // スロット1〜5の空きスロット（isAI === true）を検索
             for (let i = 1; i < this.slots.length; i++) {
                 if (this.slots[i].isAI) {
                     targetSlot = i;
@@ -493,10 +500,16 @@ export const NetworkManager = {
             }
 
             Menu.updateParticipants(this.slots.filter(s => !s.isAI));
-            Danmaku.push('参加', `${guestName} が対戦に参加しました`, this.slots[targetSlot].color);
+
+            // ★ 主語バッジ統一入室通知：[ guestName ] 入室！
+            Danmaku.push(guestName, '入室！', this.slots[targetSlot].color);
         }
     },
 
+    /**
+     * プレイヤー退出処理
+     * ★ 主語バッジ統一フォーマット：[ ユーザー名 ] 退室！
+     */
     _handleUserExited(data) {
         if (!data) return;
         const userId = String(data.user_id || data.userId || '');
@@ -517,7 +530,8 @@ export const NetworkManager = {
                 joinTime: 0
             };
 
-            Danmaku.push('退室', `${exitedName} が退出しました`, '#94a3b8');
+            // ★ 主語バッジ統一退室通知：[ exitedName ] 退室！
+            Danmaku.push(exitedName, '退室！', '#64748b');
 
             if (typeof window !== 'undefined' && window.UIController && typeof window.UIController.updateWaitingMembersList === 'function') {
                 window.UIController.updateWaitingMembersList();
@@ -566,6 +580,10 @@ export const NetworkManager = {
         }
     },
 
+    /**
+     * 自律ホスト昇格
+     * ★ 不要な「あなたが新しいホストに昇格しました」弾幕ログは完全撤去
+     */
     promoteToHost() {
         if (this._isPromoting || this.isHost) return;
         this._isPromoting = true;
@@ -599,7 +617,6 @@ export const NetworkManager = {
         }
 
         Menu.updateParticipants(this.slots.filter(s => !s.isAI));
-        Danmaku.push('システム', 'あなたが新しいホストに昇格しました', '#ffdd00', true);
         this._isPromoting = false;
     },
 
@@ -659,7 +676,7 @@ export const NetworkManager = {
                     }
                 }
 
-                // ★ リーダーボード同期情報の受信処理
+                // リーダーボード同期情報の受信処理
                 if (packet.lb && this.callbacks.onLeaderboardSync) {
                     this.callbacks.onLeaderboardSync(packet.lb);
                 }
@@ -691,6 +708,7 @@ export const NetworkManager = {
                             const senderSlot = chat.slot;
                             const senderName = this.slots[senderSlot] ? this.slots[senderSlot].name : `P${senderSlot + 1}`;
                             const badgeColor = SNAKE_COLORS[senderSlot % SNAKE_COLORS.length];
+                            // 主語バッジ統一チャット
                             Danmaku.push(senderName, chat.message, badgeColor);
                         }
                     });
@@ -748,7 +766,6 @@ export const NetworkManager = {
         this.isHost = false;
         this.isMultiplayerActive = false;
         this.mySlot = 0;
-        Danmaku.push('システム', 'ルームを退出しました', '#94a3b8', true);
     }
 };
 if (typeof window !== 'undefined') window.NetworkManager = NetworkManager;

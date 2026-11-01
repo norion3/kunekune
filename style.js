@@ -1,11 +1,12 @@
 // ==============================================================================
 // 『くねくねバトル オンライン』iOS WebKit & iPhone 干渉完全マスクスタイル (style.js)
-// v24.1.0 弾幕チャット速度緩和（7.0秒ゆったり表示）＆リアルタイム完全透過版:
-// ・弾幕チャットのアニメーション時間を4.5秒から7.0秒へ緩和（流れる速度が落ち着き読破性大幅向上）
+// v24.2.0 UIレイアウト最適化＆ルーム招待被り完全根絶版:
+// ・右側アクション群（ズーム＋/ー、ランキング、MAP）を上方に大きく引き上げ、公式「ルーム招待」ボタンとの干渉を完全根絶
+// ・左下音量ボタンをMENUの真上に縦並び配置し、左手親指の仮想ジョイスティック操作領域を広大に開放
+// ・待機室リスト枠の最大高さを拡張し、最大6名スロット全員をスクロールなしで完全表示
+// ・弾幕チャットのアニメーション時間を7.0秒へ緩和（ゆったり落ち着いた読破性を実現）
 // ・backdrop-filter を全撤廃し、WebKit特有のCanvas背景フリーズ（非リアルタイム化）を完全解消
 // ・順位パネル（#stats-box）および全操作ボタンをマップ同様の極薄透過アルファに統一
-// ・背後を通過する敵・星・餌が60FPSで一切濁らずクリアに透けて見える視認性を実現
-// ・左下：MENU（44px丸型）＋サウンド、右側：ズーム（＋/ー・44px）・順位・マップ・ブースト黄金配置
 // ・GRAVITYマイアイコン顔選択ボタン対応 ＆ overscroll-behavior: none 厳格維持
 // ==============================================================================
 
@@ -105,13 +106,15 @@ export function injectStyles() {
 
         /* ==========================================================================
            左下ボタングループ：低頻度操作（MENU、サウンド）
-           ＝左手親指の広大な可動スペースを確保し、仮想ジョイスティック操作を一切邪魔しない
+           ★ 横並びを廃止し、左端に沿って「MENUの真上に音量ボタン」を縦並び配置
+           ＝画面中央寄りへの張り出しをゼロ化し、左手親指の仮想ジョイスティック操作域を広大に開放
            ========================================================================== */
         .bottom-left-group {
             position: absolute;
             bottom: var(--safe-bottom);
             left: var(--safe-side);
             display: flex;
+            flex-direction: column-reverse;
             align-items: center;
             gap: 10px;
             pointer-events: auto;
@@ -182,11 +185,12 @@ export function injectStyles() {
 
         /* ==========================================================================
            右側ボタングループ：高頻度操作（ズーム＋/ー、ランキング、マップ）
-           ＝右手親指の可動域に合わせて縦並びに44px統一配置
+           ★ 下部基準位置を大きく引き上げ（calc(var(--safe-bottom) + 162px)）
+           ＝GRAVITY公式の「ルーム招待 [↑]」ボタンや右下BOOSTボタンとの被りを完全根絶
            ========================================================================== */
         .right-action-group {
             position: absolute;
-            bottom: calc(var(--safe-bottom) + 98px);
+            bottom: calc(var(--safe-bottom) + 162px);
             right: 18px;
             display: flex;
             flex-direction: column;
@@ -263,7 +267,7 @@ export function injectStyles() {
             pointer-events: none;
         }
 
-        /* --- 弾幕チャット（★移動速度をゆったり7.0秒へ緩和） --- */
+        /* --- 弾幕チャット（移動速度をゆったり7.0秒へ緩和・二重シャドウ防衛） --- */
         #danmaku-container {
             position: absolute;
             top: 0;
@@ -281,22 +285,20 @@ export function injectStyles() {
             display: flex;
             align-items: center;
             gap: 6px;
-            font-size: 14px;
+            font-size: 13.5px;
             font-weight: 700;
             color: #ffffff;
-            text-shadow: 1px 1px 3px rgba(0, 0, 0, 0.9);
+            text-shadow: 0 1px 4px rgba(0, 0, 0, 0.95), 0 0 2px rgba(0, 0, 0, 0.8);
             animation: danmaku-fly 7.0s linear forwards;
             pointer-events: none;
         }
         .danmaku-badge {
-            font-size: 10px;
-            font-weight: 800;
-            padding: 2px 7px;
-            border-radius: 10px;
+            font-size: 11px;
+            font-weight: 900;
+            padding: 2px 8px;
+            border-radius: 12px;
             color: #0b051a;
-        }
-        .danmaku-system {
-            color: #ffdd00;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.6);
         }
         @keyframes danmaku-fly {
             0% { transform: translateX(0); left: 100%; }
@@ -872,6 +874,7 @@ export function injectStyles() {
             cursor: pointer;
         }
 
+        /* 待機室オーバーレイ（★最大高さを320pxへ拡張し、6名スロット全員をスクロールなしで完全表示） */
         #waiting-overlay {
             display: none;
             position: absolute;
@@ -922,7 +925,7 @@ export function injectStyles() {
             display: flex;
             flex-direction: column;
             gap: 8px;
-            max-height: 240px;
+            max-height: 320px;
             overflow-y: auto;
             -webkit-overflow-scrolling: touch;
             touch-action: pan-y;
@@ -942,8 +945,8 @@ export function injectStyles() {
             gap: 10px;
         }
         .waiting-slot-badge {
-            width: 22px;
-            height: 22px;
+            width: 24px;
+            height: 24px;
             border-radius: 6px;
             display: flex;
             align-items: center;
