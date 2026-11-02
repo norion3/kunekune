@@ -369,7 +369,7 @@ export class Snake {
 
         const currentFloorScore = Math.floor(this.score);
         // 10万・100万時のバッジはみ出しを防止する短縮フォーマット
-        const scoreText = formatBadgeScore(currentFloorFloor || currentFloorScore);
+        const scoreText = formatBadgeScore(currentFloorScore);
         const nameText = this.name.length > 10 ? this.name.slice(0, 9) + '…' : this.name;
 
         if (this._cachedBadgeScore !== currentFloorScore || this._cachedBadgeName !== nameText) {
