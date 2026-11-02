@@ -1,6 +1,9 @@
 // ==============================================================================
 // 『くねくねバトル オンライン』iOS WebKit & iPhone 干渉完全マスクスタイル (style.js)
-// v25.2.0 弾幕ゴールデンゾーン解放＆高コントラスト視認性強化版:
+// v25.7.0 右上いいねアンカー完全遮光ネオンフロスト＆ミニマップ重畳最適化版:
+// ・【いいね誘導アンカー刷新】95%完全遮光ディープネイビー ＋ blur(16px) ネオンフロスト化
+// ・ミニマップと重なっても背後の格子線やドットが一切透けず、文字が100%クッキリ読める z-index: 220 確立
+// ・右上の公式メニュー [↑] 直下を小気味よく指し示すバウンスネオン矢印アニメーション
 // ・弾幕コンテナをヘッダーUI直下（var(--safe-top) + 26px）へ引き下げ、ヘッダー被りを完全根絶
 // ・高さ 42vh（画面高さの約42%）の広大な帯域へ解放し、ニコニコ動画風の躍動感を復活
 // ・星屑や白い肉片と重なってもクッキリ読める多層テキストシャドウ＆視認性強化
@@ -324,51 +327,62 @@ export function injectStyles() {
             100% { transform: translateX(-200%); left: -50%; }
         }
 
-        /* 分離型いいね誘導アンカー */
+        /* ==========================================================================
+           右上公式メニューいいね誘導アンカー（ミニマップ重畳・高コントラスト完全遮光版）
+           ★ 右上配置の必然性を活かし、ミニマップの上に重なっても文字が100%読める仕様
+           ========================================================================== */
         #like-guide-anchor {
             position: fixed;
-            top: max(56px, env(safe-area-inset-top, 24px) + 48px);
-            right: 12px;
-            z-index: 200;
+            /* 右上の公式 [↑] アイコン直下に吸着 */
+            top: max(56px, env(safe-area-inset-top, 24px) + 46px);
+            right: 14px;
+            z-index: 220; /* ミニマップ(Canvas: z-index 10)より確実に前面 */
             display: flex;
             flex-direction: column;
             align-items: flex-end;
             pointer-events: none;
             opacity: 0;
-            transform: translateY(-6px);
-            transition: opacity 0.22s ease, transform 0.22s ease;
+            transform: translateY(-8px) scale(0.95);
+            transition: opacity 0.25s cubic-bezier(0.16, 1, 0.3, 1), transform 0.25s cubic-bezier(0.16, 1, 0.3, 1);
         }
         #like-guide-anchor.show {
             opacity: 1;
-            transform: translateY(0);
+            transform: translateY(0) scale(1);
         }
+
+        /* 右上ボタンを指し示すネオン矢印 */
         .like-guide-arrow {
             width: 0;
             height: 0;
-            border-left: 7px solid transparent;
-            border-right: 7px solid transparent;
-            border-bottom: 9px solid #38bdf8;
-            margin-right: 14px;
-            margin-bottom: 3px;
-            animation: likeArrowPulse 0.8s ease-in-out infinite alternate;
+            border-left: 8px solid transparent;
+            border-right: 8px solid transparent;
+            border-bottom: 10px solid #38bdf8;
+            margin-right: 18px;
+            margin-bottom: 4px;
+            filter: drop-shadow(0 0 6px #38bdf8);
+            animation: likeArrowBounce 0.75s ease-in-out infinite alternate;
         }
-        @keyframes likeArrowPulse {
+        @keyframes likeArrowBounce {
             0% { transform: translateY(0); }
-            100% { transform: translateY(-4px); }
+            100% { transform: translateY(-5px); }
         }
+
+        /* 高密度・95%完全遮光ネオンフキダシ（ミニマップが背後にあっても文字が100%読める） */
         .like-guide-bubble {
-            background: linear-gradient(135deg, rgba(2, 132, 199, 0.95) 0%, rgba(3, 105, 161, 0.98) 100%);
+            background: rgba(11, 5, 26, 0.95); /* 95%完全遮光ディープネイビー */
+            backdrop-filter: blur(16px);
+            -webkit-backdrop-filter: blur(16px);
             border: 1.5px solid #38bdf8;
             border-radius: 14px;
-            padding: 8px 14px;
+            padding: 10px 14px;
             color: #ffffff;
-            font-size: 12px;
+            font-size: 12.5px;
             font-weight: 800;
-            letter-spacing: 0.02em;
-            box-shadow: 0 4px 18px rgba(2, 132, 199, 0.5), 0 0 10px rgba(56, 189, 248, 0.4);
-            text-align: left;
+            letter-spacing: 0.03em;
             line-height: 1.45;
+            text-align: right;
             white-space: nowrap;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.85), 0 0 16px rgba(56, 189, 248, 0.35);
         }
 
         /* --- ボトムシートメニュー --- */

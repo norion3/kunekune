@@ -1,17 +1,18 @@
 /**
  * ==============================================================================
  * 『くねくねバトル オンライン』一体型HUD ＆ 自機中心相対追従レーダー (hud.js)
- * v25.3.0 レーダー戦術性刷新＆人間・AI識別・視野ガイド自然化版:
- * ・真ん中の四角を「極薄ハイライト＋四隅フォーカス枠」へ刷新し、カメラ視野であることを直感化
- * ・自機中心ドットに進行方向を示す三角矢印（▲）インジケーターを配置
- * ・人間プレイヤー（P1〜P6）をスロット動的カラー ＋ 外周ネオンパルスリング（二重円）で特別表示
- * ・画面外にいる人間プレイヤーもレーダー有効範囲内なら100%確実に追従表示（索敵正常化）
- * ・AIスネークは格上（危険赤ドット）／格下（控えめ小型ドット）で人間と一瞬で識別可能
+ * v25.6.0 人間厳格判定＆高視認性ゴールド方向ポインター版:
+ * ・【AI人間誤判定根絶】マルチ有効かつ slots[s.id] が人間（!isAI）である場合のみ二重リング描画
+ * ・ソロプレイ時や空き枠AI（ID: 1〜5）が誤って他ユーザー表示される不具合を100%解消
+ * ・【方向マーカー刷新】自機リングの外側へ突き出す高輝度ゴールド矢印（#fde047）＋黒輪郭線を配備
+ * ・背景やシアンリングと同化せず、進行方向（angle）が一瞬で直感視認可能
+ * ・カメラ視野枠の極薄ハイライト＋四隅フォーカス枠（[ ]）維持
  * ・描画負荷軽減：2フレームに1回（30FPS）描画スロットリング ＆ Offscreen キャッシュ維持
  * ==============================================================================
  */
 
 import { MAX_PLAYERS } from './constants.js';
+import { NetworkManager } from './network.js';
 
 export class HUDManager {
     constructor() {
@@ -78,7 +79,7 @@ export class HUDManager {
 
     /**
      * 自機中心の相対追従レーダーをメインCanvasに直接描画
-     * 人間/AI完全識別・動的カラー同期・カメラ視野ハイライト版
+     * 人間厳格識別・ゴールド方向ポインター・カメラ視野ハイライト版
      */
     drawRadar(ctx, canvasWidth, safeTop, player, otherEntities, cameraScale) {
         if (!this.showMap || !player) return;
@@ -132,6 +133,13 @@ export class HUDManager {
                 }
             }
 
+            // マルチプレイ状態およびスロットの取得
+            const isMultiActive = Boolean(
+                NetworkManager.isMultiplayerActive || 
+                (typeof window !== 'undefined' && window.NetworkManager && window.NetworkManager.isMultiplayerActive)
+            );
+            const netSlots = NetworkManager.slots || (typeof window !== 'undefined' && window.NetworkManager && window.NetworkManager.slots);
+
             // 2. 他スネーク（人間プレイヤー ＆ AI）の描画
             if (otherEntities && otherEntities.length > 0) {
                 const totalEntities = otherEntities.length;
@@ -139,8 +147,18 @@ export class HUDManager {
                     const s = otherEntities[i];
                     if (s === player || s.isDead) continue;
 
-                    // ★ 人間プレイヤー判定（スロット 0〜5 または isPlayer）
-                    const isHuman = s.isPlayer || (s.id !== undefined && s.id < MAX_PLAYERS);
+                    // ★ 人間プレイヤー厳格判定：
+                    // 自機以外は「マルチプレイ有効」かつ「有効スロット（0〜5）」かつ「!isAI」であること
+                    // （ソロプレイ時やCPU 1〜5が誤って人間二重リングになるバグを100%排除）
+                    let isHuman = false;
+                    if (s.isPlayer) {
+                        isHuman = true;
+                    } else if (isMultiActive && s.id !== undefined && s.id >= 0 && s.id < MAX_PLAYERS) {
+                        const slotData = netSlots ? netSlots[s.id] : null;
+                        if (slotData && !slotData.isAI) {
+                            isHuman = true;
+                        }
+                    }
 
                     const drawX = radarCenter + (s.x - cx) * radarRatio;
                     const drawY = radarCenter + (s.y - cy) * radarRatio;
@@ -239,13 +257,13 @@ export class HUDManager {
             rCtx.lineTo(left + camRectW, top + camRectH - bracketLen);
             rCtx.stroke();
 
-            // 4. ★ 自機中心ドット ＆ 進行方向矢印（▲）インジケーター
+            // 4. ★ 自機中心ドット ＆ 進行方向ゴールドポインター（▲）
             const pAngle = (player.angle !== undefined) ? player.angle : 0;
-            const arrowTipDist = 7.5;
-            const arrowWingDist = 4.2;
-            const arrowWingAngle = 0.5;
+            // 先端を自機リング（半径5.0）の外側（11.2px）へ大きく突き出させて視認性を最大化
+            const arrowTipDist = 11.2;
+            const arrowWingDist = 4.8;
+            const arrowWingAngle = 0.58;
 
-            // 進行方向ポインター（▲）
             const tipX = radarCenter + Math.cos(pAngle) * arrowTipDist;
             const tipY = radarCenter + Math.sin(pAngle) * arrowTipDist;
             const wingLeftX = radarCenter + Math.cos(pAngle + Math.PI - arrowWingAngle) * arrowWingDist;
@@ -253,15 +271,21 @@ export class HUDManager {
             const wingRightX = radarCenter + Math.cos(pAngle - Math.PI + arrowWingAngle) * arrowWingDist;
             const wingRightY = radarCenter + Math.sin(pAngle - Math.PI + arrowWingAngle) * arrowWingDist;
 
-            rCtx.fillStyle = '#00e5ff';
+            // 黒アウトライン付き高輝度ゴールド矢印（背景と同化せず進行方向が0秒で判別可能）
             rCtx.beginPath();
             rCtx.moveTo(tipX, tipY);
             rCtx.lineTo(wingLeftX, wingLeftY);
             rCtx.lineTo(wingRightX, wingRightY);
             rCtx.closePath();
+
+            rCtx.fillStyle = '#fde047'; // ゴールドイエロー
             rCtx.fill();
 
-            // 自機中心（白丸 ＋ ネオンリング）
+            rCtx.strokeStyle = 'rgba(0, 0, 0, 0.9)';
+            rCtx.lineWidth = 1.2;
+            rCtx.stroke();
+
+            // 自機中心（白丸 ＋ ネオンシアンリング）
             rCtx.fillStyle = '#ffffff';
             rCtx.beginPath();
             rCtx.arc(radarCenter, radarCenter, 3.2, 0, Math.PI * 2);

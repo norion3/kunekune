@@ -1,6 +1,8 @@
 // ==============================================================================
 // 『くねくねバトル オンライン』マルチプレイ通信プロトコル ＆ 極小タプルパッカー (net_protocol.js)
-// v21.2.0 撃破肉片クラスタタプル規格統合版:
+// v25.8.0 無敵ビット同期＆リスポーン即死根絶版:
+// ・タプル flags に Bit 4: isInvulnerable（無敵状態）を新設し、ホスト＆全端末へ完全同期
+// ・リスポーン直後のゲストが無敵中であるにも関わらずホスト側判定で即爆死させられる致命的バグを根絶
 // ・ゼロアロケーション純粋算術丸め（JSON文字列化時の桁あふれ完全防止）
 // ・スネーク走者9要素タプル規格（1人あたり約32バイト、完全互換維持）
 // ・餌取得・散布肉片・撃破クラスタ・チャットの極小タプルシリアライザー
@@ -56,6 +58,8 @@ export function encodeSnakeToTuple(snake, slot, isHost = false) {
     if (snake.isDead)     flags |= 2;  // Bit 1: 死亡
     if (isHost)           flags |= 4;  // Bit 2: ルームホスト
     if (!snake.isPlayer)  flags |= 8;  // Bit 3: 自律AI
+    // ★ Bit 4: 無敵状態（リスポーン即死防止用）
+    if (snake.invulnerableTimer && snake.invulnerableTimer > 0) flags |= 16;
 
     return [
         slot,
@@ -101,6 +105,8 @@ export function decodeTupleToSnake(tuple) {
         isDead: Boolean(flags & 2),
         isHost: Boolean(flags & 4),
         isAI: Boolean(flags & 8),
+        // ★ Bit 4 のデコード：無敵状態の反映
+        isInvulnerable: Boolean(flags & 16),
         kills: kills
     };
 }

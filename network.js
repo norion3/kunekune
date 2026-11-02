@@ -1,6 +1,7 @@
 // ==============================================================================
 // 『くねくねバトル オンライン』AgentSDK公式マルチプレイ通信マネージャー (network.js)
-// v25.0.0 スロット不変自律ホスト昇格＆DM直接参戦シームレス同期版:
+// v25.9.0 退室者完全パージ＆DM直接参戦競合解消版:
+// ・退室者検知時に onUserExited コールバックを発行し、main.js からインスタンスを完全除去（メモリリーク根絶）
 // ・スロット不変原則遵守：ホスト昇格時も mySlot を保持し、幽霊スネークの多重生成を完全根絶
 // ・ホスト昇格時に onHostPromoted コールバックを発火し、新ホスト端末でのAI維持を確約
 // ・対戦中（playing）の合流検知時、ROOM_MEMBERS_SYNC に act: true を同封し、
@@ -96,7 +97,8 @@ export const NetworkManager = {
         onSeedReceived: null,
         onGameStart: null,
         onLeaderboardSync: null,
-        onHostPromoted: null // ★ ホスト昇格時イベント（AI引き継ぎ・UI再活性化用）
+        onHostPromoted: null, // ★ ホスト昇格時イベント（AI引き継ぎ用）
+        onUserExited: null    // ★ 退出者完全パージ用
     },
 
     setCallbacks(cb) {
@@ -519,6 +521,7 @@ export const NetworkManager = {
 
     /**
      * プレイヤー退出処理
+     * ★ 退室スロットを初期化し、コールバックで main.js から実体を完全パージ
      */
     _handleUserExited(data) {
         if (!data) return;
@@ -539,6 +542,11 @@ export const NetworkManager = {
                 isAI: true,
                 joinTime: 0
             };
+
+            // ★ 退室者をゲームワールド（main.js）から完全パージ（ゾンビ化・メモリリーク防止）
+            if (this.callbacks.onUserExited) {
+                this.callbacks.onUserExited(slotIdx);
+            }
 
             // ★ 主語バッジ統一退室通知：[ exitedName ] 退室！
             Danmaku.push(exitedName, '退室！', '#64748b');

@@ -1,14 +1,14 @@
 // ==============================================================================
 // 『くねくねバトル オンライン』Phase 5 マスター統合オーケストレーター (main.js)
-// v25.3.0 全スロット正規順位同期・他走者誤死亡根絶＆キル経済適正化版:
-// ・ホストから全人間スロット（0〜5）の確定順位マップ（ranks）を同封し、ゲスト順位9位固定バグを完全解消
-// ・ゲスト端末での他走者同士の衝突死亡誤判定を停止し、レイテンシによる他走者幽霊化を根絶
-// ・キル時スコア吸収率を30%から18%へ適正化＆クラスタ上限設定で急激なインフレを防止
+// v25.9.0 退室者完全除去＆DM直接合流画面競合解消・DeltaTime旋回安定版:
+// ・DM招待合流時、ゲーム画面開始後に bootSequence が待機室を上書き表示する競合バグを根絶
+// ・退室したプレイヤーを remoteSnakes / allSnakes / sortedSnakes から完全パージ（メモリリーク根絶）
+// ・リモート他走者の無敵フラグ（isInvulnerable）同期を反映し、リスポーン即死を完全防止
+// ・旋回計算を DeltaTime 基準化し、低FPS環境での旋回力低下を是正
+// ・ホストから全人間スロット（0〜5）の確定順位マップ（ranks）を同封し、ゲスト順位9位固定バグを解消維持
+// ・ゲスト端末での他走者同士の衝突死亡誤判定を停止し、レイテンシによる他走者幽霊化を根絶維持
+// ・キル時スコア吸収率を30%から18%へ適正化＆クラスタ上限設定で急激なインフレを防止維持
 // ・カメラ追従・視野スケーリング・グリッド描画を camera.js へ完全委譲
-// ・新ホスト昇格（Host Migration）時に aiManager.init をシームレス稼働しAI消滅を完全根絶
-// ・DM招待合流時、ホスト対戦中であれば待機室を自動バイパスし即座にバトルへ直接出撃
-// ・待機室スロット最大6名（0〜5）対応＆アバター画像表示
-// ・ゲームオーバー時もホスト端末のAI演算・他走者同期・物理判定を100%継続
 // ==============================================================================
 
 import { injectStyles } from './style.js';
@@ -142,6 +142,9 @@ export const UIController = {
     },
 
     showWaitingRoom(roomId) {
+        // ★ 対戦プレイ中の場合は待機室の強制上書きを安全にスキップ
+        if (gameState === 'playing') return;
+
         gameState = 'waiting';
         window.currentGameState = gameState;
         const lobby = document.getElementById('lobby-overlay');
@@ -295,7 +298,7 @@ setupNetworkHandlers({
     initGame
 });
 
-// ★ 自律ホスト昇格時のAI維持フック（新ホストがAIを即時初期化して制御を引き継ぐ）
+// ★ 自律ホスト昇格時のAI維持フック ＆ 退室者完全除去フック
 NetworkManager.setCallbacks({
     onHostPromoted() {
         console.log('[HostMigration] ホストに昇格しました。自律生態系AIのシミュレーションを引き継ぎます。');
@@ -307,6 +310,17 @@ NetworkManager.setCallbacks({
             const currentPlayers = allSnakes.filter(s => s.isPlayer || !s.id || s.id < MAX_PLAYERS);
             allSnakes = [...currentPlayers, ...aiManager.ais];
             sortedSnakes = [...allSnakes];
+        }
+    },
+    // ★ 退室したプレイヤーをワールドの配列から完全パージ（ゾンビ化・メモリリーク防止）
+    onUserExited(slotIdx) {
+        const remote = remoteSnakes.get(slotIdx);
+        if (remote) {
+            remoteSnakes.delete(slotIdx);
+            const aIdx = allSnakes.indexOf(remote);
+            if (aIdx !== -1) allSnakes.splice(aIdx, 1);
+            const sIdx = sortedSnakes.indexOf(remote);
+            if (sIdx !== -1) sortedSnakes.splice(sIdx, 1);
         }
     }
 });
@@ -395,7 +409,10 @@ async function bootSequence() {
                 EntryShield.hide();
 
                 if (joinRes.success) {
-                    UIController.showWaitingRoom(targetRoomId);
+                    // ★ 既にゲームが始まっている場合は待機室を上書き表示しない（直接参戦の優先保護）
+                    if (gameState !== 'playing') {
+                        UIController.showWaitingRoom(targetRoomId);
+                    }
                     return;
                 } else {
                     console.warn('[AutoJoin] 自動入室に失敗しました。ロビーへ戻します。');
