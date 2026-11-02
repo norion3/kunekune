@@ -1,15 +1,14 @@
 // ==============================================================================
 // 『くねくねバトル オンライン』スネークエンティティクラス (snake.js)
-// v25.5.0 ブースト顔崩れ完全解消＆頭部円独立ストローク版:
-// ・ブースト時の白枠ストローク前に ctx.beginPath() と頭部円 arc を発行し、表情パーツへの線被り・顔崩壊を完全根絶
+// v26.1.0 引数厳格化DeltaTime物理＆描画顔崩れ防止版:
+// ・【引数厳格判定】updatePhysics のシグネチャを arguments.length >= 3 で厳格化し、真右斜め下（0 < angle < 0.3）の型誤認バグを完全排除
+// ・フレームレート非依存物理：30FPS〜120FPSのどの環境でも同一の旋回半径・移動速度・無敵時間を寸分違わず再現
+// ・ブースト時の白枠ストローク前に ctx.beginPath() と頭部円 arc を発行し、表情パーツ崩壊を完全根絶
 // ・無敵時間中（invulnerableTimer > 0）にブーストを入力した瞬間に無敵を即時強制解除
-// ・無敵特攻による一方的なキルを根絶し、安全離脱 vs 攻撃的加速の戦術的選択を確立
 // ・表情ベクター描画を snake_face.js へ完全委譲し、ファイルサイズ約40%削減維持
 // ・体節描画ステップ間引き（長大スネーク時のドローコール半減・iOS 60FPS死守）
 // ・頭上バッジの ctx.measureText() キャッシュ化（毎フレームの不要文字列レイアウト計算根絶）
-// ・ブースト消費レート適正化（-0.09 -> -0.35：身を削る戦術的駆け引きの復活）
-// ・左右の索敵視野遮蔽を根絶する「上段スコア・下段名前」の超コンパクトカプセルHUD維持
-// ・GRAVITYマイアイコン（user_avatar）選択時の高精細円形アバター＆ネオンリング合成
+// ・ブースト消費レート適正化（毎秒約21pt消費：戦術的駆け引きの維持）
 // ・O(1) リングバッファ ＆ ゼロアロケーション体節追従
 // ==============================================================================
 
@@ -103,15 +102,41 @@ export class Snake {
         this.isDead = true;
     }
 
-    updatePhysics(inputAngle, boostActive) {
+    /**
+     * 完全DeltaTime物理演算（引数厳格判定対応）
+     * @param {number|null} arg1 dtSec（新シグネチャ）または inputAngle（旧シグネチャ）
+     * @param {number|boolean|null} arg2 inputAngle（新シグネチャ）または boostActive（旧シグネチャ）
+     * @param {boolean} [arg3] boostActive（新シグネチャ）
+     */
+    updatePhysics(arg1, arg2, arg3) {
         if (this.isDead) return;
+
+        let dtSec = 1 / 60;
+        let inputAngle = null;
+        let boostActive = false;
+
+        // ★ 引数厳格判定：arguments.length が 3 つ以上、または第3引数が明示されている場合は新シグネチャ (dtSec, angle, boost)
+        if (arguments.length >= 3 || typeof arg3 === 'boolean') {
+            dtSec = (typeof arg1 === 'number' && arg1 > 0) ? Math.min(arg1, 0.1) : (1 / 60);
+            inputAngle = (typeof arg2 === 'number') ? arg2 : null;
+            boostActive = Boolean(arg3);
+        } else {
+            // 旧シグネチャ互換: (inputAngle, boostActive)
+            inputAngle = (typeof arg1 === 'number') ? arg1 : null;
+            boostActive = Boolean(arg2);
+            dtSec = 1 / 60;
+        }
+
+        // 60FPS基準のタイムスケール係数（例: 30FPSなら dtSec≒0.0333, timeScale≒2.0）
+        const timeScale = Math.max(0.1, Math.min(3.0, dtSec * 60));
 
         // ★ 無敵特攻キルの抑止：無敵中にブーストを入力した場合、無敵時間を即座に強制解除
         if (this.invulnerableTimer > 0) {
             if (boostActive && this.score > 60) {
                 this.invulnerableTimer = 0;
             } else {
-                this.invulnerableTimer -= 1 / 60;
+                // 実時間（秒）で正確に減算（フレームレート依存の無敵時間倍増を完全防止）
+                this.invulnerableTimer = Math.max(0, this.invulnerableTimer - dtSec);
             }
         }
 
@@ -121,9 +146,9 @@ export class Snake {
         const currentSpeed = this.isBoosting ? dynamicBaseSpeed * BOOST_SPEED_MULT : dynamicBaseSpeed;
         this.speed = currentSpeed;
 
-        // ★ ブースト消費レート適正化（毎秒約21pt消費：無制限ブーストを防止し戦術的駆け引きを創出）
+        // ★ ブースト消費レート適正化（実時間基準：毎秒約21pt消費）
         if (this.isBoosting) {
-            this.score = Math.max(50, this.score - 0.35);
+            this.score = Math.max(50, this.score - 0.35 * timeScale);
             this.recalculateSize();
         }
 
@@ -131,13 +156,15 @@ export class Snake {
             this.targetAngle = inputAngle;
         }
 
+        // 旋回計算のDeltaTimeスケーリング（30FPSでも曲がりやすさが完全に同一）
         let diff = this.targetAngle - this.angle;
         while (diff < -Math.PI) diff += Math.PI * 2;
         while (diff > Math.PI) diff -= Math.PI * 2;
-        this.angle += Math.sign(diff) * Math.min(Math.abs(diff), this.turnSpeed);
+        this.angle += Math.sign(diff) * Math.min(Math.abs(diff), this.turnSpeed * timeScale);
 
-        this.x += Math.cos(this.angle) * this.speed;
-        this.y += Math.sin(this.angle) * this.speed;
+        // 移動座標のDeltaTimeスケーリング（速度半減を完全是正）
+        this.x += Math.cos(this.angle) * (this.speed * timeScale);
+        this.y += Math.sin(this.angle) * (this.speed * timeScale);
 
         const wallMin = this.size;
         const wallMax = MAP_SIZE - this.size;
@@ -150,7 +177,7 @@ export class Snake {
         }
 
         // O(1) リングバッファへの座標格納（GC負荷ゼロ）
-        this.distCounter += this.speed;
+        this.distCounter += this.speed * timeScale;
         const stepDist = this.size * 0.55;
         if (this.distCounter >= stepDist) {
             this.distCounter = 0;
@@ -182,7 +209,7 @@ export class Snake {
         }
 
         const histLen = this.historyLength;
-        // ★ 描画ステップ間引き：体節数が長大な場合、ステップを2に間引いてGPUドローコールを半減
+        // 描画ステップ間引き：体節数が長大な場合、ステップを2に間引いてGPUドローコールを半減
         const step = (histLen > 30) ? 2 : 1;
 
         // 胴体体節を一括パス連結で描画（ドローコール削減）
@@ -206,7 +233,7 @@ export class Snake {
         }
         ctx.fill();
 
-        // 胴体の光彩・ウロコシャドウ（フロー効果）を一括描画（間引き適用）
+        // 胴体の光彩・ウロコシャドウ（フロー効果）を一括描画
         ctx.fillStyle = 'rgba(0, 0, 0, 0.15)';
         ctx.beginPath();
         for (let i = histLen - 1; i >= 0; i -= (step * 2)) {
@@ -235,37 +262,31 @@ export class Snake {
         ctx.translate(this.x, this.y);
         ctx.rotate(this.angle);
 
-        // ★ GRAVITYユーザーアバター顔スキンの場合：円形マスクでポートレート写真を描画
+        // GRAVITYユーザーアバター顔スキンの場合：円形マスクでポートレート写真を描画
         if (this.face === 'user_avatar' && window.userAvatarImgInstance && window.userAvatarImgInstance.complete) {
             ctx.save();
             ctx.beginPath();
             ctx.arc(0, 0, this.size, 0, Math.PI * 2);
             ctx.clip();
-            // 頭部の進行方向に合わせて自然な向きで描画
             ctx.rotate(Math.PI / 2);
             ctx.drawImage(window.userAvatarImgInstance, -this.size, -this.size, this.size * 2, this.size * 2);
             ctx.restore();
 
-            // 胴体との一体感を保つ微小ネオンリング
             ctx.strokeStyle = this.color;
             ctx.lineWidth = 1.8;
             ctx.beginPath();
             ctx.arc(0, 0, this.size, 0, Math.PI * 2);
             ctx.stroke();
         } else {
-            // スネーク頭部ベース円（胴体とシームレスに繋がる地色）
             ctx.fillStyle = this.color;
             ctx.beginPath();
             ctx.arc(0, 0, this.size, 0, Math.PI * 2);
             ctx.fill();
 
-            // ★ 外部モジュール (snake_face.js) へ完全委譲：パッチリ可愛い表情を描画
             drawSnakeFace(ctx, this.face, this.size);
         }
 
-        // ★ ブースト時の頭部発光（顔崩れバグの完全解消）:
-        // 直前の表情ベクターパスを巻き込まないよう、必ず beginPath() を発行し、
-        // 「頭部ベース円」の外周のみを stroke する
+        // ブースト時の頭部発光（顔崩れバグ完全解消：頭部円のみを単独ストローク）
         if (this.isBoosting) {
             ctx.strokeStyle = '#ffffff';
             ctx.lineWidth = 2.5;
@@ -278,17 +299,13 @@ export class Snake {
 
         ctx.globalAlpha = 1.0;
 
-        // 頭上ステータス表示：左右の死角を遮らない「上段スコア・下段名前」コンパクトカプセル
+        // 頭上ステータス表示
         this.drawOverheadBadge(ctx);
     }
 
-    /**
-     * 頭上ステータスカプセル描画（ビルボード方式：回転せず常に正立）
-     */
     drawOverheadBadge(ctx) {
         ctx.save();
         
-        // 頭部中心から上方向へ頭部サイズ＋余白分オフセット
         const badgeY = this.y - this.size - 18;
         ctx.translate(this.x, badgeY);
 
@@ -296,7 +313,6 @@ export class Snake {
         const scoreText = `${currentFloorScore.toLocaleString()} pt`;
         const nameText = this.name.length > 10 ? this.name.slice(0, 9) + '…' : this.name;
 
-        // ★ テキスト計測キャッシュ（スコアまたは名前が変わった時のみ measureText を実行）
         if (this._cachedBadgeScore !== currentFloorScore || this._cachedBadgeName !== nameText) {
             this._cachedBadgeScore = currentFloorScore;
             this._cachedBadgeName = nameText;
@@ -311,7 +327,6 @@ export class Snake {
         const badgeH = 25;
         const radius = 6;
 
-        // カプセル背景（極薄透過フロスト調・背後の敵を遮らない）
         ctx.fillStyle = 'rgba(11, 5, 26, 0.72)';
         ctx.strokeStyle = 'rgba(0, 229, 255, 0.35)';
         ctx.lineWidth = 1.2;
@@ -327,12 +342,10 @@ export class Snake {
 
         ctx.textAlign = 'center';
 
-        // 上段：スコア（視認性最優先・シアン/ゴールド）
         ctx.fillStyle = this.isPlayer ? '#fde047' : '#38bdf8';
         ctx.font = 'bold 10px sans-serif';
         ctx.fillText(scoreText, 0, -2);
 
-        // 下段：名前（クッキリ白）
         ctx.fillStyle = 'rgba(255, 255, 255, 0.95)';
         ctx.font = 'bold 9.5px sans-serif';
         ctx.fillText(nameText, 0, 9.5);

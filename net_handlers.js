@@ -1,12 +1,11 @@
 // ==============================================================================
 // 『くねくねバトル オンライン』リモートパケット受信反映ハンドラ (net_handlers.js)
-// v25.3.0 全スロット正規順位反映＆リモート死亡完全同期版:
-// ・ホスト確定の全スロット順位マップ（lbData.ranks）から自機順位を直接取得し9位固定を根絶
+// v26.1.0 無敵代入順序適正化＆テレポート時バッファクリア版:
+// ・【無敵同期順序適正化】remote.reset() の後に data.isInvulnerable を反映し、3.0秒による意図せぬ上書きを完全解消
+// ・【ワープ直線根絶】回線瞬断やリスポーン時の大距離テレポート検知（distSq > 160000）でバッファを即時リセット
+// ・ホスト確定の全スロット順位マップ（lbData.ranks）から自機順位を直接取得し9位固定を根絶維持
 // ・対戦中（playing）の部屋への途中参加時、待機室を即座にバイパスして戦場へ直接出撃
 // ・ゲスト端末のランキングチラつき（点滅）をシグネチャ差分ガードで完全根絶
-// ・ホスト確定リーダーボード情報（Top 8・生存数）のみを単一情報源として反映
-// ・「バトル開始」「ワールドシード同期」等の不要な自動弾幕チャットを全撤去
-// ・リモート走者（他プレイヤー/他AI）の位置・向き・速度・スコア同期
 // ・餌捕食イベント (pk) ＆ 撃破肉片クラスタ散布 (dc) の世界反映
 // ==============================================================================
 
@@ -71,6 +70,31 @@ export function setupNetworkHandlers(ctx) {
                 }
             }
 
+            // ★ 1. テレポート検知＆ワープ直線根絶（生存したまま回線瞬断・再合流した時のゴム線防止）
+            const dx = data.x - remote.x;
+            const dy = data.y - remote.y;
+            const distSq = dx * dx + dy * dy;
+            if (distSq > 160000) {
+                // 400px以上の瞬間移動時は古いリングバッファを破棄して新座標へ瞬時にリセット
+                remote.reset(data.x, data.y);
+            }
+
+            // ★ 2. ホスト確定フラグに基づくリモート死亡＆リスポーン復帰処理
+            if (data.isDead && !remote.isDead) {
+                remote.die();
+            } else if (!data.isDead && remote.isDead) {
+                // 死亡状態からのリスポーン復帰：リングバッファ初期化
+                remote.isDead = false;
+                remote.reset(data.x, data.y);
+            }
+
+            // ★ 3. リモート無敵フラグの完全代入（reset() の直後に実行し 3.0秒 での上書きを完全防止）
+            if (data.isInvulnerable) {
+                remote.invulnerableTimer = Math.max(remote.invulnerableTimer || 0, 0.5);
+            } else if (!data.isInvulnerable && remote.invulnerableTimer > 0) {
+                remote.invulnerableTimer = 0;
+            }
+
             remote.targetNetX = data.x;
             remote.targetNetY = data.y;
             remote.targetAngle = data.angle;
@@ -78,12 +102,7 @@ export function setupNetworkHandlers(ctx) {
             remote.targetLength = data.length;
             remote.score = data.score;
             remote.isBoosting = data.isBoosting;
-            // ★ ホスト確定フラグに基づくリモート死亡の反映
-            if (data.isDead && !remote.isDead) {
-                remote.die();
-            } else if (!data.isDead && remote.isDead) {
-                remote.isDead = false; // リスポーン復帰
-            }
+
             remote.kills = data.kills;
             remote.lastPacketTime = performance.now();
             remote.recalculateSize();
@@ -100,7 +119,7 @@ export function setupNetworkHandlers(ctx) {
             const topList = lbData.top || [];
             const totalAlive = lbData.totalAlive || TOTAL_SNAKES;
 
-            // ★ ゲスト端末の自機正規順位算出：
+            // ゲスト端末の自機正規順位算出：
             // 1. ホストから全スロット順位マップ（ranks）が提供されている場合はそれを最優先使用
             // 2. 単独 myRank があればそれを使用
             // 3. なければ Top 8 リストからのフォールバック

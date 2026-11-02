@@ -1,7 +1,8 @@
 /**
  * ==============================================================================
  * 『くねくねバトル オンライン』ボトムシートメニュー (menu.js)
- * v25.1.0 ルーター分離＆走者6枠固定・UI専任版:
+ * v26.1.0 動的HOSTバッジ＆ルーター分離・走者6枠固定UI版:
+ * ・【動的HOSTバッジ解決】ホスト昇格時に空き枠AIスロット0からHOSTバッジを解除し、新ホストへ正確にHOSTを動的付与
  * ・GravityRouter を gravity_router.js へ完全委譲し、ボトムシートUI専任化
  * ・シングル・マルチ共通：走者タブ内に最大定員6名分のスロット枠を常時整然と確保
  * ・GRAVITY公式アバター写真（portrait）の円形トリミング高精細表示
@@ -290,8 +291,9 @@ export class MenuManager {
         if (!listContainer) return;
 
         // 全スロット（スロット0〜5）の参照を取得
-        const slotsSource = (window.NetworkManager && Array.isArray(window.NetworkManager.slots))
-            ? window.NetworkManager.slots
+        const netMgr = (typeof window !== 'undefined' && window.NetworkManager) ? window.NetworkManager : null;
+        const slotsSource = (netMgr && Array.isArray(netMgr.slots))
+            ? netMgr.slots
             : (Array.isArray(playerList) ? playerList : []);
 
         // 参加中の人間プレイヤー数をカウント
@@ -308,11 +310,15 @@ export class MenuManager {
             tabCount.innerText = `(${humanCount}/${MAX_PLAYERS})`;
         }
 
+        const isNetHost = netMgr ? Boolean(netMgr.isHost) : false;
+        const mySlot = netMgr ? netMgr.mySlot : 0;
+        const myUserId = (netMgr && netMgr.myUser) ? String(netMgr.myUser.user_id) : 'local_user';
+
         // 差分検知シグネチャ（不要なDOM再構築防止）
         const signature = slotsSource.slice(0, MAX_PLAYERS).map(s => {
             if (!s) return 'empty';
-            return `${s.slot}_${s.userId || ''}_${s.name || ''}_${s.portrait || ''}_${s.isAI}`;
-        }).join('|');
+            return `${s.slot}_${s.userId || ''}_${s.name || ''}_${s.portrait || ''}_${s.isAI}_${s.isHost || false}`;
+        }).join('|') + `_host:${isNetHost}_mySlot:${mySlot}`;
 
         if (signature === this._lastParticipantSignature && listContainer.children.length === MAX_PLAYERS) {
             return;
@@ -321,21 +327,28 @@ export class MenuManager {
 
         listContainer.innerHTML = '';
 
-        const myUserId = (window.NetworkManager && window.NetworkManager.myUser)
-            ? String(window.NetworkManager.myUser.user_id)
-            : 'local_user';
-        const mySlot = (window.NetworkManager) ? window.NetworkManager.mySlot : 0;
-
         // スロット0〜5（最大6枠）を必ず固定描画
         for (let i = 0; i < MAX_PLAYERS; i++) {
             const slotData = slotsSource[i];
             const isAssigned = slotData && !slotData.isAI;
             const isMe = isAssigned && (slotData.slot === mySlot || String(slotData.userId) === myUserId);
-            const isHost = i === 0;
+
+            // ★ 動的HOST判定：スロット0固定ではなく、現行の真のホストを動的に判定
+            let isCurrentHost = false;
+            if (isAssigned) {
+                if (isMe) {
+                    isCurrentHost = isNetHost;
+                } else if (slotData.isHost !== undefined) {
+                    isCurrentHost = Boolean(slotData.isHost);
+                } else {
+                    // フォールバック: 初期状態（誰も昇格していない場合）はスロット0が人間ならホスト
+                    isCurrentHost = (i === 0 && !isNetHost);
+                }
+            }
 
             const slotColor = (slotData && slotData.color) ? slotData.color : SNAKE_COLORS[i % SNAKE_COLORS.length];
             const displayName = isAssigned 
-                ? (slotData.name || (isHost ? 'ホスト' : `プレイヤー ${i + 1}`))
+                ? (slotData.name || (isCurrentHost ? 'ホスト' : `プレイヤー ${i + 1}`))
                 : `CPU ${i + 1} (空き枠)`;
             const portraitUrl = isAssigned ? (slotData.portrait || '') : '';
             const targetUid = isAssigned ? slotData.userId : null;
@@ -392,7 +405,7 @@ export class MenuManager {
             }
 
             // 情報カラム（名前・ステータス・HOSTバッジ）
-            const hostBadgeHtml = isHost && isAssigned
+            const hostBadgeHtml = isCurrentHost && isAssigned
                 ? `<span style="font-size: 10px; font-weight: 800; color: #fde047; background: rgba(250, 204, 21, 0.2); border: 1px solid rgba(250, 204, 21, 0.5); padding: 1px 5px; border-radius: 4px; margin-left: 6px;">HOST</span>`
                 : '';
             
@@ -423,7 +436,6 @@ export class MenuManager {
             `;
 
             // 実在ユーザー行タップ時：GRAVITY公式プロフィール画面へ即時ジャンプ
-            // ★ ソロ時（isMe かつ userId が設定済み）の場合も確実にジャンプ
             if (isAssigned && targetUid && targetUid !== 'local_user' && targetUid !== 'null' && String(targetUid).trim() !== '') {
                 row.onclick = (e) => {
                     e.stopPropagation();

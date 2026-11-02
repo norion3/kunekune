@@ -1,10 +1,10 @@
 /**
  * ==============================================================================
  * 『くねくねバトル オンライン』ニコニコ風弾幕チャットエンジン (danmaku.js)
- * v25.2.0 ゴールデンゾーン5レーン分散＆高さゆらぎニコニコライブ感版:
- * ・ヘッダーアイコン・ノッチ直下から画面44%までの「弾幕ゴールデンゾーン」へ再配置
- * ・中央自機（50%）の索敵視野を遮らない安全な通過高度を完全確保
- * ・レーンごとに ±8px のランダム高さゆらぎ（ジッター）を付与し、自然な躍動感を創出
+ * v26.1.0 高空セーフ帯専用レーン配備＆自機死角完全ゼロ版:
+ * ・自機（画面中央50%）に絶対に被らないよう、上空セーフ帯（18vhコンテナ内）に4分散レーンを集中配備
+ * ・レーン下端でも自機頭上から140px以上のクリアランスを保ち、交戦・索敵視界を100%保護
+ * ・レーンごとに ±4px の高さゆらぎ（ジッター）を付与し、自然なニコニコ動画風ライブ感を維持
  * ・animationend イベントと安全タイマーの二重回収による DOM 破棄漏れ完全防止
  * ==============================================================================
  */
@@ -12,13 +12,12 @@
 export class DanmakuManager {
     constructor() {
         this.container = null;
-        // ★ ヘッダー直下〜画面44%に分散配置された5つの通過レーン（自機中央50%の死角化を防止）
+        // ★ 自機中央（50%）に絶対に被らない高空セーフ帯（コンテナ内18vh）の4分散レーン
         this.lanes = [
-            { baseTop: 10, busyUntil: 0 }, // コンテナ内上部（順位パネル下部と並走）
-            { baseTop: 28, busyUntil: 0 },
-            { baseTop: 48, busyUntil: 0 },
-            { baseTop: 68, busyUntil: 0 },
-            { baseTop: 86, busyUntil: 0 }  // コンテナ内最下部（自機頭上手前で安全通過）
+            { baseTop: 6, busyUntil: 0 },   // コンテナ内最上部
+            { baseTop: 28, busyUntil: 0 },  // 上段
+            { baseTop: 52, busyUntil: 0 },  // 中段
+            { baseTop: 74, busyUntil: 0 }   // 下段（自機から120px以上上空で安全通過）
         ];
     }
 
@@ -55,9 +54,9 @@ export class DanmakuManager {
 
         selectedLane.busyUntil = Math.max(now, selectedLane.busyUntil) + 1400; // 同一レーンの最低通過間隔
 
-        // ★ 完全な機械的一定を崩す「高さゆらぎ（ジッター）」を付与（±6px相当）
-        const jitter = (Math.random() - 0.5) * 6;
-        const computedTopPercent = Math.max(4, Math.min(94, selectedLane.baseTop + jitter));
+        // ★ 高空セーフ帯をはみ出さない微小な「高さゆらぎ（ジッター）」を付与（±4px相当）
+        const jitter = (Math.random() - 0.5) * 4;
+        const computedTopPercent = Math.max(4, Math.min(84, selectedLane.baseTop + jitter));
 
         const item = document.createElement('div');
         item.className = 'danmaku-item' + (isSystem ? ' danmaku-system' : '');

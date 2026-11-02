@@ -257,32 +257,38 @@ export class HUDManager {
             rCtx.lineTo(left + camRectW, top + camRectH - bracketLen);
             rCtx.stroke();
 
-            // 4. ★ 自機中心ドット ＆ 進行方向ゴールドポインター（▲）
+            // 4. ★ 自機中心ドット ＆ 進行方向コンパスポインター（▲）
             const pAngle = (player.angle !== undefined) ? player.angle : 0;
-            // 先端を自機リング（半径5.0）の外側（11.2px）へ大きく突き出させて視認性を最大化
-            const arrowTipDist = 11.2;
-            const arrowWingDist = 4.8;
-            const arrowWingAngle = 0.58;
+            // 先端を自機リング（半径5.0）の外側へ 18.0px まで大きく突き出し、根元もリング外周（6.5px）からスタート
+            const arrowTipDist = 18.0;
+            const arrowWingDist = 7.5;
+            const arrowWingAngle = 0.45;
+            const arrowBaseDist = 6.5;
 
             const tipX = radarCenter + Math.cos(pAngle) * arrowTipDist;
             const tipY = radarCenter + Math.sin(pAngle) * arrowTipDist;
-            const wingLeftX = radarCenter + Math.cos(pAngle + Math.PI - arrowWingAngle) * arrowWingDist;
-            const wingLeftY = radarCenter + Math.sin(pAngle + Math.PI - arrowWingAngle) * arrowWingDist;
-            const wingRightX = radarCenter + Math.cos(pAngle - Math.PI + arrowWingAngle) * arrowWingDist;
-            const wingRightY = radarCenter + Math.sin(pAngle - Math.PI + arrowWingAngle) * arrowWingDist;
+            const wingLeftX = radarCenter + Math.cos(pAngle - arrowWingAngle) * arrowWingDist;
+            const wingLeftY = radarCenter + Math.sin(pAngle - arrowWingAngle) * arrowWingDist;
+            const baseNotchX = radarCenter + Math.cos(pAngle) * arrowBaseDist;
+            const baseNotchY = radarCenter + Math.sin(pAngle) * arrowBaseDist;
+            const wingRightX = radarCenter + Math.cos(pAngle + arrowWingAngle) * arrowWingDist;
+            const wingRightY = radarCenter + Math.sin(pAngle + arrowWingAngle) * arrowWingDist;
 
-            // 黒アウトライン付き高輝度ゴールド矢印（背景と同化せず進行方向が0秒で判別可能）
+            // ステルスコンパス形状：自機円と重ならず、外側へくっきり突き出す矢印
             rCtx.beginPath();
             rCtx.moveTo(tipX, tipY);
             rCtx.lineTo(wingLeftX, wingLeftY);
+            rCtx.lineTo(baseNotchX, baseNotchY);
             rCtx.lineTo(wingRightX, wingRightY);
             rCtx.closePath();
 
-            rCtx.fillStyle = '#fde047'; // ゴールドイエロー
+            rCtx.fillStyle = '#fde047'; // 高輝度ゴールドイエロー
             rCtx.fill();
 
-            rCtx.strokeStyle = 'rgba(0, 0, 0, 0.9)';
-            rCtx.lineWidth = 1.2;
+            // 極太1.8pxブラック輪郭線で背景やカメラ枠と100%分離
+            rCtx.strokeStyle = 'rgba(0, 0, 0, 0.95)';
+            rCtx.lineWidth = 1.8;
+            rCtx.lineJoin = 'round';
             rCtx.stroke();
 
             // 自機中心（白丸 ＋ ネオンシアンリング）

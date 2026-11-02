@@ -1,11 +1,10 @@
 // ==============================================================================
 // 『くねくねバトル オンライン』iOS WebKit & iPhone 干渉完全マスクスタイル (style.js)
-// v25.7.0 右上いいねアンカー完全遮光ネオンフロスト＆ミニマップ重畳最適化版:
-// ・【いいね誘導アンカー刷新】95%完全遮光ディープネイビー ＋ blur(16px) ネオンフロスト化
+// v26.1.0 高空セーフ弾幕通過帯＆右上いいねアンカー完全遮光版:
+// ・【弾幕自機被り根絶】コンテナ高さを 42vh から 18vh（約150px）へ圧縮
+// ・下端を画面上部33%で完全停止させ、画面中央（50%）の自機・交戦視界への直撃被さりを100%排除
+// ・【いいね誘導アンカー】95%完全遮光ディープネイビー ＋ blur(16px) ネオンフロスト維持
 // ・ミニマップと重なっても背後の格子線やドットが一切透けず、文字が100%クッキリ読める z-index: 220 確立
-// ・右上の公式メニュー [↑] 直下を小気味よく指し示すバウンスネオン矢印アニメーション
-// ・弾幕コンテナをヘッダーUI直下（var(--safe-top) + 26px）へ引き下げ、ヘッダー被りを完全根絶
-// ・高さ 42vh（画面高さの約42%）の広大な帯域へ解放し、ニコニコ動画風の躍動感を復活
 // ・星屑や白い肉片と重なってもクッキリ読める多層テキストシャドウ＆視認性強化
 // ・右側アクション群を 215px 引き上げ、公式「ルーム招待」ボタンとの物理的被りを100%根絶
 // ・走者リスト（.participants-list）のスクロールバーを完全不可視化＆右パディング確保
@@ -270,17 +269,17 @@ export function injectStyles() {
         }
 
         /* ==========================================================================
-           弾幕チャット（★ゴールデンゾーン刷新版）
-           ・最上部ヘッダーUIを完全に避け、var(--safe-top) + 26px を起点に配置
-           ・高さ 42vh（画面高さの約42%）の広大な帯域へ解放し、ニコニコ動画風のライブ感を演出
-           ・中央自機（50%）の手前で抜けるため、交戦中の視界を一切塞がない
+           弾幕チャット（★高空セーフ通過帯 刷新版）
+           ・最上部ヘッダーUI直下（var(--safe-top) + 16px）を起点に配置
+           ・高さを 42vh から 18vh（約150px）へ厳格に圧縮
+           ・下端到達高度を画面上部33%で完全停止させ、画面中央（50%）の自機・交戦視界への被さりを100%根絶！
            ========================================================================== */
         #danmaku-container {
             position: absolute;
-            top: calc(var(--safe-top) + 26px);
+            top: calc(var(--safe-top) + 16px);
             left: 0;
             width: 100%;
-            height: 42vh;
+            height: 18vh;
             pointer-events: none;
             overflow: hidden;
             z-index: 80;
@@ -292,7 +291,7 @@ export function injectStyles() {
             display: flex;
             align-items: center;
             gap: 8px;
-            font-size: 14px;
+            font-size: 13.5px;
             font-weight: 800;
             color: #ffffff;
             /* ★ 多層テキストシャドウ：白い星屑や肉片と重なってもクッキリ読める高コントラストフチ取り */
@@ -303,9 +302,9 @@ export function injectStyles() {
         .danmaku-badge {
             font-size: 11px;
             font-weight: 900;
-            padding: 3px 10px;
+            padding: 2.5px 9px;
             border-radius: 12px;
-            background: rgba(11, 5, 26, 0.55) !important;
+            background: rgba(11, 5, 26, 0.65) !important;
             border: 1.5px solid currentColor;
             box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
             text-shadow: 0 1px 2px rgba(0, 0, 0, 0.98);
@@ -316,8 +315,8 @@ export function injectStyles() {
         }
         .danmaku-sys-text {
             color: #38bdf8;
-            font-size: 13px;
-            background: rgba(11, 5, 26, 0.6);
+            font-size: 12.5px;
+            background: rgba(11, 5, 26, 0.7);
             padding: 2px 8px;
             border-radius: 8px;
             border: 1px solid rgba(56, 189, 248, 0.4);

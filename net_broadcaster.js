@@ -1,13 +1,13 @@
 // ==============================================================================
 // 『くねくねバトル オンライン』マルチプレイ送信ループ＆アクションキュー管理 (net_broadcaster.js)
-// v25.0.0 100体AI対応 3層インテリジェントLoD通信＆AIスロット衝突根絶版:
-// ・AIスロット計算のハードコード先祖返り（4+）を MAX_PLAYERS+ へ完全修正
-// ・最大6名（0〜5）の人間プレイヤーとAIスロット（6以降）の重複・アバター点滅を完全根絶
+// v26.0.0 1KB制限超過時キュー安全差し戻し＆ゾンビ餌根絶版:
+// ・【未送信キュー保護】1010バイト制限接近時に切り離した餌取得・ドロップを先頭へ安全差し戻し（unshift）
+// ・大餌密集地帯でパケット制限に引っかかっても餌取得情報が虚無へ破棄されず、ゾンビ餌化を100%根絶
+// ・AIスロット計算のハードコード先祖返り（4+）を MAX_PLAYERS+ へ完全修正維持
+// ・最大6名（0〜5）の人間プレイヤーとAIスロット（6以降）の重複・アバター点滅を完全根絶維持
 // ・10Hzブロードキャスト送信ループの独立管理
 // ・アクション蓄積キュー（餌取得・散布肉片・撃破クラスタ・チャット）の専任管理
 // ・最大94体AI対応：スコア上位Top 5ボス ＋ プレイヤー近接AIを動的抽出して送信
-// ・非同期・遠隔AIの送信間引きにより、100体規模でも平常時パケットを約450〜550バイトに圧縮
-// ・1024バイト上限厳格ガード（1010バイト接近時の超過データ自動切り離し送出）
 // ==============================================================================
 
 import {
@@ -24,7 +24,7 @@ import { MAX_PLAYERS } from './constants.js';
 export const NetBroadcaster = {
     _syncIntervalId: null,
     _aiSliceIndex: 0,
-    _latestLeaderboard: null, // ★ ホスト端末の最新リーダーボードキャッシュ
+    _latestLeaderboard: null,
 
     _pendingPicks: [],
     _pendingDrops: [],
@@ -37,10 +37,12 @@ export const NetBroadcaster = {
 
     queueFoodPick(gx, gy, foodIndex) {
         this._pendingPicks.push(packFoodPickTuple(gx, gy, foodIndex));
+        if (this._pendingPicks.length > 64) this._pendingPicks.length = 64;
     },
 
     queueDropFood(x, y, val, colorIdx) {
         this._pendingDrops.push(packDropFoodTuple(x, y, val, colorIdx));
+        if (this._pendingDrops.length > 48) this._pendingDrops.length = 48;
     },
 
     queueDropCluster(x, y, totalVal, count, colorIdx) {
@@ -51,10 +53,12 @@ export const NetBroadcaster = {
             Math.floor(count),
             colorIdx
         ]);
+        if (this._pendingClusters.length > 12) this._pendingClusters.length = 12;
     },
 
     queueChat(slot, text) {
         this._pendingChats.push(packChatTuple(slot, text));
+        if (this._pendingChats.length > 10) this._pendingChats.length = 10;
     },
 
     /**
@@ -72,7 +76,7 @@ export const NetBroadcaster = {
             const myTuple = encodeSnakeToTuple(mySnake, netManager.mySlot, netManager.isHost);
             const tuplesList = [myTuple];
 
-            // ★ ホスト端末専用：94体AIの3層インテリジェントLoD抽出送出
+            // ホスト端末専用：94体AIの3層インテリジェントLoD抽出送出
             if (netManager.isHost && Array.isArray(window.allAISnakesInstance)) {
                 const ais = window.allAISnakesInstance;
                 const totalAIs = ais.length;
@@ -81,7 +85,7 @@ export const NetBroadcaster = {
                     const selectedSet = new Set();
                     const candidates = [];
 
-                    // 1. スコア上位Top 5のボスAIを優先選出（マップ全体の覇者として全端末同期）
+                    // 1. スコア上位Top 5のボスAIを優先選出
                     const sortedAIs = [...ais].filter(a => a && !a.isDead).sort((a, b) => b.score - a.score);
                     const topLimit = Math.min(5, sortedAIs.length);
                     for (let t = 0; t < topLimit; t++) {
@@ -108,7 +112,7 @@ export const NetBroadcaster = {
                         }
                     }
 
-                    // 3. 残り枠を全体スライス（ローテーション）で巡回補完（合計最大12体までに制限）
+                    // 3. 残り枠を全体スライス（ローテーション）で巡回補完
                     const BATCH_SIZE = 4;
                     const startIndex = (this._aiSliceIndex * BATCH_SIZE) % totalAIs;
                     this._aiSliceIndex = (this._aiSliceIndex + 1) % Math.ceil(totalAIs / BATCH_SIZE);
@@ -122,7 +126,7 @@ export const NetBroadcaster = {
                         }
                     }
 
-                    // ★ タプル化（AIスロットは MAX_PLAYERS 以降を厳密に割り当て、P5/P6との衝突を完全防止）
+                    // タプル化（AIスロットは MAX_PLAYERS 以降を厳密に割り当て）
                     for (let c = 0; c < candidates.length; c++) {
                         const ai = candidates[c];
                         const aiSlot = MAX_PLAYERS + (ai.id - 1);
@@ -136,7 +140,7 @@ export const NetBroadcaster = {
                 l: tuplesList
             };
 
-            // ★ ホスト端末：全体リーダーボード（Top 8スネークの順位・スコア情報）を同封送出
+            // ホスト端末：全体リーダーボードを同封送出
             if (netManager.isHost && this._latestLeaderboard) {
                 packet.lb = this._latestLeaderboard;
             }
@@ -183,6 +187,7 @@ export const NetBroadcaster = {
 
     /**
      * 1024バイト厳守ガード付き送信ラッパー
+     * ★ パケット超過時に削ったデータを破棄せずキュー先頭へ安全に差し戻す（Unshift）
      * @param {Object} msgObj 送信パケットオブジェクト
      */
     sendCustomMessage(msgObj) {
@@ -191,19 +196,30 @@ export const NetBroadcaster = {
             const rawString = JSON.stringify(msgObj);
             const byteLength = getUtf8ByteLength(rawString);
 
-            // 1010バイト接近時の安全切り離しガード
+            // ★ 1010バイト接近時の安全切り離し ＆ 未送信キューへの安全差し戻し
             if (byteLength >= 1010) {
-                console.warn(`[NetBroadcaster] パケットサイズが1KB制限に接近 (${byteLength} bytes)。過剰データを切り離して送出します。`);
-                delete msgObj.dp;
-                delete msgObj.pk;
-                delete msgObj.dc;
+                console.warn(`[NetBroadcaster] パケットサイズが1KB制限に接近 (${byteLength} bytes)。未送信キューを安全に差し戻して送出します。`);
+                
+                // 削られたデータを元のキューの先頭へ安全に戻す（データ完全保護）
+                if (Array.isArray(msgObj.pk) && msgObj.pk.length > 0) {
+                    this._pendingPicks.unshift(...msgObj.pk);
+                    delete msgObj.pk;
+                }
+                if (Array.isArray(msgObj.dp) && msgObj.dp.length > 0) {
+                    this._pendingDrops.unshift(...msgObj.dp);
+                    delete msgObj.dp;
+                }
+                if (Array.isArray(msgObj.dc) && msgObj.dc.length > 0) {
+                    this._pendingClusters.unshift(...msgObj.dc);
+                    delete msgObj.dc;
+                }
                 delete msgObj.lb;
+
                 const safePayload = JSON.stringify(msgObj);
                 window.AgentSDK.room.sendMessage({ msg_data: safePayload, message: safePayload });
                 return;
             }
 
-            // ★ msg_data と message の両方に格納してSDKの互換性を完全防衛
             window.AgentSDK.room.sendMessage({ msg_data: rawString, message: rawString });
         } catch (e) {
             console.warn('[NetBroadcaster] sendMessage error:', e);

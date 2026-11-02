@@ -1,6 +1,7 @@
 // ==============================================================================
 // 『くねくねバトル オンライン』スネーク.io型 自律生態系AIマネージャー (ai.js)
-// v24.2.0 マイルドちょっかい調律＆適正緊張感バランス版:
+// v26.0.0 完全DeltaTime連携＆マイルドちょっかい調律版:
+// ・【DeltaTime連携】updatePhysics(dtSec) へ実経過秒数を渡し、30FPS〜120FPS環境でのAI速度・旋回不公平を完全根絶
 // ・ちょっかい行動（HARASS）の過剰粘着を根絶し、適度なスリルを与える10%前後の発動率へ調律
 // ・索敵反応距離を 1,800px から 1,200px へ縮小（画面内に近づいた時のみ自然に反応）
 // ・ちょっかい発動後のクールダウンを2〜3秒へ延長し、連続執拗アタックを完全防止
@@ -72,7 +73,14 @@ export class AIManager {
         }
     }
 
-    update(player, allSnakes, frameCount) {
+    /**
+     * AIシミュレーション更新（DeltaTime対応）
+     * @param {Object} player 
+     * @param {Array} allSnakes 
+     * @param {number} frameCount 
+     * @param {number} [dtSec=0.016] 実経過秒数
+     */
+    update(player, allSnakes, frameCount, dtSec = 1 / 60) {
         const total = this.ais.length;
         if (total === 0) return;
 
@@ -113,7 +121,8 @@ export class AIManager {
                 this.think(ai, meta, player, allSnakes, activeDrops);
             }
 
-            ai.updatePhysics(null, ai.isBoosting);
+            // ★ AI物理演算への dtSec 完全適用
+            ai.updatePhysics(dtSec, null, ai.isBoosting);
         }
     }
 
@@ -260,7 +269,6 @@ export class AIManager {
 
                 if (meta.harassSubtype === 0) {
                     // ①「進路横切り（Cut-In Harassment）」
-                    // プレイヤーの前方を予測して軽く横切り、すぐに離脱する
                     const leadDist = 380 + player.size * 1.5;
                     const predictX = player.x + Math.cos(player.angle) * leadDist;
                     const predictY = player.y + Math.sin(player.angle) * leadDist;
@@ -268,7 +276,6 @@ export class AIManager {
                     ai.isBoosting = ai.score > 90 && Math.random() < 0.45;
                 } else if (meta.harassSubtype === 1) {
                     // ②「併走・プレッシャー（Shoulder Pressure）」
-                    // 適度な距離を保ちながら横並びで並走
                     const lateralAngle = player.angle + (Math.random() < 0.5 ? Math.PI / 2.2 : -Math.PI / 2.2);
                     const flankX = player.x + Math.cos(lateralAngle) * (player.size * 3.2 + ai.size * 2.2);
                     const flankY = player.y + Math.sin(lateralAngle) * (player.size * 3.2 + ai.size * 2.2);
@@ -276,7 +283,6 @@ export class AIManager {
                     ai.isBoosting = ai.score > 100 && player.isBoosting && Math.random() < 0.40;
                 } else {
                     // ③「餌横取りダッシュ（Greedy Snatch）」
-                    // プレイヤーの進行方向にある餌を先回りして奪う
                     const frontX = player.x + Math.cos(player.angle) * 280;
                     const frontY = player.y + Math.sin(player.angle) * 280;
                     ai.targetAngle = Math.atan2(frontY - ai.y, frontX - ai.x);
@@ -286,7 +292,6 @@ export class AIManager {
             }
 
             case AI_STATE.CRUISING: {
-                // 大回遊：緩やかなカーブに加え、マップ中心（激戦コア）方向への微細な引力バイアス
                 const angleToCenter = Math.atan2(MAP_SIZE / 2 - ai.y, MAP_SIZE / 2 - ai.x);
                 let centerDiff = angleToCenter - ai.targetAngle;
                 while (centerDiff < -Math.PI) centerDiff += Math.PI * 2;
@@ -324,7 +329,6 @@ export class AIManager {
                         ai.targetAngle = angleToEnemy + Math.PI;
                         ai.isBoosting = ai.score > 120 && Math.random() < 0.35;
                     } else {
-                        // 偏差射撃のように相手の頭部の前方を狙う
                         const leadDist = 110 + huntTarget.size;
                         const tx = huntTarget.x + Math.cos(huntTarget.angle) * leadDist;
                         const ty = huntTarget.y + Math.sin(huntTarget.angle) * leadDist;

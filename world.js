@@ -1,6 +1,8 @@
 // ==============================================================================
 // 『くねくねバトル オンライン』ワールド・動的チャンク餌・決定論的シード生成 (world.js)
-// v21.2.0 決定論的シード乱数＆環境勾配完全統合版:
+// v26.0.0 肉片TTL寿命クリーンアップ＆長時間稼働安定化版:
+// ・【肉片TTL導入】撃破ドロップ肉片に35秒寿命（TTL: 35,000ms）を設定し、過疎地の死体残骸をO(1)自動パージ
+// ・10分以上の長期対戦でも dropFoods が肥大化せず、毎フレーム数十万回の距離判定・CPU熱暴走を完全根絶
 // ・ホスト/ゲスト間のシード値（currentSeed）に基づく線形合同法（LCG）疑似乱数
 // ・チャンク座標（gx, gy）から決定論的に初期餌の座標・サイズ・色を生成（完全同期）
 // ・MAP_SIZE = 60000 を活かしたマップ中心（激戦コア）集中ホットスポット勾配
@@ -135,9 +137,10 @@ export class WorldManager {
         this.foodGrid.set(`${gx}_${gy}`, list);
     }
 
-    // 撃破されたスネークの肉片ドロップ
+    // 撃破されたスネークの肉片ドロップ（TTLタイムスタンプ付き）
     spawnDeathDrop(snake) {
         const histLen = snake.historyLength || 0;
+        const now = performance.now();
         for (let i = 0; i < histLen; i += 2) {
             const idx = (snake.headIdx + i) % 2048;
             const pt = snake.history[idx];
@@ -149,7 +152,8 @@ export class WorldManager {
                 size: 7 + Math.random() * 4,
                 val: 18 + Math.random() * 12,
                 isBig: true,
-                color: snake.color
+                color: snake.color,
+                spawnTime: now // ★ 寿命（TTL）計測用タイムスタンプ
             });
         }
 
@@ -207,7 +211,11 @@ export class WorldManager {
         }
     }
 
+    /**
+     * パーティクル更新 ＆ 未回収肉片の寿命（TTL: 35秒）自動クリーンアップ
+     */
     updateParticles() {
+        // 1. パーティクル更新
         for (let i = this.particles.length - 1; i >= 0; i--) {
             const p = this.particles[i];
             p.x += p.vx;
@@ -216,6 +224,18 @@ export class WorldManager {
             if (p.life <= 0) {
                 this.particles[i] = this.particles[this.particles.length - 1];
                 this.particles.pop();
+            }
+        }
+
+        // 2. ★ 肉片ドロップ餌の寿命（TTL: 35秒）自動パージ
+        // 長時間プレイ時の未回収肉片の無限蓄積・毎フレーム数十万回判定を完全防止
+        const now = performance.now();
+        for (let i = this.dropFoods.length - 1; i >= 0; i--) {
+            const f = this.dropFoods[i];
+            if (!f.spawnTime) f.spawnTime = now;
+            if (now - f.spawnTime > 35000) {
+                this.dropFoods[i] = this.dropFoods[this.dropFoods.length - 1];
+                this.dropFoods.pop();
             }
         }
     }
