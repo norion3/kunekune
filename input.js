@@ -1,17 +1,16 @@
 /**
  * ==============================================================================
  * 『くねくねバトル オンライン』入力制御モジュール (input.js)
- * v28.0.0 ボタン実体ピンポイント除外＆操作不能エリア極小化版:
- * ・【無効エリアの極小化】従来の「幅90px×下部240px」という広大な矩形除外ゾーンを完全撤廃！
- * 　document.elementFromPoint による実体ヒットテストを導入し、ボタン（MENU、音量、リセット等）の
- * 　真上をタップした時のみジョイスティックを遮断。ボタン同士の隙間やボタンのすぐ横を触れた場合は
- * 　0ミリ秒で即座にジョイスティックが起動し、操作不能ストレスを根絶
- * ・【動的レスキュー完全維持】ボタンの上から指を滑らせて外れた瞬間、touchmove 側で即座に検知し
- * 　抜け出た地点を起点としてジョイスティックをシームレス起動
- * ・【初速スワイプ即時反映】タッチ開始直後の指の移動量を即座に入力ベクトル(input.x, y)へ変換し旋回遅延をゼロ化
- * ・【マルチタッチ厳格捕捉】touchstart 時に changedTouches を優先走査し、右手ブースト操作中の左手指捕捉率100%
- * ・【ゴーストアクティブ根絶】画面上の指が0本になった際(e.touches.length === 0)、確実にジョイスティックをリセット
- * ・【ズームレンジ連動】0.20〜1.50 の広域視野連動
+ * v28.1.0 画面全域解放＆ブーストスライド・ゼロ負荷シームレス移行版:
+ * ・【画面右側全域の解放】従来の「幅58%制限」を完全撤廃！画面の0%〜100%全域でジョイスティック起動を許可。
+ * 　ボタン等の真上以外の余白を触れれば、左右・画面中央問わず意のままにジョイスティックが出現
+ * ・【ブーストからジョイスティックへのシームレス移行】ブーストボタンを押したまま指を滑らせて外れた瞬間、
+ * 　ブーストを解除し、抜け出た地点を起点として即座にジョイスティックへバトンタッチ（片手操作の完全確立）
+ * ・【ゼロ負荷最適化】ブーストボタン中心座標・半径の事前キャッシュ＆二乗距離判定（掛け算2回のみ）を採用。
+ * 　touchmove中のリフロー（強制レイアウト再計算）を完全ゼロ化し、スマホの端末差・画面回転にも100%追従
+ * ・【マルチタッチ排他ガード】左手でジョイスティック操作中に右手ブーストが外れても、右手がジョイスティックを
+ * 　横取りしない安全優先ガードを配備（両手プレイ時の誤爆暴走を完全防止）
+ * ・【ボタン実体ピンポイント除外】ボタン真上のみ除外し、ボタン隙間や余白は0ミリ秒で起動
  * ==============================================================================
  */
 
@@ -26,8 +25,13 @@ export class InputManager {
         this.maxRadius = 34;
         this.maxRadiusSq = 34 * 34;
 
-        // ブースト状態（専用ボタン押下時のみ true）
+        // ブースト状態
         this.boost = false;
+        this.boostTouchId = null;
+
+        // ブースト脱出検知用キャッシュ（ゼロ負荷・全機種対応）
+        this.boostCenter = { x: 0, y: 0 };
+        this.boostRadiusSq = 0;
 
         // 視野ズーム倍率（0.20 〜 1.50）
         this.zoomMultiplier = 1.0;
@@ -51,9 +55,28 @@ export class InputManager {
         this.joyKnob = document.getElementById('joystick-knob');
         this.boostBtn = document.getElementById('btn-boost');
 
+        this.updateBoostButtonBounds();
+        window.addEventListener('resize', () => this.updateBoostButtonBounds());
+
         this.bindTouchEvents();
         this.bindMouseEvents();
         this.bindBoostButton();
+    }
+
+    /**
+     * 機種サイズ・画面回転に応じたブーストボタン座標の事前キャッシュ
+     * touchmove中のリフロー負荷を完全ゼロにする
+     */
+    updateBoostButtonBounds() {
+        if (!this.boostBtn) return;
+        const rect = this.boostBtn.getBoundingClientRect();
+        this.boostCenter = {
+            x: rect.left + rect.width / 2,
+            y: rect.top + rect.height / 2
+        };
+        // 判定半径（少し広めにとり指の微小なブレでの誤脱出を防止）
+        const radius = (rect.width / 2) * 1.15;
+        this.boostRadiusSq = radius * radius;
     }
 
     // ブーストボタン専用リスナー
@@ -70,20 +93,62 @@ export class InputManager {
         this.boostBtn.addEventListener('touchstart', (e) => {
             e.preventDefault();
             e.stopPropagation();
+
+            // 押された瞬間に最新の位置をオンデマンド再確認（機種差・アドレスバー伸縮ガード）
+            this.updateBoostButtonBounds();
+
+            if (e.changedTouches && e.changedTouches.length > 0) {
+                this.boostTouchId = e.changedTouches[0].identifier;
+            }
             setBoost(true);
         }, { passive: false });
 
-        this.boostBtn.addEventListener('touchend', (e) => {
+        // ブーストボタンからの指の脱出検知（スライド操作のシームレスジョイスティック移行）
+        this.boostBtn.addEventListener('touchmove', (e) => {
+            if (!this.boost || this.boostTouchId === null) return;
             e.preventDefault();
             e.stopPropagation();
-            setBoost(false);
+
+            const t = Array.from(e.touches).find(touch => touch.identifier === this.boostTouchId);
+            if (!t) return;
+
+            // ゼロ負荷計算：掛け算2回のみでボタン外への脱出を判定
+            const dx = t.clientX - this.boostCenter.x;
+            const dy = t.clientY - this.boostCenter.y;
+            const distSq = dx * dx + dy * dy;
+
+            if (distSq > this.boostRadiusSq) {
+                // ボタンから外れたらブースト解除
+                setBoost(false);
+                const escapedTouchId = this.boostTouchId;
+                this.boostTouchId = null;
+
+                // 他にジョイスティックを動かしていなければ、外れた指を即座にジョイスティックへ引き継ぐ！
+                if (!this.active) {
+                    if (typeof window !== 'undefined' && window.currentGameState === 'playing') {
+                        if (!window.localPlayerInstance || !window.localPlayerInstance.isDead) {
+                            const menuOverlay = document.getElementById('menu-overlay');
+                            if (!menuOverlay || menuOverlay.style.display !== 'block') {
+                                this.touchId = escapedTouchId;
+                                this.startJoystick(t.clientX, t.clientY);
+                            }
+                        }
+                    }
+                }
+            }
         }, { passive: false });
 
-        this.boostBtn.addEventListener('touchcancel', (e) => {
-            e.preventDefault();
-            e.stopPropagation();
+        const endBoost = (e) => {
+            if (e) {
+                e.preventDefault();
+                e.stopPropagation();
+            }
+            this.boostTouchId = null;
             setBoost(false);
-        }, { passive: false });
+        };
+
+        this.boostBtn.addEventListener('touchend', endBoost, { passive: false });
+        this.boostBtn.addEventListener('touchcancel', endBoost, { passive: false });
 
         this.boostBtn.addEventListener('mousedown', (e) => {
             e.stopPropagation();
@@ -105,12 +170,7 @@ export class InputManager {
     }
 
     /**
-     * ★ ピンポイント実体ヒットテスト（無効エリアの極小化）
-     * 大雑把な四角い領域除外を撤廃し、タッチ直下に「実際にボタンが存在する場合のみ」除外
-     * ボタンの隙間やボタンのすぐ横を触った場合は false を返し、即座にジョイスティックを発動させる
-     * @param {number} clientX 
-     * @param {number} clientY 
-     * @returns {boolean}
+     * ピンポイント実体ヒットテスト（無効エリアの極小化）
      */
     _isUIElement(clientX, clientY) {
         if (typeof document === 'undefined' || typeof document.elementFromPoint !== 'function') {
@@ -120,28 +180,23 @@ export class InputManager {
         const target = document.elementFromPoint(clientX, clientY);
         if (!target) return false;
 
-        // CanvasやUIレイヤーそのものは操作可能
         if (target.id === 'game-canvas' || target.id === 'ui-layer' || target.tagName === 'HTML' || target.tagName === 'BODY') {
             return false;
         }
 
-        // ボタン実体、またはHUDパネル上を直接触れている場合のみ除外
         const isClickableUI = Boolean(target.closest('button, .bottom-round-btn, #btn-boost, .stats-box, #stats-box, .sheet-tabs, .chat-chips-grid, .chat-input-bar'));
         return isClickableUI;
     }
 
     handleTouchStart(e) {
-        // 対戦中でない、または自機死亡時はジョイスティック入力を無視
         if (typeof window !== 'undefined' && window.currentGameState !== 'playing') return;
         if (typeof window !== 'undefined' && window.localPlayerInstance && window.localPlayerInstance.isDead) return;
 
-        // メニューが開いている場合はジョイスティックを受け付けない
         const menuOverlay = document.getElementById('menu-overlay');
         if (menuOverlay && menuOverlay.style.display === 'block') return;
 
         e.preventDefault();
 
-        // 前回のタッチが解放されずに残っていた場合、指リストと照合して安全クリア
         if (this.active && this.touchId !== null) {
             const isTouchStillPresent = Array.from(e.touches).some(t => t.identifier === this.touchId);
             if (!isTouchStillPresent) {
@@ -150,23 +205,21 @@ export class InputManager {
         }
 
         if (!this.active) {
-            const allowableWidth = window.innerWidth * 0.58;
-
-            // changedTouches（今触れた指）を優先的に走査し、マルチタッチ競合を防止
             const touchesToCheck = (e.changedTouches && e.changedTouches.length > 0) ? e.changedTouches : e.touches;
 
             for (let i = 0; i < touchesToCheck.length; i++) {
                 const t = touchesToCheck[i];
 
-                // ★ ボタン実体の真上を直接触れた場合のみ除外（隙間やボタンのすぐ横は除外しない）
+                // ブースト操作中の指はジョイスティック側で拾わない
+                if (this.boostTouchId !== null && t.identifier === this.boostTouchId) continue;
+
+                // ボタン実体の真上は除外（隙間やボタンのすぐ横、余白は全て起動）
                 if (this._isUIElement(t.clientX, t.clientY)) continue;
 
-                // 画面左側58%以内であればジョイスティック開始
-                if (t.clientX <= allowableWidth) {
-                    this.touchId = t.identifier;
-                    this.startJoystick(t.clientX, t.clientY);
-                    break;
-                }
+                // ★ 画面幅58%制限を完全撤廃：画面の全域（0%〜100%）どこでも起動可能
+                this.touchId = t.identifier;
+                this.startJoystick(t.clientX, t.clientY);
+                break;
             }
         }
     }
@@ -174,9 +227,7 @@ export class InputManager {
     handleTouchMove(e) {
         e.preventDefault();
 
-        const allowableWidth = window.innerWidth * 0.58;
-
-        // ★ 動的レスキュー処理（ボタン実体の上から指を滑らせて外れた瞬間にゼロ遅延開始）
+        // 動的レスキュー（ボタン上から指を滑らせて外れた瞬間にゼロ遅延起動）
         if (!this.active) {
             if (typeof window !== 'undefined' && window.currentGameState !== 'playing') return;
             if (typeof window !== 'undefined' && window.localPlayerInstance && window.localPlayerInstance.isDead) return;
@@ -186,7 +237,9 @@ export class InputManager {
 
             for (let i = 0; i < e.touches.length; i++) {
                 const t = e.touches[i];
-                if (!this._isUIElement(t.clientX, t.clientY) && t.clientX <= allowableWidth) {
+                if (this.boostTouchId !== null && t.identifier === this.boostTouchId) continue;
+
+                if (!this._isUIElement(t.clientX, t.clientY)) {
                     this.touchId = t.identifier;
                     this.startJoystick(t.clientX, t.clientY);
                     break;
@@ -205,9 +258,14 @@ export class InputManager {
     handleTouchEnd(e) {
         e.preventDefault();
 
-        // 画面上に指が1本もなければ確実にジョイスティック終了（ゴースト防止）
         if (!e.touches || e.touches.length === 0) {
             this.endJoystick();
+            this.boostTouchId = null;
+            if (this.boost) {
+                this.boost = false;
+                if (this.boostBtn) this.boostBtn.classList.remove('active');
+                if (this.onBoostChange) this.onBoostChange(false);
+            }
             return;
         }
 
@@ -230,7 +288,6 @@ export class InputManager {
             const menuOverlay = document.getElementById('menu-overlay');
             if (menuOverlay && menuOverlay.style.display === 'block') return;
 
-            // ボタン実体の上であれば無視
             if (this._isUIElement(e.clientX, e.clientY)) return;
 
             isMouseDown = true;
@@ -278,7 +335,7 @@ export class InputManager {
         let dy = cy - this.center.y;
         const distSq = dx * dx + dy * dy;
 
-        // 動的追従アルゴリズム：指が最大半径を超えて移動した場合、基点を指の方向へ引っ張り追従
+        // 動的追従アルゴリズム
         if (distSq > this.maxRadiusSq) {
             const dist = Math.sqrt(distSq);
             const excess = dist - this.maxRadius;
