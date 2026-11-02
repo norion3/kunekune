@@ -1,14 +1,16 @@
 /**
  * ==============================================================================
  * 『くねくねバトル オンライン』ボトムシートメニュー (menu.js)
- * v26.1.0 動的HOSTバッジ＆ルーター分離・走者6枠固定UI版:
+ * v26.2.0 メニュー外タップ即時終了＆動的HOSTバッジ版:
+ * ・【メニュー外タップ終了】ボトムシートの背後（画面上部〜中央の暗い余白部分）を
+ * 　タップした際、✕ボタンを押さずとも即座にメニューを閉じるイベントハンドラを配備
+ * ・【誤閉塞完全防止】ボトムシート内部（#bottom-sheet）の操作（タブ切替、チャット入力、
+ * 　スクロール等）は stopPropagation() で確実に保護し、操作中の意図しない誤閉塞を100%防止
  * ・【動的HOSTバッジ解決】ホスト昇格時に空き枠AIスロット0からHOSTバッジを解除し、新ホストへ正確にHOSTを動的付与
  * ・GravityRouter を gravity_router.js へ完全委譲し、ボトムシートUI専任化
  * ・シングル・マルチ共通：走者タブ内に最大定員6名分のスロット枠を常時整然と確保
- * ・GRAVITY公式アバター写真（portrait）の円形トリミング高精細表示
  * ・実走者タップ時のGRAVITYプロフィール画面安全起動
  * ・右上の共有 [↑] ボタン直下の分離型いいね誘導アンカー (#like-guide-anchor) 制御
- * ・チャット送信時の二重表示防止一本化 ＆ 走者タブの変更検知差分更新
  * ==============================================================================
  */
 
@@ -56,25 +58,30 @@ export class MenuManager {
             };
         }
 
+        // ★ メニュー外（背景オーバーレイ）タップで即座にメニューを閉じる
         if (overlay) {
-            overlay.onclick = (e) => {
-                if (e.target === overlay) this.close();
+            const handleOverlayDismiss = (e) => {
+                // タップされた対象がシート内部ではなくオーバーレイ背景そのものである場合のみ閉じる
+                if (e.target === overlay) {
+                    if (e.cancelable) e.preventDefault();
+                    e.stopPropagation();
+                    this.close();
+                }
             };
+
+            overlay.addEventListener('click', handleOverlayDismiss);
+            overlay.addEventListener('touchend', handleOverlayDismiss, { passive: false });
         }
 
+        // ボトムシート内部の操作がオーバーレイに貫通して誤閉塞するのを完全ガード
         if (sheet) {
-            sheet.onclick = (e) => {
+            const stopBubble = (e) => {
                 e.stopPropagation();
             };
-            sheet.ontouchstart = (e) => {
-                e.stopPropagation();
-            };
-            sheet.ontouchend = (e) => {
-                e.stopPropagation();
-            };
-            sheet.ontouchmove = (e) => {
-                e.stopPropagation();
-            };
+            sheet.onclick = stopBubble;
+            sheet.ontouchstart = stopBubble;
+            sheet.ontouchend = stopBubble;
+            sheet.ontouchmove = stopBubble;
         }
 
         this.bindTabs();
@@ -127,7 +134,10 @@ export class MenuManager {
         this.isOpen = true;
         const sheet = document.getElementById('bottom-sheet');
         const overlay = document.getElementById('menu-overlay');
-        if (overlay) overlay.style.display = 'block';
+        if (overlay) {
+            overlay.style.display = 'block';
+            overlay.style.pointerEvents = 'auto'; // 背景タップを受け付けられるように有効化
+        }
         if (sheet) {
             requestAnimationFrame(() => sheet.classList.add('open'));
         }
@@ -143,7 +153,10 @@ export class MenuManager {
         if (likeAnchor) likeAnchor.classList.remove('show');
 
         setTimeout(() => {
-            if (!this.isOpen && overlay) overlay.style.display = 'none';
+            if (!this.isOpen && overlay) {
+                overlay.style.display = 'none';
+                overlay.style.pointerEvents = 'none';
+            }
         }, 280);
     }
 
@@ -282,21 +295,18 @@ export class MenuManager {
     }
 
     /**
-     * ★ 走者一覧の更新：シングルでもマルチでも最大定員6名枠を常時確保し、
-     *    GRAVITYアバター写真表示およびプロフィール遷移（↗）を完全連携
+     * 走者一覧の更新
      */
     updateParticipants(playerList) {
         const listContainer = document.getElementById('participants-list');
         const tabCount = document.getElementById('players-tab-count');
         if (!listContainer) return;
 
-        // 全スロット（スロット0〜5）の参照を取得
         const netMgr = (typeof window !== 'undefined' && window.NetworkManager) ? window.NetworkManager : null;
         const slotsSource = (netMgr && Array.isArray(netMgr.slots))
             ? netMgr.slots
             : (Array.isArray(playerList) ? playerList : []);
 
-        // 参加中の人間プレイヤー数をカウント
         let humanCount = 0;
         for (let i = 0; i < MAX_PLAYERS; i++) {
             const slot = slotsSource[i];
@@ -314,7 +324,6 @@ export class MenuManager {
         const mySlot = netMgr ? netMgr.mySlot : 0;
         const myUserId = (netMgr && netMgr.myUser) ? String(netMgr.myUser.user_id) : 'local_user';
 
-        // 差分検知シグネチャ（不要なDOM再構築防止）
         const signature = slotsSource.slice(0, MAX_PLAYERS).map(s => {
             if (!s) return 'empty';
             return `${s.slot}_${s.userId || ''}_${s.name || ''}_${s.portrait || ''}_${s.isAI}_${s.isHost || false}`;
@@ -327,13 +336,11 @@ export class MenuManager {
 
         listContainer.innerHTML = '';
 
-        // スロット0〜5（最大6枠）を必ず固定描画
         for (let i = 0; i < MAX_PLAYERS; i++) {
             const slotData = slotsSource[i];
             const isAssigned = slotData && !slotData.isAI;
             const isMe = isAssigned && (slotData.slot === mySlot || String(slotData.userId) === myUserId);
 
-            // ★ 動的HOST判定：スロット0固定ではなく、現行の真のホストを動的に判定
             let isCurrentHost = false;
             if (isAssigned) {
                 if (isMe) {
@@ -341,7 +348,6 @@ export class MenuManager {
                 } else if (slotData.isHost !== undefined) {
                     isCurrentHost = Boolean(slotData.isHost);
                 } else {
-                    // フォールバック: 初期状態（誰も昇格していない場合）はスロット0が人間ならホスト
                     isCurrentHost = (i === 0 && !isNetHost);
                 }
             }
@@ -367,7 +373,6 @@ export class MenuManager {
                 transition: background 0.15s, border-color 0.15s;
             `;
 
-            // アバター表示：画像があれば高精細円形サムネイル、なければ頭文字/CPUバッジ
             let avatarHtml = '';
             if (portraitUrl) {
                 avatarHtml = `
@@ -404,7 +409,6 @@ export class MenuManager {
                 `;
             }
 
-            // 情報カラム（名前・ステータス・HOSTバッジ）
             const hostBadgeHtml = isCurrentHost && isAssigned
                 ? `<span style="font-size: 10px; font-weight: 800; color: #fde047; background: rgba(250, 204, 21, 0.2); border: 1px solid rgba(250, 204, 21, 0.5); padding: 1px 5px; border-radius: 4px; margin-left: 6px;">HOST</span>`
                 : '';
@@ -417,7 +421,6 @@ export class MenuManager {
                 ? `<div class="participant-status" style="color: #34d399; font-size: 11px; margin-top: 2px;">● プレイ中</div>`
                 : `<div class="participant-status" style="color: #94a3b8; font-size: 11px; margin-top: 2px;">○ 自動参戦中</div>`;
 
-            // アクションアイコン（実走者の場合はプロフィールジャンプ矢印 ↗）
             const actionArrowHtml = isAssigned && targetUid && targetUid !== 'local_user'
                 ? `<div class="participant-arrow" style="color: #38bdf8; font-size: 16px; font-weight: bold; margin-left: 8px;">↗</div>`
                 : `<div class="participant-arrow" style="color: rgba(255,255,255,0.2); font-size: 14px; margin-left: 8px;">-</div>`;
@@ -435,7 +438,6 @@ export class MenuManager {
                 ${actionArrowHtml}
             `;
 
-            // 実在ユーザー行タップ時：GRAVITY公式プロフィール画面へ即時ジャンプ
             if (isAssigned && targetUid && targetUid !== 'local_user' && targetUid !== 'null' && String(targetUid).trim() !== '') {
                 row.onclick = (e) => {
                     e.stopPropagation();
