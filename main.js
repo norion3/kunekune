@@ -1,12 +1,10 @@
 // ==============================================================================
-// 『くねくねバトル オンライン』Phase 5 マスター統合オーケストレーター (main.js)
-// v26.5.0 ホスト移行時AI世界線引き継ぎ＆サレンダーパージ・肉片保全版:
-// ・【AI世界線引き継ぎ】ホスト昇格時、旧ホストから受信していたAI（スロット6以降）の座標・スコア・体長・角度を新ホストの aiManager へ完全移植し、巨大AI突然消滅・世界線リセットを根絶
-// ・【旧ホスト肉片還元】ホスト昇格時、切断した旧ホスト（スロット0）の所持スコアに応じた撃破肉片クラスタをその場に散布し、マップエコシステム崩壊を防止
-// ・【サレンダー時AI完全パージ】スプリットブレイン検知によるゲスト降格時（onSurrenderedAsHost）、自前で生成した余剰AIを即座に破棄し、190体ドッペルゲンガー現象を完全根絶
-// ・【AI欠損根絶】待機室の空きスロット（スロット1〜5のisAI枠）を自律AI実体として完全生成し、100体規模を完全維持
-// ・【待機室HOST表示動的化】昇格した新ホストへ正確にHOSTバッジを表示
-// ・AI物理DeltaTime完全同期＆カメラ追従・視野スケーリング・グリッド描画の camera.js 委譲維持
+// 『くねくねバトル オンライン』Phase 7 マスター統合オーケストレーター (main.js)
+// v27.1.0 堅牢同期・ゴースト根絶＆ジッター解消版:
+// ・【ゴースト完全パージ】gameLoop内でslots情報と実体を照合し、切断等で空き枠(isAI:true)になったスロットの残留ゴーストを即時完全消去
+// ・【デッドレコニング修正】二重加算の相殺ベクトルに targetAngle を使用し、旋回時の激しい振動(ジッター)を完全根絶
+// ・【デッドレコニング完全化】他走者の予測座標（仮想ターゲット）を自走させ、実座標をLerp追従させる方式
+// ・【餌同期の絶対座標化】checkFoodConsumption のコールバックを絶対座標 (x, y) に適応
 // ==============================================================================
 
 import { injectStyles } from './style.js';
@@ -103,7 +101,6 @@ const world = new WorldManager();
 const aiManager = new AIManager();
 const camera = new CameraManager();
 
-// 自律生態系AIが肉片ドロップ（ハイエナモード）を検知するためのグローバル参照
 window.currentWorldInstance = world;
 
 let player = new Snake(true, 0, 'あなた', SNAKE_COLORS[0], 'normal');
@@ -112,12 +109,12 @@ let allSnakes = [];
 let sortedSnakes = [];
 
 let gameState = 'lobby'; 
-window.currentGameState = gameState; // NetworkManager 同期判定用グローバル参照
+window.currentGameState = gameState;
 
 let gameStartTime = Date.now();
 let frameCount = 0;
-let animFrameId = null; // 二重ループ防止用
-let lastFrameTime = Date.now(); // DeltaTime計算用
+let animFrameId = null;
+let lastFrameTime = Date.now();
 let killerTargetSnake = null;
 
 window.localPlayerInstance = player;
@@ -140,7 +137,6 @@ export const UIController = {
     },
 
     showWaitingRoom(roomId) {
-        // 対戦プレイ中の場合は待機室の強制上書きを安全にスキップ
         if (gameState === 'playing') return;
 
         gameState = 'waiting';
@@ -184,9 +180,6 @@ export const UIController = {
         }
     },
 
-    /**
-     * 待機室メンバー描画（動的HOSTバッジ判定対応）
-     */
     updateWaitingMembersList() {
         const listEl = document.getElementById('waiting-members-list');
         if (!listEl) return;
@@ -227,7 +220,6 @@ if (typeof window !== 'undefined') {
     window.UIController = UIController;
 }
 
-// --- ゲーム初期化 ＆ 即時リスポーン対応 ---
 export function initGame(isRespawn = false) {
     if (!isRespawn && animFrameId) {
         cancelAnimationFrame(animFrameId);
@@ -269,7 +261,6 @@ export function initGame(isRespawn = false) {
         if (!isGuest) {
             aiManager.init(MAX_AIS, player.x, player.y);
 
-            // 空きスロット（isAI: true）の枠を自律AI実体として完全生成
             for (let i = 0; i < MAX_PLAYERS; i++) {
                 if (i === NetworkManager.mySlot) continue;
                 const slotData = NetworkManager.slots[i];
@@ -331,12 +322,10 @@ setupNetworkHandlers({
     initGame
 });
 
-// 自律ホスト昇格時＆スプリットブレイン降格時コールバック
 NetworkManager.setCallbacks({
     onHostPromoted() {
         console.log('[HostMigration] ホストに昇格しました。世界線を引き継ぎシミュレーションを開始します。');
         
-        // 1. ★ 切断した旧ホスト（スロット0）の肉片を散布し、エンティティを安全パージ
         const oldHost = remoteSnakes.get(0);
         if (oldHost) {
             if (!oldHost.isDead && oldHost.score > 60) {
@@ -353,7 +342,6 @@ NetworkManager.setCallbacks({
             if (sIdx !== -1) sortedSnakes.splice(sIdx, 1);
         }
 
-        // 2. ★ 旧ホストから受信していたAI（スロット6以降）の既存状態をマップに保存（世界線引き継ぎ）
         const oldAiSnapshots = new Map();
         for (const [slot, remote] of remoteSnakes.entries()) {
             if (slot >= MAX_PLAYERS && remote && !remote.isDead) {
@@ -368,7 +356,6 @@ NetworkManager.setCallbacks({
             }
         }
 
-        // 旧ホストから受信していたリモートAIスロットを完全除去
         for (const [slot, remote] of remoteSnakes.entries()) {
             if (slot >= MAX_PLAYERS) {
                 remoteSnakes.delete(slot);
@@ -377,7 +364,6 @@ NetworkManager.setCallbacks({
             }
         }
 
-        // 3. 自前の自律生態系AIを初期化し、引き継ぎデータを適用
         aiManager.init(MAX_AIS, player.x, player.y);
         for (let i = 0; i < aiManager.ais.length; i++) {
             const ai = aiManager.ais[i];
@@ -394,7 +380,6 @@ NetworkManager.setCallbacks({
             }
         }
 
-        // 4. 空きスロットAIの補填
         for (let i = 0; i < MAX_PLAYERS; i++) {
             if (i === NetworkManager.mySlot) continue;
             const slotData = NetworkManager.slots[i];
@@ -424,13 +409,11 @@ NetworkManager.setCallbacks({
 
         window.allAISnakesInstance = aiManager.ais;
         
-        // 生存している人間プレイヤーを残しつつ新AIを統合
         const currentPlayers = allSnakes.filter(s => s.isPlayer || (s.id !== undefined && s.id < MAX_PLAYERS));
         allSnakes = [...currentPlayers, ...aiManager.ais];
         sortedSnakes = [...allSnakes];
     },
 
-    // ★ スプリットブレインでゲストへサレンダーした際、自前AIを完全パージ（190体ドッペルゲンガー根絶）
     onSurrenderedAsHost() {
         console.warn('[HostMigration] ゲストへサレンダーしたため、ローカルAIシミュレーションを破棄しリモート同期に戻します。');
         aiManager.ais = [];
@@ -441,7 +424,6 @@ NetworkManager.setCallbacks({
         sortedSnakes = [...allSnakes];
     },
 
-    // 退室したプレイヤーをワールドの配列から完全パージ（ゾンビ化・メモリリーク防止）
     onUserExited(slotIdx) {
         const remote = remoteSnakes.get(slotIdx);
         if (remote) {
@@ -454,7 +436,6 @@ NetworkManager.setCallbacks({
     }
 });
 
-// UIイベントバインダーの初期化
 initUIBindings({
     input,
     hud,
@@ -568,8 +549,23 @@ function gameLoop() {
             player.updatePhysics(dtSec, inputAngle, input.boost);
         }
 
-        remoteSnakes.forEach(remote => {
+        remoteSnakes.forEach((remote, slotIdx) => {
             if (remote.isDead) return;
+
+            // ★ 1. ゴースト検知＆完全パージ（タスクキル・回線切断による無敵残留防止）
+            if (NetworkManager.isMultiplayerActive) {
+                const slotData = NetworkManager.slots[slotIdx];
+                // スロットが空き(isAI:true)または無効になっているのに実体がある場合はゴースト
+                if (!slotData || slotData.isAI) {
+                    console.warn(`[Sync] ゴースト検知: 切断されたスロット ${slotIdx} の残留エンティティを完全パージします。`);
+                    remoteSnakes.delete(slotIdx);
+                    const aIdx = allSnakes.indexOf(remote);
+                    if (aIdx !== -1) allSnakes.splice(aIdx, 1);
+                    const sIdx = sortedSnakes.indexOf(remote);
+                    if (sIdx !== -1) sortedSnakes.splice(sIdx, 1);
+                    return; // 以降の処理をスキップ
+                }
+            }
 
             const timeSinceLastPacket = performance.now() - (remote.lastPacketTime || performance.now());
             if (timeSinceLastPacket > 5000) {
@@ -577,25 +573,63 @@ function gameLoop() {
                 return;
             }
 
+            // ★ 2. 究極のデッドレコニング＆二重加算防止（ジッターの完全根絶）
             if (remote.targetNetX !== undefined && remote.targetNetY !== undefined) {
+                const timeScale = Math.max(0.1, Math.min(3.0, dtSec * 60));
+                
+                // 仮想ターゲットを自走させる（デッドレコニング予測）
+                remote.targetNetX += Math.cos(remote.targetAngle) * (remote.speed * timeScale);
+                remote.targetNetY += Math.sin(remote.targetAngle) * (remote.speed * timeScale);
+
                 const distSq = (remote.targetNetX - remote.x) ** 2 + (remote.targetNetY - remote.y) ** 2;
                 if (distSq > 160000) {
                     remote.x = remote.targetNetX;
                     remote.y = remote.targetNetY;
                 } else {
+                    // 実座標を仮想ターゲットへLerp（引き寄せ）
                     const lerpFactor = 1.0 - Math.exp(-15.0 * dtSec);
                     remote.x += (remote.targetNetX - remote.x) * lerpFactor;
                     remote.y += (remote.targetNetY - remote.y) * lerpFactor;
                 }
+                
+                // ★ 修正：次ステップの updatePhysics による「自走」を相殺するため、実角度ではなく予測に使用した targetAngle で逆算する。
+                // これにより、急激なターン中であっても引き寄せ方向と相殺方向が完全一致し、激しい振動（ジッター）が消滅します。
+                remote.x -= Math.cos(remote.targetAngle) * (remote.speed * timeScale);
+                remote.y -= Math.sin(remote.targetAngle) * (remote.speed * timeScale);
             }
+            
+            // リングバッファ履歴の保存のために updatePhysics は呼び出す
             remote.updatePhysics(dtSec, remote.targetAngle, remote.isBoosting);
         });
 
         if (!NetworkManager.isMultiplayerActive || NetworkManager.isHost) {
+            if (NetworkManager.isHost && NetworkManager.isMultiplayerActive) {
+                for (let sIdx = 1; sIdx < MAX_PLAYERS; sIdx++) {
+                    const slotData = NetworkManager.slots[sIdx];
+                    if (slotData && !slotData.isAI) {
+                        const dummyId = sIdx - MAX_PLAYERS + 1;
+                        const fakeIdx = allSnakes.findIndex(s => !s.isPlayer && s.id === dummyId);
+                        if (fakeIdx !== -1) {
+                            allSnakes.splice(fakeIdx, 1);
+                        }
+                        const aiManagerIdx = aiManager.ais.findIndex(s => s.id === dummyId);
+                        if (aiManagerIdx !== -1) {
+                            aiManager.ais.splice(aiManagerIdx, 1);
+                            aiManager.aiMeta.splice(aiManagerIdx, 1);
+                        }
+
+                        const realRemote = remoteSnakes.get(sIdx);
+                        if (realRemote && !allSnakes.includes(realRemote)) {
+                            allSnakes.push(realRemote);
+                        }
+                    }
+                }
+            }
+
             aiManager.update(player, allSnakes, frameCount, dtSec);
         }
 
-        camera.update(player, killerTargetSnake, input.zoomMultiplier);
+        camera.update(player, killerTargetSnake, input.zoomMultiplier, dtSec);
         const camCenter = camera.getCenter(player);
 
         const viewW = canvas.width / camera.scale;
@@ -616,13 +650,14 @@ function gameLoop() {
         for (let i = 0; i < allSnakes.length; i++) {
             const s = allSnakes[i];
             if (s.isDead || !s.isVisible) continue;
-            world.checkFoodConsumption(s, (eater, food, gx, gy, foodIndex) => {
+            
+            world.checkFoodConsumption(s, (eater, food, x, y) => {
                 if (eater.isPlayer) {
                     if (food.isBig) Sound.playEatBig();
                     else Sound.playEatSmall();
 
-                    if (gx !== null && gy !== null && foodIndex !== undefined) {
-                        NetworkManager.queueFoodPick(gx, gy, foodIndex);
+                    if (x !== undefined && y !== undefined) {
+                        NetworkManager.queueFoodPick(x, y);
                     }
                 }
             });
@@ -680,7 +715,17 @@ function gameLoop() {
                 if (NetworkManager.isHost && NetworkManager.isMultiplayerActive) {
                     const slotRanks = {};
                     for (let sIdx = 0; sIdx < MAX_PLAYERS; sIdx++) {
-                        const targetSnake = allSnakes.find(s => s.id === sIdx);
+                        let targetSnake = null;
+                        if (sIdx === NetworkManager.mySlot) {
+                            targetSnake = player;
+                        } else {
+                            targetSnake = remoteSnakes.get(sIdx);
+                            if (!targetSnake) {
+                                const dummyId = sIdx - MAX_PLAYERS + 1;
+                                targetSnake = allSnakes.find(s => s.id === dummyId);
+                            }
+                        }
+
                         if (targetSnake && !targetSnake.isDead) {
                             const exactHigher = allSnakes.filter(s => s !== targetSnake && !s.isDead && s.score > targetSnake.score).length;
                             slotRanks[sIdx] = exactHigher + 1;
@@ -692,11 +737,15 @@ function gameLoop() {
                     NetBroadcaster.setLatestLeaderboard({
                         totalAlive: totalAlive,
                         ranks: slotRanks,
-                        top: topList.map(s => ({
-                            slot: s.id,
-                            name: s.name,
-                            score: Math.floor(s.score)
-                        }))
+                        top: topList.map(s => {
+                            let slotNum = s.id;
+                            if (s === player) slotNum = NetworkManager.mySlot;
+                            return {
+                                slot: slotNum,
+                                name: s.name,
+                                score: Math.floor(s.score)
+                            };
+                        })
                     });
                 }
 

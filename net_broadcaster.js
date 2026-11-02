@@ -1,13 +1,12 @@
 // ==============================================================================
 // 『くねくねバトル オンライン』マルチプレイ送信ループ＆アクションキュー管理 (net_broadcaster.js)
-// v26.5.0 レートリミット時キュー安全差し戻し＆即時割り込み送信対応版:
-// ・【データ蒸発完全根絶】25ms レートリミッターに接触して送信をスキップした際、パケットに同封されていた未送信データ（pk, dp, dc, ch）をキュー先頭へ安全に差し戻し（unshift）し、データロストを100%防止
+// v27.1.0 段階的フォールバック・ゴースト餌完全根絶版:
+// ・【餌同期の絶対座標化】queueFoodPick のシグネチャを (x, y) へ変更し、インデックス依存のバグを完全排除
+// ・【データ蒸発完全根絶】25ms レートリミッターに接触して送信をスキップした際、パケットに同封されていた未送信データをキュー先頭へ安全に差し戻し（unshift）
 // ・【AgentSDK防衛レートリミッター】同一フレーム内多重送信によるパケットサイレント破棄を防ぐ25msスロットリング
 // ・【即時送信対応】ブースト開始・終了などの状態変化を100ms周期を待たずに即時送信する forceImmediateSync を配備しラグを根絶
-// ・【平常時パケット安全圧縮】AI 送信数を最大8体へ最適化し、基礎パケットを約620バイトへスリム化
-// ・【リーダーボード送信間引き】lb 同封を5Hz（2フレームに1回）に調整し、常時300バイト以上の送信余裕を確保
-// ・【未送信キュー保護】1010 バイト接近時の超過回避時も splice 済みデータを先頭へ安全差し戻し（unshift）維持
-// ・AIスロット計算の MAX_PLAYERS+ 規格維持
+// ・【1KB防衛：段階的フォールバック】パケットサイズが限界に達した場合、一律パージによるスタベーション（ゴースト餌化）を防ぐため、優先度の低いデータから段階的に削る仕組みを導入
+// ・【キュー保護】差し戻し時に length 制限を適用し、古い未同期データのロストを防止
 // ==============================================================================
 
 import {
@@ -25,8 +24,8 @@ export const NetBroadcaster = {
     _syncIntervalId: null,
     _aiSliceIndex: 0,
     _latestLeaderboard: null,
-    _lbThrottleCount: 0, // リーダーボード送信間引き用カウンター
-    _lastSentTime: 0,    // ★ AgentSDK 25ms レートリミッター用タイムスタンプ
+    _lbThrottleCount: 0,
+    _lastSentTime: 0,
 
     _pendingPicks: [],
     _pendingDrops: [],
@@ -37,8 +36,9 @@ export const NetBroadcaster = {
         this._latestLeaderboard = lbData;
     },
 
-    queueFoodPick(gx, gy, foodIndex) {
-        this._pendingPicks.push(packFoodPickTuple(gx, gy, foodIndex));
+    // ★ 餌取得のキューイングを絶対座標 (x, y) に変更
+    queueFoodPick(x, y) {
+        this._pendingPicks.push(packFoodPickTuple(x, y));
         if (this._pendingPicks.length > 64) this._pendingPicks.length = 64;
     },
 
@@ -63,10 +63,6 @@ export const NetBroadcaster = {
         if (this._pendingChats.length > 10) this._pendingChats.length = 10;
     },
 
-    /**
-     * ブースト状態変化やリスポーン時の即時割り込み送信（Event-driven）
-     * 100msの定期送信を待たずに、自身の最新状態のみを最速で送信しラグを根絶する
-     */
     forceImmediateSync(netManager) {
         if (!netManager.isMultiplayerActive || !netManager.isSDKAvailable) return;
         if (typeof window.localPlayerInstance === 'undefined' || !window.localPlayerInstance) return;
@@ -82,10 +78,6 @@ export const NetBroadcaster = {
         this.sendCustomMessage(packet);
     },
 
-    /**
-     * 10Hz（100ms周期）定期ブロードキャストループの開始
-     * @param {Object} netManager NetworkManager インスタンス参照
-     */
     start(netManager) {
         this.stop();
 
@@ -97,7 +89,6 @@ export const NetBroadcaster = {
             const myTuple = encodeSnakeToTuple(mySnake, netManager.mySlot, netManager.isHost);
             const tuplesList = [myTuple];
 
-            // ★ ホスト端末専用：94体AIの最適抽出（最大8体に絞り、パケット約200Bを安全削減）
             if (netManager.isHost && Array.isArray(window.allAISnakesInstance)) {
                 const ais = window.allAISnakesInstance;
                 const totalAIs = ais.length;
@@ -106,7 +97,6 @@ export const NetBroadcaster = {
                     const selectedSet = new Set();
                     const candidates = [];
 
-                    // 1. スコア上位Top 4のボスAIを優先選出
                     const sortedAIs = [...ais].filter(a => a && !a.isDead).sort((a, b) => b.score - a.score);
                     const topLimit = Math.min(4, sortedAIs.length);
                     for (let t = 0; t < topLimit; t++) {
@@ -114,7 +104,6 @@ export const NetBroadcaster = {
                         candidates.push(sortedAIs[t]);
                     }
 
-                    // 2. プレイヤー周辺3,500px以内にいる交戦・接近AIを抽出（最大3体）
                     const px = mySnake.x;
                     const py = mySnake.y;
                     const nearDistSq = 3500 * 3500;
@@ -133,7 +122,6 @@ export const NetBroadcaster = {
                         }
                     }
 
-                    // 3. 残り枠をスライス巡回（全体で最大8体までに厳格抑制）
                     const BATCH_SIZE = 2;
                     const startIndex = (this._aiSliceIndex * BATCH_SIZE) % totalAIs;
                     this._aiSliceIndex = (this._aiSliceIndex + 1) % Math.ceil(totalAIs / BATCH_SIZE);
@@ -147,7 +135,6 @@ export const NetBroadcaster = {
                         }
                     }
 
-                    // タプル化（AIスロットは MAX_PLAYERS 以降を厳密割り当て）
                     for (let c = 0; c < candidates.length; c++) {
                         const ai = candidates[c];
                         const aiSlot = MAX_PLAYERS + (ai.id - 1);
@@ -161,28 +148,23 @@ export const NetBroadcaster = {
                 l: tuplesList
             };
 
-            // ★ ホスト端末：リーダーボード同封を5Hz（2回に1回）に間引いて平常時帯域をさらに軽量化
             this._lbThrottleCount++;
             if (netManager.isHost && this._latestLeaderboard && (this._lbThrottleCount % 2 === 0)) {
                 packet.lb = this._latestLeaderboard;
             }
 
-            // チャットの同封
             if (this._pendingChats.length > 0) {
                 packet.ch = this._pendingChats.splice(0, 3);
             }
 
-            // 餌取得の同封
             if (this._pendingPicks.length > 0) {
                 packet.pk = this._pendingPicks.splice(0, 8);
             }
 
-            // 単発散布肉片の同封
             if (this._pendingDrops.length > 0) {
                 packet.dp = this._pendingDrops.splice(0, 6);
             }
 
-            // 撃破肉片クラスタの同封
             if (this._pendingClusters.length > 0) {
                 packet.dc = this._pendingClusters.splice(0, 2);
             }
@@ -209,62 +191,74 @@ export const NetBroadcaster = {
         this._pendingChats.length = 0;
     },
 
-    /**
-     * 1024バイト厳守ガード ＆ 25msレートリミッター付き安全送信ラッパー
-     * @param {Object} msgObj 送信パケットオブジェクト
-     */
     sendCustomMessage(msgObj) {
         if (typeof window === 'undefined' || !window.AgentSDK || !window.AgentSDK.room || typeof window.AgentSDK.room.sendMessage !== 'function') return;
 
-        // ★ AgentSDK防衛：同一フレーム連打によるサイレント破棄を防ぐ25msレートリミッター
         const now = performance.now();
+        // レートリミットによる送信スキップ時のキュー安全差し戻し
         if (now - this._lastSentTime < 25) {
-            // ★ データ蒸発防止：送信がスキップされた場合、切り取っていたキューを安全に先頭へ差し戻す
             if (Array.isArray(msgObj.pk) && msgObj.pk.length > 0) {
                 this._pendingPicks.unshift(...msgObj.pk);
+                if (this._pendingPicks.length > 64) this._pendingPicks.length = 64;
             }
             if (Array.isArray(msgObj.dp) && msgObj.dp.length > 0) {
                 this._pendingDrops.unshift(...msgObj.dp);
+                if (this._pendingDrops.length > 48) this._pendingDrops.length = 48;
             }
             if (Array.isArray(msgObj.dc) && msgObj.dc.length > 0) {
                 this._pendingClusters.unshift(...msgObj.dc);
+                if (this._pendingClusters.length > 12) this._pendingClusters.length = 12;
             }
             if (Array.isArray(msgObj.ch) && msgObj.ch.length > 0) {
                 this._pendingChats.unshift(...msgObj.ch);
+                if (this._pendingChats.length > 10) this._pendingChats.length = 10;
             }
             return;
         }
         this._lastSentTime = now;
 
         try {
-            const rawString = JSON.stringify(msgObj);
-            const byteLength = getUtf8ByteLength(rawString);
+            let rawString = JSON.stringify(msgObj);
+            let byteLength = getUtf8ByteLength(rawString);
 
-            // 1010バイト接近時の安全切り離し ＆ 未送信キューへの安全差し戻し
+            // ★ 1KB防衛：段階的フォールバック
+            // 一律削除によるスタベーション（ゴースト餌の温床）を防ぐため、優先度の低いデータから段階的に削る
             if (byteLength >= 1010) {
-                console.warn(`[NetBroadcaster] パケットサイズが1KB制限に接近 (${byteLength} bytes)。未送信キューを安全に差し戻して送出します。`);
-                
-                if (Array.isArray(msgObj.pk) && msgObj.pk.length > 0) {
-                    this._pendingPicks.unshift(...msgObj.pk);
-                    delete msgObj.pk;
+                if (msgObj.lb) {
+                    delete msgObj.lb;
+                    rawString = JSON.stringify(msgObj);
+                    byteLength = getUtf8ByteLength(rawString);
                 }
-                if (Array.isArray(msgObj.dp) && msgObj.dp.length > 0) {
-                    this._pendingDrops.unshift(...msgObj.dp);
-                    delete msgObj.dp;
-                }
-                if (Array.isArray(msgObj.dc) && msgObj.dc.length > 0) {
-                    this._pendingClusters.unshift(...msgObj.dc);
-                    delete msgObj.dc;
-                }
-                if (Array.isArray(msgObj.ch) && msgObj.ch.length > 0) {
+                if (byteLength >= 1010 && msgObj.ch) {
                     this._pendingChats.unshift(...msgObj.ch);
+                    if (this._pendingChats.length > 10) this._pendingChats.length = 10;
                     delete msgObj.ch;
+                    rawString = JSON.stringify(msgObj);
+                    byteLength = getUtf8ByteLength(rawString);
                 }
-                delete msgObj.lb;
-
-                const safePayload = JSON.stringify(msgObj);
-                window.AgentSDK.room.sendMessage({ msg_data: safePayload, message: safePayload });
-                return;
+                if (byteLength >= 1010 && msgObj.dc) {
+                    this._pendingClusters.unshift(...msgObj.dc);
+                    if (this._pendingClusters.length > 12) this._pendingClusters.length = 12;
+                    delete msgObj.dc;
+                    rawString = JSON.stringify(msgObj);
+                    byteLength = getUtf8ByteLength(rawString);
+                }
+                if (byteLength >= 1010 && msgObj.dp) {
+                    this._pendingDrops.unshift(...msgObj.dp);
+                    if (this._pendingDrops.length > 48) this._pendingDrops.length = 48;
+                    delete msgObj.dp;
+                    rawString = JSON.stringify(msgObj);
+                    byteLength = getUtf8ByteLength(rawString);
+                }
+                if (byteLength >= 1010 && msgObj.pk) {
+                    // pk (餌取得) は同期破綻を防ぐため最後まで粘るが、それでも超える場合は削る
+                    this._pendingPicks.unshift(...msgObj.pk);
+                    if (this._pendingPicks.length > 64) this._pendingPicks.length = 64;
+                    delete msgObj.pk;
+                    rawString = JSON.stringify(msgObj);
+                }
+                
+                console.warn(`[NetBroadcaster] パケットサイズ1KB超過のため段階的スリム化を実行しました。`);
             }
 
             window.AgentSDK.room.sendMessage({ msg_data: rawString, message: rawString });

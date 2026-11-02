@@ -1,7 +1,8 @@
 /**
  * ==============================================================================
  * 『くねくねバトル オンライン』ゼロアロケーション空間ハッシュ衝突判定エンジン (combat.js)
- * v26.0.0 正面衝突判定新設＆大型優先ルール・無敵安全保護版:
+ * v27.2.0 壁際無敵ハメ完全回避・スライディングエスケープ版:
+ * ・【ハメ状態根絶】無敵時のノックバックベクトルを計算する際、対象が壁際にいる場合は壁への押し込み力を「壁に沿う接線方向」へ逃がし（スライディング）、振動フリーズを完全回避
  * ・【正面衝突判定新設】頭部同士の激突（distSq < (rA + rB)^2）を検知し、配列ループ順による一方的理不尽即死を根絶
  * ・大型優先判定：スコア差が顕著な場合は大スネークが勝利、スコア拮抗時または無敵時は双方安全弾き飛ばし（すり抜け）
  * ・加害者（killer）・被害者（victim）のいずれかが無敵時間中なら双方が死亡せずノックバック弾き飛ばし
@@ -13,7 +14,7 @@
  * ==============================================================================
  */
 
-import { GRID_SIZE } from './constants.js';
+import { GRID_SIZE, MAP_SIZE } from './constants.js';
 
 const MAX_POOL_CAPACITY = 4096; // メモリ肥大化を防ぐプール上限値
 
@@ -110,6 +111,27 @@ export class SpatialCollisionEngine {
     }
 
     /**
+     * ノックバックベクトルを壁際で接線方向に逃がす（スライディング・エスケープ）ヘルパー
+     */
+    _applySafeKnockback(target, pushX, pushY) {
+        const margin = Math.max(target.size, 50);
+        
+        // X軸が壁に阻まれる場合、Xの押し込み力をYへ変換して滑らせる
+        if ((target.x < margin && pushX < 0) || (target.x > MAP_SIZE - margin && pushX > 0)) {
+            pushY += Math.sign(pushY || 1) * Math.abs(pushX);
+            pushX = 0;
+        }
+        // Y軸が壁に阻まれる場合、Yの押し込み力をXへ変換して滑らせる
+        if ((target.y < margin && pushY < 0) || (target.y > MAP_SIZE - margin && pushY > 0)) {
+            pushX += Math.sign(pushX || 1) * Math.abs(pushY);
+            pushY = 0;
+        }
+
+        target.x += pushX;
+        target.y += pushY;
+    }
+
+    /**
      * 衝突判定メイン（頭部同士の正面衝突 ＋ 頭部vs胴体の衝突）
      */
     checkHeadCollisions(snakes, onKill) {
@@ -139,10 +161,9 @@ export class SpatialCollisionEngine {
                     if (isAInvuln || isBInvuln) {
                         const dist = Math.sqrt(dx * dx + dy * dy) || 1;
                         const push = (minHeadDist - dist) * 0.5 + 2.0;
-                        sA.x += (dx / dist) * push;
-                        sA.y += (dy / dist) * push;
-                        sB.x -= (dx / dist) * push;
-                        sB.y -= (dy / dist) * push;
+                        
+                        this._applySafeKnockback(sA, (dx / dist) * push, (dy / dist) * push);
+                        this._applySafeKnockback(sB, -(dx / dist) * push, -(dy / dist) * push);
                         continue;
                     }
 
@@ -162,10 +183,9 @@ export class SpatialCollisionEngine {
                         // 拮抗時：双方が安全に跳ね返る（相打ち爆死防止）
                         const dist = Math.sqrt(dx * dx + dy * dy) || 1;
                         const push = (minHeadDist - dist) * 0.6 + 3.0;
-                        sA.x += (dx / dist) * push;
-                        sA.y += (dy / dist) * push;
-                        sB.x -= (dx / dist) * push;
-                        sB.y -= (dy / dist) * push;
+                        
+                        this._applySafeKnockback(sA, (dx / dist) * push, (dy / dist) * push);
+                        this._applySafeKnockback(sB, -(dx / dist) * push, -(dy / dist) * push);
                     }
                 }
             }
@@ -220,8 +240,9 @@ export class SpatialCollisionEngine {
 
                                 const dist = Math.sqrt(dx * dx + dy * dy) || 1;
                                 const pushForce = (minDist - dist) * 0.18 + 1.2;
-                                victim.x += (dx / dist) * pushForce;
-                                victim.y += (dy / dist) * pushForce;
+                                
+                                // 壁際での振動ハメ状態を防ぐスライディングエスケープ処理
+                                this._applySafeKnockback(victim, (dx / dist) * pushForce, (dy / dist) * pushForce);
                                 continue;
                             }
 

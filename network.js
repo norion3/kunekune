@@ -1,6 +1,7 @@
 // ==============================================================================
 // 『くねくねバトル オンライン』AgentSDK公式マルチプレイ通信マネージャー (network.js)
-// v26.4.0 スプリットブレイン完全サレンダー＆絵文字チャット対応版:
+// v27.0.0 究極同期・絶対座標管理版:
+// ・【餌同期の絶対座標化】queueFoodPick のシグネチャを (gx, gy, index) から絶対座標 (x, y) へ刷新
 // ・【スプリットブレイン自律サレンダー】通信瞬断等による「2人のホスト」衝突検知時、スロット優先度で自発的にゲストへサレンダーし onSurrenderedAsHost コールバックを発火
 // ・【絵文字文字化け修正】queueChat の文字切り詰めを Array.from に変更し、サロゲートペア分断を完全防止
 // ・ブースト状態変化・リスポーン時などの即時割り込み同期 API (forceImmediateSync) の配備
@@ -98,9 +99,10 @@ export const NetworkManager = {
     },
 
     // --- キューイングAPI ---
-    queueFoodPick(gx, gy, foodIndex) {
+    // ★ 餌取得同期を絶対座標 (x, y) に変更
+    queueFoodPick(x, y) {
         if (!this.isMultiplayerActive) return;
-        NetBroadcaster.queueFoodPick(gx, gy, foodIndex);
+        NetBroadcaster.queueFoodPick(x, y);
     },
 
     queueDropFood(x, y, val, colorIdx) {
@@ -116,7 +118,7 @@ export const NetworkManager = {
     queueChat(messageText) {
         if (!messageText) return;
         
-        // ★ サロゲートペア（絵文字）の文字化けを防止するArray.from切り詰め
+        // サロゲートペア（絵文字）の文字化けを防止するArray.from切り詰め
         const cleanText = Array.from(String(messageText).trim()).slice(0, 15).join('');
         if (!cleanText) return;
 
@@ -689,16 +691,12 @@ export const NetworkManager = {
                     for (let i = 0; i < incomingList.length; i++) {
                         const decoded = decodeTupleToSnake(incomingList[i]);
                         if (decoded) {
-                            // ★ スプリットブレイン（脳分裂）競合解決
-                            // 自分もホストだが、他端末からのホストパケットを受信した場合
                             if (this.isHost && decoded.isHost && decoded.slot !== this.mySlot) {
-                                // スロット番号が小さい方を正当なホストとして優先し、自分はゲストへサレンダー（降格）
                                 if (this.mySlot > decoded.slot) {
                                     console.warn(`[NetworkManager] スプリットブレイン検知: スロット優先度によりゲストへサレンダーします (My: ${this.mySlot} > Remote: ${decoded.slot})`);
                                     this.isHost = false;
                                     if(this.slots[this.mySlot]) this.slots[this.mySlot].isHost = false;
 
-                                    // ★ 自前で生成していた余剰AIをパージさせるためコールバックを発火
                                     if (this.callbacks.onSurrenderedAsHost) {
                                         this.callbacks.onSurrenderedAsHost();
                                     }
@@ -716,6 +714,7 @@ export const NetworkManager = {
                     this.callbacks.onLeaderboardSync(packet.lb);
                 }
 
+                // ★ 餌取得タプルの受信処理
                 if (Array.isArray(packet.pk)) {
                     packet.pk.forEach(tuple => {
                         const pick = unpackFoodPickTuple(tuple);

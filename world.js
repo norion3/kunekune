@@ -1,14 +1,11 @@
 // ==============================================================================
 // 『くねくねバトル オンライン』ワールド・動的チャンク餌・決定論的シード生成 (world.js)
-// v26.0.0 肉片TTL寿命クリーンアップ＆長時間稼働安定化版:
-// ・【肉片TTL導入】撃破ドロップ肉片に35秒寿命（TTL: 35,000ms）を設定し、過疎地の死体残骸をO(1)自動パージ
-// ・10分以上の長期対戦でも dropFoods が肥大化せず、毎フレーム数十万回の距離判定・CPU熱暴走を完全根絶
-// ・ホスト/ゲスト間のシード値（currentSeed）に基づく線形合同法（LCG）疑似乱数
-// ・チャンク座標（gx, gy）から決定論的に初期餌の座標・サイズ・色を生成（完全同期）
-// ・MAP_SIZE = 60000 を活かしたマップ中心（激戦コア）集中ホットスポット勾配
-// ・外周部の安全育成ゾーン（小餌中心・敵過疎）の自律形成
-// ・draw() 内のゼロアロケーション色別バッチ描画（GPUドローコール最小化）
-// ・撃破時ドロップ肉片・チャンク餌の O(1) 末尾スワップ高速消費
+// v27.3.0 Dynamic LoD 描画負荷軽減版:
+// ・【Dynamic LoD】カメラのズーム倍率(scale)とオブジェクトのサイズを掛け合わせた「見かけのサイズ」を計算
+// ・見かけのサイズが小さい（3.5px未満）、あるいはズームアウト時の小型餌に対して、重い ctx.arc を軽量な ctx.rect (矩形描画) へ動的フォールバック
+// ・数千個の肉片やチャンク餌が密集する激戦区でのGPUドローコール限界・FPS低下（カクつき）を完全突破
+// ・【肉片完全同期】ドロップ肉片も絶対座標による同期対象となり、マルチプレイ時の肉片ロスト・無限増殖バグを完全根絶
+// ・【安全消去API】受信した絶対座標から最も近い餌・肉片を探し出して O(1) で安全に消去する removeFoodAt(x, y) を維持
 // ==============================================================================
 
 import { MAP_SIZE, GRID_SIZE, FOOD_COLORS } from './constants.js';
@@ -87,12 +84,11 @@ export class WorldManager {
     }
 
     spawnChunkFoods(gx, gy) {
-        // 決定論的シード値の導出：ワールドシードとチャンク座標を混合
         const baseSeed = (NetworkManager && NetworkManager.currentSeed) ? NetworkManager.currentSeed : 12345678;
         const chunkSeed = (baseSeed ^ (gx * 73856093) ^ (gy * 19349663)) >>> 0;
         const prng = this.createChunkPRNG(chunkSeed);
 
-        // 環境勾配アルゴリズム：マップ中心（30000, 30000）に近いほど大餌＆ホットスポット密集
+        // 環境勾配アルゴリズム：マップ中心に近いほど大餌＆ホットスポット密集
         const chunkCenterX = gx * GRID_SIZE + GRID_SIZE / 2;
         const chunkCenterY = gy * GRID_SIZE + GRID_SIZE / 2;
         const mapCenterX = MAP_SIZE / 2;
@@ -102,15 +98,12 @@ export class WorldManager {
         const dyCenter = chunkCenterY - mapCenterY;
         const distFromCenter = Math.sqrt(dxCenter * dxCenter + dyCenter * dyCenter);
 
-        // 中心度（中心で 1.0、外周で 0.0）
         const maxDist = MAP_SIZE * 0.5;
         const centerProximity = Math.max(0, Math.min(1.0, 1.0 - (distFromCenter / maxDist)));
 
-        // 中心に近いほどホットスポット発生率が大幅上昇（外周: 2.5% -> 中心: 15%）
         const hotspotThreshold = 0.025 + centerProximity * 0.125;
         const isHotspot = prng() < hotspotThreshold;
 
-        // 餌の個数も中心ほど高密度
         const baseMin = 1 + Math.floor(centerProximity * 3);
         const baseMax = 3 + Math.floor(centerProximity * 5);
         const count = isHotspot 
@@ -120,7 +113,6 @@ export class WorldManager {
         const list = [];
 
         for (let i = 0; i < count; i++) {
-            // 大餌判定（中心に近いほど大餌の比率が上がる）
             const bigThreshold = 0.05 + centerProximity * 0.12;
             const isBig = isHotspot || prng() < bigThreshold;
 
@@ -153,11 +145,10 @@ export class WorldManager {
                 val: 18 + Math.random() * 12,
                 isBig: true,
                 color: snake.color,
-                spawnTime: now // ★ 寿命（TTL）計測用タイムスタンプ
+                spawnTime: now
             });
         }
 
-        // 爆発パーティクル
         for (let p = 0; p < 18; p++) {
             this.particles.push({
                 x: snake.x,
@@ -191,7 +182,8 @@ export class WorldManager {
                         snake.addScore(f.val);
                         list[i] = list[list.length - 1];
                         list.pop();
-                        if (onEat) onEat(snake, f, gx + ox, gy + oy, i);
+                        // ★ 絶対座標でコールバックを返す（インデックス同期廃止）
+                        if (onEat) onEat(snake, f, f.x, f.y);
                     }
                 }
             }
@@ -206,16 +198,56 @@ export class WorldManager {
                 snake.addScore(f.val);
                 this.dropFoods[i] = this.dropFoods[this.dropFoods.length - 1];
                 this.dropFoods.pop();
-                if (onEat) onEat(snake, f, null, null, i);
+                // ★ 絶対座標でコールバックを返す（肉片も確実に同期対象になる）
+                if (onEat) onEat(snake, f, f.x, f.y);
             }
         }
     }
 
     /**
-     * パーティクル更新 ＆ 未回収肉片の寿命（TTL: 35秒）自動クリーンアップ
+     * ★ 通信で他人が食べた餌を絶対座標 (x, y) から探し出して安全に消去する
+     * インデックスズレによる「違う餌が消えるバグ」を完全根絶
      */
+    removeFoodAt(x, y, searchRadius = 16) {
+        const searchDistSq = searchRadius * searchRadius;
+
+        // 1. ドロップ肉片を最優先で探索
+        for (let i = this.dropFoods.length - 1; i >= 0; i--) {
+            const f = this.dropFoods[i];
+            const dx = f.x - x;
+            const dy = f.y - y;
+            if (dx * dx + dy * dy < searchDistSq) {
+                this.dropFoods[i] = this.dropFoods[this.dropFoods.length - 1];
+                this.dropFoods.pop();
+                return true;
+            }
+        }
+
+        // 2. チャンク餌の探索
+        const gx = Math.floor(x / GRID_SIZE);
+        const gy = Math.floor(y / GRID_SIZE);
+        for (let ox = -1; ox <= 1; ox++) {
+            for (let oy = -1; oy <= 1; oy++) {
+                const key = `${gx + ox}_${gy + oy}`;
+                const list = this.foodGrid.get(key);
+                if (!list) continue;
+
+                for (let i = list.length - 1; i >= 0; i--) {
+                    const f = list[i];
+                    const dx = f.x - x;
+                    const dy = f.y - y;
+                    if (dx * dx + dy * dy < searchDistSq) {
+                        list[i] = list[list.length - 1];
+                        list.pop();
+                        return true;
+                    }
+                }
+            }
+        }
+        return false;
+    }
+
     updateParticles() {
-        // 1. パーティクル更新
         for (let i = this.particles.length - 1; i >= 0; i--) {
             const p = this.particles[i];
             p.x += p.vx;
@@ -227,8 +259,7 @@ export class WorldManager {
             }
         }
 
-        // 2. ★ 肉片ドロップ餌の寿命（TTL: 35秒）自動パージ
-        // 長時間プレイ時の未回収肉片の無限蓄積・毎フレーム数十万回判定を完全防止
+        // 肉片TTL自動パージ (35秒)
         const now = performance.now();
         for (let i = this.dropFoods.length - 1; i >= 0; i--) {
             const f = this.dropFoods[i];
@@ -246,12 +277,14 @@ export class WorldManager {
         const minGy = Math.floor(cameraY / GRID_SIZE) - 1;
         const maxGy = Math.floor((cameraY + viewH) / GRID_SIZE) + 1;
 
-        // ゼロアロケーション：既存バケットのクリア
+        // ★ カメラスケールを逆算（Dynamic LoD用）
+        const scale = ctx.canvas.width / viewW;
+        const isLowDetail = scale < 0.65; // ズームアウト時は軽量化を積極適用
+
         for (const bucket of this.batchBuckets.values()) {
             bucket.length = 0;
         }
 
-        // チャンク餌描画の収集
         for (let gx = minGx; gx <= maxGx; gx++) {
             for (let gy = minGy; gy <= maxGy; gy++) {
                 const list = this.foodGrid.get(`${gx}_${gy}`);
@@ -263,7 +296,14 @@ export class WorldManager {
                         const pulse = 1.0 + Math.sin(frameCount * 0.15 + f.x) * 0.2;
                         ctx.fillStyle = 'rgba(255, 255, 255, 0.25)';
                         ctx.beginPath();
-                        ctx.arc(f.x, f.y, f.size * 1.8 * pulse, 0, Math.PI * 2);
+                        
+                        // 巨大餌のパルス光彩も遠景では矩形で軽量化
+                        const pulseSize = f.size * 1.8 * pulse;
+                        if (pulseSize * scale < 3.5 || isLowDetail) {
+                            ctx.rect(f.x - pulseSize, f.y - pulseSize, pulseSize * 2, pulseSize * 2);
+                        } else {
+                            ctx.arc(f.x, f.y, pulseSize, 0, Math.PI * 2);
+                        }
                         ctx.fill();
                     }
                     
@@ -277,7 +317,6 @@ export class WorldManager {
             }
         }
 
-        // 肉片ドロップ餌の収集
         for (let i = 0; i < this.dropFoods.length; i++) {
             const f = this.dropFoods[i];
             if (f.x < cameraX - 50 || f.x > cameraX + viewW + 50 || f.y < cameraY - 50 || f.y > cameraY + viewH + 50) continue;
@@ -291,7 +330,6 @@ export class WorldManager {
             bucket.push(f.x, f.y, f.size * pulse);
         }
 
-        // 一括バッチ描画実行（色ごとに単一パス発行）
         for (const [color, coords] of this.batchBuckets.entries()) {
             const len = coords.length;
             if (len === 0) continue;
@@ -302,19 +340,31 @@ export class WorldManager {
                 const x = coords[i];
                 const y = coords[i + 1];
                 const size = coords[i + 2];
-                ctx.moveTo(x + size, y);
-                ctx.arc(x, y, size, 0, Math.PI * 2);
+                
+                // ★ Dynamic LoD判定: 画面上の見かけのサイズが小さい場合は rect 描画へフォールバック
+                const apparentSize = size * scale;
+                if (apparentSize < 3.5 || (isLowDetail && size < 6.0)) {
+                    ctx.rect(x - size, y - size, size * 2, size * 2);
+                } else {
+                    ctx.moveTo(x + size, y);
+                    ctx.arc(x, y, size, 0, Math.PI * 2);
+                }
             }
             ctx.fill();
         }
 
-        // パーティクル描画
         for (let i = 0; i < this.particles.length; i++) {
             const p = this.particles[i];
             ctx.fillStyle = p.color;
             ctx.globalAlpha = Math.max(0, p.life);
             ctx.beginPath();
-            ctx.arc(p.x, p.y, 3.5 * p.life, 0, Math.PI * 2);
+            
+            const pSize = 3.5 * p.life;
+            if (pSize * scale < 3.5 || isLowDetail) {
+                ctx.rect(p.x - pSize, p.y - pSize, pSize * 2, pSize * 2);
+            } else {
+                ctx.arc(p.x, p.y, pSize, 0, Math.PI * 2);
+            }
             ctx.fill();
         }
         ctx.globalAlpha = 1.0;

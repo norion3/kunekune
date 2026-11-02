@@ -1,9 +1,10 @@
 /**
  * ==============================================================================
  * 『くねくねバトル オンライン』入力制御モジュール (input.js)
- * v26.1.0 誤タップ完全遮断＆動的追従ジョイスティック版:
+ * v27.2.0 誤タップ完全遮断＆動的追従ジョイスティック版:
+ * ・【UI干渉根絶】左下UIボタングループ領域のタッチ除外判定を拡大（幅90px×下部240px）し、
+ * 　MENU・音量ボタン付近でのジョイスティック誤爆（UIスリップ）を完全に防止
  * ・ジョイスティック開始判定を画面左側（幅58%以内）に限定し、右手ブースト操作時の誤爆・操作抜けを100%根絶
- * ・左下UIボタングループ領域（画面左端かつ画面下部140px以内）のタップ時はジョイスティック発火を完全バイパス
  * ・ボトムシートメニュー展開中、死亡時、リザルト画面表示中の背後ジョイスティック誤反応・表示チラつきを完全防止
  * ・スコア10,000〜30,000超の巨大スネーク時でも周囲を広く見渡せるズームレンジ（0.35〜1.50）維持
  * ・指の移動に合わせて基点が滑らかに追従する「動的追従型ジョイスティック」完全維持
@@ -117,8 +118,9 @@ export class InputManager {
             for (let i = 0; i < e.touches.length; i++) {
                 const t = e.touches[i];
 
-                // ★ 左下UI領域（MENUボタンや音量ボタンがある幅80px×下部160px以内）への接触は除外
-                const isBottomLeftUIZone = (t.clientX <= 80 && t.clientY >= screenHeight - 160);
+                // ★ 左下UI領域（MENUボタンや音量ボタン）への接触は除外
+                // 変更点：領域を (幅80px×下部160px) から (幅90px×下部240px) へ拡大し、誤爆を完全防止
+                const isBottomLeftUIZone = (t.clientX <= 90 && t.clientY >= screenHeight - 240);
                 if (isBottomLeftUIZone) continue;
 
                 // 画面左側58%以内であればジョイスティック開始
@@ -162,8 +164,8 @@ export class InputManager {
             const menuOverlay = document.getElementById('menu-overlay');
             if (menuOverlay && menuOverlay.style.display === 'block') return;
 
-            // 左下UIエリア除外
-            const isBottomLeftUIZone = (e.clientX <= 80 && e.clientY >= window.innerHeight - 160);
+            // 左下UIエリア除外（マウス判定も同様に拡大）
+            const isBottomLeftUIZone = (e.clientX <= 90 && e.clientY >= window.innerHeight - 240);
             if (isBottomLeftUIZone) return;
 
             isMouseDown = true;

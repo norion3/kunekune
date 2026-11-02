@@ -1,12 +1,14 @@
 // ==============================================================================
 // 『くねくねバトル オンライン』リモートパケット受信反映ハンドラ (net_handlers.js)
-// v26.4.0 途中参加チラつき解消＆無敵時間3秒対称化版:
+// v27.0.0 究極同期・絶対座標管理＆ランキング完全同期版:
+// ・【餌消去の絶対座標化】onFoodPicked で world.removeFoodAt(pick.x, pick.y) を実行し、通信ラグによるインデックスズレ・誤消去を完全根絶
+// ・【ランキング再ソート】ゲスト端末自己補正後に topList.sort((a, b) => b.score - a.score) を実行し、順位表示とリスト表示順の矛盾を100%解消
+// ・【スコア・名前即時反映】受信時に remote.score と recalculateSize() を確実に実行し、NetworkManager.slots の正規ネームで上書き
 // ・【途中参加チラつき根絶】onGameStart で direct または immediate 合図を受信した際、isRespawn = true 扱いで初期化し他走者(remoteSnakes)クリアによる消滅・点滅を完全防止
 // ・【無敵対称化】リモート無敵フラグ代入時の下限を 0.5秒 から 3.0秒 へ適正化し、ゲストがホスト判定で即爆死させられる非対称即死を完全根絶
 // ・【無敵同期順序適正化】remote.reset() の直後に data.isInvulnerable を反映し、意図せぬ上書きを完全解消
 // ・【ワープ直線根絶】回線瞬断やリスポーン時の大距離テレポート検知（distSq > 160000）でバッファを即時リセット
 // ・ホスト確定の全スロット順位マップ（lbData.ranks）から自機順位を直接取得し9位固定を根絶維持
-// ・ゲスト端末のランキングチラつき（点滅）をシグネチャ差分ガードで完全根絶
 // ・餌捕食イベント (pk) ＆ 撃破肉片クラスタ散布 (dc) の世界反映
 // ==============================================================================
 
@@ -56,9 +58,11 @@ export function setupNetworkHandlers(ctx) {
                 const isPlayerSlot = data.slot < 6;
                 const color = SNAKE_COLORS[data.slot % SNAKE_COLORS.length];
                 const slotData = NetworkManager.slots[data.slot];
-                const name = slotData ? slotData.name : (isPlayerSlot ? `P${data.slot + 1}` : `CPU ${data.slot - 5}`);
+                const resolvedName = (slotData && slotData.name && !slotData.isAI) 
+                    ? slotData.name 
+                    : (isPlayerSlot ? `P${data.slot + 1}` : `CPU ${data.slot - 5}`);
 
-                remote = new Snake(false, data.slot, name, color, 'normal');
+                remote = new Snake(false, data.slot, resolvedName, color, 'normal');
                 remote.reset(data.x, data.y);
                 remoteSnakes.set(data.slot, remote);
 
@@ -72,12 +76,17 @@ export function setupNetworkHandlers(ctx) {
                 }
             }
 
+            // ★ 名前同期保証：スロット情報に人間プレイヤー名が存在する場合、CPU名から即時上書き
+            const curSlot = NetworkManager.slots[data.slot];
+            if (curSlot && curSlot.name && !curSlot.isAI && remote.name !== curSlot.name) {
+                remote.name = curSlot.name;
+            }
+
             // ★ 1. テレポート検知＆ワープ直線根絶（生存したまま回線瞬断・再合流した時のゴム線防止）
             const dx = data.x - remote.x;
             const dy = data.y - remote.y;
             const distSq = dx * dx + dy * dy;
             if (distSq > 160000) {
-                // 400px以上の瞬間移動時は古いリングバッファを破棄して新座標へ瞬時にリセット
                 remote.reset(data.x, data.y);
             }
 
@@ -85,7 +94,6 @@ export function setupNetworkHandlers(ctx) {
             if (data.isDead && !remote.isDead) {
                 remote.die();
             } else if (!data.isDead && remote.isDead) {
-                // 死亡状態からのリスポーン復帰：リングバッファ初期化
                 remote.isDead = false;
                 remote.reset(data.x, data.y);
             }
@@ -102,35 +110,53 @@ export function setupNetworkHandlers(ctx) {
             remote.targetAngle = data.angle;
             remote.speed = data.speed;
             remote.targetLength = data.length;
-            remote.score = data.score;
-            remote.isBoosting = data.isBoosting;
 
+            // ★ スコア確実同期：スコア更新と体長・サイズ再計算を同時に実施
+            remote.score = data.score;
+            remote.recalculateSize();
+
+            remote.isBoosting = data.isBoosting;
             remote.kills = data.kills;
             remote.lastPacketTime = performance.now();
-            remote.recalculateSize();
         },
 
         /**
          * ★ ホストから受信した全体リーダーボード情報をゲスト端末へ同期
-         * ホスト確定順位マップ（lbData.ranks）から自機正規順位を取得（9位固定バグ完全解消）
+         * 自機実スコア・自機名による即時補正＆再ソートを完備
          */
         onLeaderboardSync(lbData) {
             if (!lbData) return;
             const myPlayer = window.localPlayerInstance;
-            const myScore = myPlayer ? myPlayer.score : 0;
-            const topList = lbData.top || [];
+            const myScore = myPlayer ? Math.floor(myPlayer.score) : 0;
+            const myName = (myPlayer && myPlayer.name) ? myPlayer.name : 'あなた';
+            const rawTopList = lbData.top || [];
             const totalAlive = lbData.totalAlive || TOTAL_SNAKES;
 
-            // ゲスト端末の自機正規順位算出：
-            // 1. ホストから全スロット順位マップ（ranks）が提供されている場合はそれを最優先使用
-            // 2. 単独 myRank があればそれを使用
-            // 3. なければ Top 8 リストからのフォールバック
+            // ★ ゲスト端末側での自己情報補正：ホスト集計リスト内の自機スコア・名前を最新の実データに更新
+            let hasMeInTop = false;
+            const topList = rawTopList.map(item => {
+                if (item.slot === NetworkManager.mySlot) {
+                    hasMeInTop = true;
+                    return {
+                        slot: item.slot,
+                        name: myName,
+                        score: myScore
+                    };
+                }
+                return item;
+            });
+
+            // ★ スコア補正後に再度スコア降順で並び替え（順位と表示位置のズレを解消）
+            topList.sort((a, b) => b.score - a.score);
+
+            // ホストから全スロット確定順位マップが届いている場合は最優先
             let myRank = 1;
             if (lbData.ranks && lbData.ranks[NetworkManager.mySlot] !== undefined) {
                 myRank = lbData.ranks[NetworkManager.mySlot];
             } else if (lbData.myRank) {
                 myRank = lbData.myRank;
             } else {
+                // フォールバック：全スネークリストまたはTopリストとの比較
                 const higherCount = topList.filter(item => item.score > myScore).length;
                 myRank = higherCount + 1;
             }
@@ -143,14 +169,14 @@ export function setupNetworkHandlers(ctx) {
             // 差分検知シグネチャ（名前・スコア・順位の文字列化）
             const newSignature = topList.slice(0, 8).map(item => `${item.name}:${item.score}`).join('|') + `_me:${myScore}_rank:${myRank}`;
             if (newSignature === lastLeaderboardSignature) {
-                return; // 変化がなければDOM書き換えを行わない（点滅完全防止）
+                return;
             }
             lastLeaderboardSignature = newSignature;
 
             const listEl = document.getElementById('leaderboard-list');
             if (listEl && listEl.parentElement && listEl.parentElement.style.display !== 'none') {
                 listEl.innerHTML = topList.slice(0, 8).map((item, idx) => {
-                    const isMe = myPlayer && (item.name === myPlayer.name || item.slot === NetworkManager.mySlot);
+                    const isMe = item.slot === NetworkManager.mySlot;
                     return `
                         <div style="display:flex; justify-content:space-between; color:${isMe ? '#ffdd00' : '#ffffff'}; font-weight:${isMe ? 'bold' : 'normal'}; font-size:12px;">
                             <span style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:85px;">${idx + 1}. ${item.name}</span>
@@ -162,16 +188,12 @@ export function setupNetworkHandlers(ctx) {
         },
 
         /**
-         * 餌取得イベント（他プレイヤーが食べた餌の即時消去）
+         * ★ 餌取得イベント（絶対座標による安全消去）
+         * 通信ラグによるインデックス不整合を根絶
          */
         onFoodPicked(pick) {
-            if (!world || !world.foodGrid) return;
-            const key = `${pick.gx}_${pick.gy}`;
-            const list = world.foodGrid.get(key);
-            if (list && list[pick.index]) {
-                list[pick.index] = list[list.length - 1];
-                list.pop();
-            }
+            if (!world || typeof world.removeFoodAt !== 'function' || !pick) return;
+            world.removeFoodAt(pick.x, pick.y);
         },
 
         /**
