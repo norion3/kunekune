@@ -1,15 +1,14 @@
 // ==============================================================================
 // 『くねくねバトル オンライン』スネーク.io型 自律生態系AIマネージャー (ai.js)
-// v28.1.0 完全機能継承・生態系ピラミッド＆適正密度調律版:
+// v28.5.0 真の超巨大ボス覚醒＆生態系ピラミッド最適化版:
+// ・【真の超巨大ボス新設(8,000〜18,000pt)】マップに2%の確率で君臨する超巨大怪獣(size:32〜40, 体長80〜125節)を配備
+// 　従来死に機能だった「コイリング包囲知能(size > 28)」が100%発動し、小型スネークを巨大な円で囲い込む緊迫の狩猟を実現
+// 　カミカゼ特攻(AMBUSH)によるジャイアントキリング成功時の爆発的スコア獲得リターンを確立
+// ・【生態系ピラミッド4層化】小型70%(50〜150pt)、中堅22%(300〜1200pt)、大型6%(2500〜5000pt)、超巨大ボス2%(8000〜18000pt)
+// ・【大型AI機動性調律】大型個体(size > 22)は旋回を少し重厚にする代わりに巡航の重圧感を強化
 // ・【全機能完全継承】カミカゼ暗殺(AMBUSH)、包囲コイリング(HUNTER)、3種ちょっかい(HARASS)、
 // 　ハイエナ肉片争奪(SCAVENGER)、ビビり逃走(PANIC)、大回遊(CRUISING)、完全DeltaTime、
 // 　動的循環スポーン、画面外仮想成長の全ルーチンを一切省略せず100%完全保持
-// ・【初期スコアのピラミッド化】開幕から巨大な敵だらけになるインフレを解消。
-// 　80%を小型(50〜150pt)、15%を中型(200〜600pt)、5%のみをボス格(1000〜2500pt)とする自然な分布へ最適化
-// ・【適正密度・息苦しさ解消】プレイヤー周囲が敵だらけ（レーダーが真っ赤）になる過密を解消。
-// 　開幕の配備範囲を広域(2000〜16000px)へ分散し、動的循環スポーンの再配置距離も
-// 　(4000〜8500px) へ適正拡大。「探せば敵が見つかり、適度に交戦できる」広大な深宇宙の距離感を復元
-// ・【画面外成長のマイルド化】画面外AIの仮想成長レートを約1/3に調律し、プレイヤーの努力が報われるテンポを確立
 // ==============================================================================
 
 import { MAP_SIZE, SNAKE_COLORS } from './constants.js';
@@ -70,24 +69,29 @@ export class AIManager {
                 ambushTarget: null
             });
 
-            // ★ 初期配置の広域分散化（開幕直後の異常過密・敵だらけ状態を解消）
+            // 初期配置の広域分散化
             const angle = Math.random() * Math.PI * 2;
             const dist = 2000 + Math.random() * 16000;
             const sx = Math.max(400, Math.min(MAP_SIZE - 400, playerX + Math.cos(angle) * dist));
             const sy = Math.max(400, Math.min(MAP_SIZE - 400, playerY + Math.sin(angle) * dist));
             ai.reset(sx, sy);
 
-            // ★ ピラミッド型スコア分布（初期インフレの完全解消）
-            // 全員が巨大化している不自然さを根絶し、大半が自分と同等以下の適正難易度へ
+            // ★ 生態系ピラミッド4層化（真の超巨大ボス覚醒）
             const scoreRand = Math.random();
-            if (scoreRand < 0.05) {
-                // 5%: ごく稀にマップを回遊するボス格（1000〜2500pt）
-                ai.addScore(Math.floor(1000 + Math.random() * 1500));
-            } else if (scoreRand < 0.20) {
-                // 15%: 中堅個体（200〜600pt）
-                ai.addScore(Math.floor(200 + Math.random() * 400));
+            if (scoreRand < 0.02) {
+                // 2%: マップに君臨する超巨大怪獣ボス（8,000〜18,000pt / size 32〜40 / 80〜125節）
+                // コイリング包囲知能(size > 28)が確実に発動し、撃破で超大量の肉片を散布
+                ai.addScore(Math.floor(8000 + Math.random() * 10000));
+                // ボス格は回遊または狩猟に特化
+                this.aiMeta[i - 1].persona = Math.random() < 0.6 ? 'cruiser' : 'hunter';
+            } else if (scoreRand < 0.08) {
+                // 6%: 大型上位個体（2,500〜5,000pt / size 24〜28 / 40〜57節）
+                ai.addScore(Math.floor(2500 + Math.random() * 2500));
+            } else if (scoreRand < 0.30) {
+                // 22%: 中堅一般個体（300〜1,200pt / size 16.5〜20 / 20〜29節）
+                ai.addScore(Math.floor(300 + Math.random() * 900));
             } else {
-                // 80%: 基本となる小型・ザコ個体（初期50pt + わずかなゆらぎ 0〜100pt）
+                // 70%: 基本となる小型・ザコ個体（初期50pt + ゆらぎ 0〜100pt）
                 ai.addScore(Math.floor(Math.random() * 100));
             }
 
@@ -109,7 +113,7 @@ export class AIManager {
         const safeDt = (typeof dtSec === 'number' && dtSec > 0) ? Math.min(dtSec, 0.1) : (1 / 60);
         const timeScale = Math.max(0.1, Math.min(3.0, safeDt * 60));
 
-        // 1. 【画面外AIの仮想バックグラウンド成長】（ランキング静止バグを防ぎつつ、インフレを抑えたマイルド調律）
+        // 1. 【画面外AIの仮想バックグラウンド成長】（ランキング静止バグ防止）
         this._virtualGrowthTimer += safeDt;
         if (this._virtualGrowthTimer >= 0.5) {
             const growthInterval = this._virtualGrowthTimer;
@@ -129,7 +133,7 @@ export class AIManager {
 
                 ai.addScore(gainRate * growthInterval);
 
-                // 仮想キル発生頻度と獲得量をマイルド化
+                // 仮想キル発生頻度と獲得量
                 if (Math.random() < 0.006) {
                     const killBonus = Math.floor(150 + Math.random() * 500);
                     ai.addScore(killBonus);
@@ -152,8 +156,7 @@ export class AIManager {
         const pY = isPlayerAlive ? player.y : (MAP_SIZE / 2);
         const pAngle = isPlayerAlive ? player.angle : 0;
 
-        // ★ 動的循環スポーン判定用の遠隔閾値（15,000px）
-        // プレイヤーから極端に離れたAIのみを対象とし、近場の生態系は乱さない
+        // 動的循環スポーン判定用の遠隔閾値（15,000px）
         const recycleDistSq = 15000 * 15000;
 
         for (let i = 0; i < total; i++) {
@@ -167,16 +170,19 @@ export class AIManager {
                 if (meta.deadTimer >= 1.25) {
                     meta.deadTimer = 0;
 
-                    // ★ リスポーン位置を広域に散らし、倒した敵がすぐ目の前に再出現する不快感を解消
+                    // リスポーン位置を広域に分散
                     const ang = Math.random() * Math.PI * 2;
                     const d = 4000 + Math.random() * 8000;
                     const rx = Math.max(400, Math.min(MAP_SIZE - 400, pX + Math.cos(ang) * d));
                     const ry = Math.max(400, Math.min(MAP_SIZE - 400, pY + Math.sin(ang) * d));
                     ai.reset(rx, ry);
 
-                    // 復活時の中型化確率を10%へ引き下げ
-                    if (Math.random() < 0.10) {
-                        ai.addScore(Math.floor(150 + Math.random() * 450));
+                    // 復活時の中型〜大型確率の適正調律
+                    const respawnRand = Math.random();
+                    if (respawnRand < 0.015) {
+                        ai.addScore(Math.floor(4000 + Math.random() * 6000)); // 稀にボス格復活
+                    } else if (respawnRand < 0.12) {
+                        ai.addScore(Math.floor(300 + Math.random() * 700));
                     }
 
                     meta.state = AI_STATE.FORAGING;
@@ -187,9 +193,7 @@ export class AIManager {
                 continue;
             }
 
-            // ★ 【動的循環スポーン（過疎化防止 ＆ 絶妙な交戦密度ループ）】
-            // 遠く離れすぎたAIを、プレイヤーの視野外周（4,000〜8,500px）へ前方を広くカバーして再配置
-            // プレイヤー周囲が敵で埋まる過密を防ぎつつ、適度に探索すると必ず敵と会えるバランスを実現
+            // 【動的循環スポーン（過疎化防止 ＆ 絶妙な交戦密度ループ）】
             if (isPlayerAlive && !ai.isVisible && (frameCount + i) % 60 === 0) {
                 const distToPlayerSq = (ai.x - pX) ** 2 + (ai.y - pY) ** 2;
                 if (distToPlayerSq > recycleDistSq) {
@@ -297,7 +301,7 @@ export class AIManager {
                 if (other === ai || other.isDead || !other.isVisible) continue;
                 if (other.invulnerableTimer && other.invulnerableTimer > 0) continue;
 
-                if (other.score >= ai.score * 1.8 || other.size >= 28) {
+                if (other.score >= ai.score * 1.8 || other.size >= 26) {
                     const gdx = other.x - ai.x;
                     const gdy = other.y - ai.y;
                     const distSq = gdx * gdx + gdy * gdy;
@@ -487,11 +491,12 @@ export class AIManager {
                 }
 
                 if (huntTarget) {
-                    // 包囲コイリング狩猟知能：巨大AIが獲物の周囲を円を描くように回り込み、囲い込む
-                    if (ai.size > huntTarget.size * 1.5 && ai.size > 28) {
+                    // ★ 包囲コイリング狩猟知能：巨大AIが獲物の周囲を円を描くように回り込み、囲い込む
+                    // 超巨大ボス（size > 28）の出現により、このトグロ包囲が確実に発動！
+                    if (ai.size > huntTarget.size * 1.4 && ai.size > 26) {
                         const toTargetAngle = Math.atan2(huntTarget.y - ai.y, huntTarget.x - ai.x);
-                        ai.targetAngle = toTargetAngle + Math.PI / 2.5;
-                        ai.isBoosting = ai.score > 120 && Math.random() < 0.45;
+                        ai.targetAngle = toTargetAngle + Math.PI / 2.3;
+                        ai.isBoosting = ai.score > 120 && Math.random() < 0.40;
                     } else {
                         const leadDist = 120 + huntTarget.size;
                         const tx = huntTarget.x + Math.cos(huntTarget.angle) * leadDist;

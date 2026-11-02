@@ -1,15 +1,17 @@
 // ==============================================================================
 // 『くねくねバトル オンライン』Phase 7 マスター統合オーケストレーター (main.js)
-// v28.3.0 リセットボタンソロ/マルチ動的表示連動＆CPUキルログ完全排除版:
-// ・【リセットボタン動的表示連動】updateResetButtonVisibility を新設。
-// 　ソロプレイ対戦中のみ #btn-world-reset を表示し、マルチプレイ時（ロビー・待機室・マルチ対戦中）は
-// 　完全に非表示（display: none）化。誤操作やマルチプレイ時の同期事故を根本から排除
-// ・【CPUキルログ完全排除】画面を埋め尽くしていた「CPUがCPUを撃破！」という無意味なチャット通知を完全遮断。
-// 　プレイヤー（自機）または人間の参加者が関与した撃破のみを通知表示し、チャット欄の視認性を劇的に向上
-// ・【スコア単位短縮フォーマッター】formatScore を配備。10,000以上で「12.5k」、1,000,000以上で「1.2M」と短縮表示
-// ・【ランキング文字被り解消】スコアが6桁・7桁になっても名前列と重ならず、右枠を突き破らないようレイアウト最適化
-// ・【ゴースト完全パージ】切断されたスロットの残留ゴーストを即時完全消去
-// ・【デッドレコニング旋回ジッター解消】相殺ベクトルに targetAngle を使用し、カーブ時の振動を完全根絶
+// v28.4.0 空き枠AIダミーID適正化・進行性不整合完全根絶版:
+// ・【空き枠AIダミーID適正化】initGame および onHostPromoted 内で、空き枠AIスロットに
+// 　割り当てるIDの計算式が `i - MAX_PLAYERS + 1` となっており、i < 5 の時にマイナス値（-5など）
+// 　が割り当てられてデータ不整合や同期参照事故を起こしていた致命的バグを完全解消。
+// 　既存AI（1〜94）と絶対に衝突しない正の専用ID空間 `MAX_AIS + i + 1`（95〜100）へ統一適正化
+// ・【リセットボタン動的表示連動】updateResetButtonVisibility により、
+// 　ソロプレイ対戦中のみ #btn-world-reset を表示し、マルチプレイ時は安全に非表示維持
+// ・【CPUキルログ完全排除】プレイヤー（自機）または人間の参加者が関与した撃破のみ通知表示
+// ・【スコア単位短縮フォーマッター】formatScore 配備（10k / 1M 短縮表示）
+// ・【ランキング文字被り解消】スコア幅適正化とレイアウト最適化
+// ・【ゴースト完全パージ】切断スロット残留エンティティの即時消去
+// ・【デッドレコニング旋回ジッター解消】相殺ベクトルに targetAngle を使用
 // ・【餌同期の絶対座標化】checkFoodConsumption のコールバックを絶対座標 (x, y) に適応
 // ==============================================================================
 
@@ -299,7 +301,8 @@ export function initGame(isRespawn = false) {
                 if (i === NetworkManager.mySlot) continue;
                 const slotData = NetworkManager.slots[i];
                 if (slotData && slotData.isAI) {
-                    const dummyId = i - MAX_PLAYERS + 1;
+                    // ★ 修正：既存AI(1〜94)と重複せず、かつ負数にならない一意な正のID空間（95〜100）へ割り当て
+                    const dummyId = MAX_AIS + i + 1;
                     const aiSnake = new Snake(false, dummyId, slotData.name || `CPU ${i + 1}`, slotData.color, 'normal');
                     const angle = Math.random() * Math.PI * 2;
                     const dist = 1500 + Math.random() * 22000;
@@ -420,7 +423,8 @@ NetworkManager.setCallbacks({
             if (i === NetworkManager.mySlot) continue;
             const slotData = NetworkManager.slots[i];
             if (slotData && slotData.isAI) {
-                const dummyId = i - MAX_PLAYERS + 1;
+                // ★ 修正：ホスト昇格時も一意な正のID空間（95〜100）へ割り当て
+                const dummyId = MAX_AIS + i + 1;
                 const aiSnake = new Snake(false, dummyId, slotData.name || `CPU ${i + 1}`, slotData.color, 'normal');
                 const angle = Math.random() * Math.PI * 2;
                 const dist = 1500 + Math.random() * 22000;
@@ -594,7 +598,7 @@ function gameLoop() {
         remoteSnakes.forEach((remote, slotIdx) => {
             if (remote.isDead) return;
 
-            // ★ ゴースト検知＆完全パージ
+            // ゴースト検知＆完全パージ
             if (NetworkManager.isMultiplayerActive) {
                 const slotData = NetworkManager.slots[slotIdx];
                 if (!slotData || slotData.isAI) {
@@ -643,7 +647,7 @@ function gameLoop() {
                 for (let sIdx = 1; sIdx < MAX_PLAYERS; sIdx++) {
                     const slotData = NetworkManager.slots[sIdx];
                     if (slotData && !slotData.isAI) {
-                        const dummyId = sIdx - MAX_PLAYERS + 1;
+                        const dummyId = MAX_AIS + sIdx + 1;
                         const fakeIdx = allSnakes.findIndex(s => !s.isPlayer && s.id === dummyId);
                         if (fakeIdx !== -1) {
                             allSnakes.splice(fakeIdx, 1);
@@ -763,7 +767,7 @@ function gameLoop() {
                         } else {
                             targetSnake = remoteSnakes.get(sIdx);
                             if (!targetSnake) {
-                                const dummyId = sIdx - MAX_PLAYERS + 1;
+                                const dummyId = MAX_AIS + sIdx + 1;
                                 targetSnake = allSnakes.find(s => s.id === dummyId);
                             }
                         }

@@ -1,16 +1,15 @@
 /**
  * ==============================================================================
  * 『くねくねバトル オンライン』入力制御モジュール (input.js)
- * v28.1.0 画面全域解放＆ブーストスライド・ゼロ負荷シームレス移行版:
- * ・【画面右側全域の解放】従来の「幅58%制限」を完全撤廃！画面の0%〜100%全域でジョイスティック起動を許可。
- * 　ボタン等の真上以外の余白を触れれば、左右・画面中央問わず意のままにジョイスティックが出現
- * ・【ブーストからジョイスティックへのシームレス移行】ブーストボタンを押したまま指を滑らせて外れた瞬間、
- * 　ブーストを解除し、抜け出た地点を起点として即座にジョイスティックへバトンタッチ（片手操作の完全確立）
- * ・【ゼロ負荷最適化】ブーストボタン中心座標・半径の事前キャッシュ＆二乗距離判定（掛け算2回のみ）を採用。
- * 　touchmove中のリフロー（強制レイアウト再計算）を完全ゼロ化し、スマホの端末差・画面回転にも100%追従
- * ・【マルチタッチ排他ガード】左手でジョイスティック操作中に右手ブーストが外れても、右手がジョイスティックを
- * 　横取りしない安全優先ガードを配備（両手プレイ時の誤爆暴走を完全防止）
- * ・【ボタン実体ピンポイント除外】ボタン真上のみ除外し、ボタン隙間や余白は0ミリ秒で起動
+ * v28.4.0 画面全域解放＆ブーストスライド旋回追従完全修正版:
+ * ・【ブーストスライド旋回追従の完全修正】ブーストボタンから外れた後、ブラウザの
+ * 　タッチキャプチャ仕様により後続 touchmove が早期リターンされて旋回不能になっていた
+ * 　イベント遮断バグを完全解消。移行後も滑らかにジョイスティック旋回・追従を継続
+ * ・【スライド離脱時の終了ハンドリング】ブーストから移行した指が画面から離れた際、
+ * 　ボタン側の touchend / touchcancel からも確実に endJoystick を発火して状態残存を防止
+ * ・【ゼロ負荷最適化】ブーストボタン中心座標・半径の事前キャッシュ＆二乗距離判定を完全維持
+ * ・【画面全域解放】画面の0%〜100%全域でのジョイスティック起動を完全維持
+ * ・【マルチタッチ排他ガード】両手操作時の誤爆暴走防止ガードを完全維持
  * ==============================================================================
  */
 
@@ -105,35 +104,47 @@ export class InputManager {
 
         // ブーストボタンからの指の脱出検知（スライド操作のシームレスジョイスティック移行）
         this.boostBtn.addEventListener('touchmove', (e) => {
-            if (!this.boost || this.boostTouchId === null) return;
             e.preventDefault();
             e.stopPropagation();
 
-            const t = Array.from(e.touches).find(touch => touch.identifier === this.boostTouchId);
-            if (!t) return;
+            // ケース1: まだブーストボタンを押下中の場合
+            if (this.boost && this.boostTouchId !== null) {
+                const t = Array.from(e.touches).find(touch => touch.identifier === this.boostTouchId);
+                if (!t) return;
 
-            // ゼロ負荷計算：掛け算2回のみでボタン外への脱出を判定
-            const dx = t.clientX - this.boostCenter.x;
-            const dy = t.clientY - this.boostCenter.y;
-            const distSq = dx * dx + dy * dy;
+                // ゼロ負荷計算：掛け算2回のみでボタン外への脱出を判定
+                const dx = t.clientX - this.boostCenter.x;
+                const dy = t.clientY - this.boostCenter.y;
+                const distSq = dx * dx + dy * dy;
 
-            if (distSq > this.boostRadiusSq) {
-                // ボタンから外れたらブースト解除
-                setBoost(false);
-                const escapedTouchId = this.boostTouchId;
-                this.boostTouchId = null;
+                if (distSq > this.boostRadiusSq) {
+                    // ボタンから外れたらブースト解除
+                    setBoost(false);
+                    const escapedTouchId = this.boostTouchId;
+                    this.boostTouchId = null;
 
-                // 他にジョイスティックを動かしていなければ、外れた指を即座にジョイスティックへ引き継ぐ！
-                if (!this.active) {
-                    if (typeof window !== 'undefined' && window.currentGameState === 'playing') {
-                        if (!window.localPlayerInstance || !window.localPlayerInstance.isDead) {
-                            const menuOverlay = document.getElementById('menu-overlay');
-                            if (!menuOverlay || menuOverlay.style.display !== 'block') {
-                                this.touchId = escapedTouchId;
-                                this.startJoystick(t.clientX, t.clientY);
+                    // 他にジョイスティックを動かしていなければ、外れた指を即座にジョイスティックへ引き継ぐ
+                    if (!this.active) {
+                        if (typeof window !== 'undefined' && window.currentGameState === 'playing') {
+                            if (!window.localPlayerInstance || !window.localPlayerInstance.isDead) {
+                                const menuOverlay = document.getElementById('menu-overlay');
+                                if (!menuOverlay || menuOverlay.style.display !== 'block') {
+                                    this.touchId = escapedTouchId;
+                                    this.startJoystick(t.clientX, t.clientY);
+                                }
                             }
                         }
                     }
+                }
+                return;
+            }
+
+            // ケース2: ブーストからジョイスティックへスライド移行後の追従処理
+            // ブラウザのタッチキャプチャにより後続の touchmove も btn-boost に届くため、ここでジョイスティック移動を実行
+            if (this.active && this.touchId !== null) {
+                const t = Array.from(e.touches).find(touch => touch.identifier === this.touchId);
+                if (t) {
+                    this.moveJoystick(t.clientX, t.clientY);
                 }
             }
         }, { passive: false });
@@ -143,6 +154,15 @@ export class InputManager {
                 e.preventDefault();
                 e.stopPropagation();
             }
+
+            // ジョイスティックへ移行した指が離れた場合の安全回収
+            if (this.active && this.touchId !== null) {
+                const isMyTouchStillActive = e && e.touches ? Array.from(e.touches).some(touch => touch.identifier === this.touchId) : false;
+                if (!isMyTouchStillActive) {
+                    this.endJoystick();
+                }
+            }
+
             this.boostTouchId = null;
             setBoost(false);
         };
@@ -216,7 +236,7 @@ export class InputManager {
                 // ボタン実体の真上は除外（隙間やボタンのすぐ横、余白は全て起動）
                 if (this._isUIElement(t.clientX, t.clientY)) continue;
 
-                // ★ 画面幅58%制限を完全撤廃：画面の全域（0%〜100%）どこでも起動可能
+                // 画面幅58%制限を完全撤廃：画面の全域（0%〜100%）どこでも起動可能
                 this.touchId = t.identifier;
                 this.startJoystick(t.clientX, t.clientY);
                 break;
