@@ -1,10 +1,11 @@
 // ==============================================================================
 // 『くねくねバトル オンライン』UIイベントバインダーモジュール (ui_binder.js)
-// v25.3.0 死亡リトライ直接再戦化＆モバイル高速タッチレスポンス版:
+// v26.3.0 タッチ貫通・ジョイスティック暴発完全根絶版:
+// ・【タッチ貫通根絶】bindFastTap に touchstart の stopPropagation() を配備し、MENUや音量ボタンタップ時にCanvasへタッチが抜けてジョイスティックが誤爆する事故を完全解消
+// ・【待機室開始デバウンス】btnWaitingStart に 1000ms のタップデバウンスを配備し、ホスト連打による二重 initGame 実行を完全防止
 // ・リトライ時に待機室へ幽閉されるデッドロックを根絶し、マルチ/ソロ問わず即座に戦場へ直接リスポーン再戦
 // ・ホスト死亡リトライ時に戦っている生存ゲストが巻き添えリセットされる事故を完全防止
 // ・ズーム・ランキング・マップ・サウンド操作へ touchend 高速タップリスナーを配備し、300ms操作遅延を解消
-// ・メニュー着せ替え時の不要な自動弾幕ログ完全削除維持
 // ・ホスト開始時の全ゲスト一斉始動 ＆ ロビー操作の net_lobby_hooks.js 一本化維持
 // ==============================================================================
 
@@ -26,13 +27,21 @@ export function updateZoomButtonsState(zoomMultiplier) {
 }
 
 /**
- * モバイルタップの300ms遅延を解消する安全な高速バインドヘルパー
+ * モバイルタップの300ms遅延を解消し、かつ背後Canvasへのイベント貫通を防ぐ安全な高速バインドヘルパー
  * @param {HTMLElement} element 対象DOM
  * @param {Function} handler 実行ハンドラ
  */
 function bindFastTap(element, handler) {
     if (!element) return;
     let lastTapTime = 0;
+
+    // ★ touchstart 発生時に即座に親・背面Canvasへの伝播を遮断（ジョイスティック暴発根絶）
+    element.addEventListener('touchstart', (e) => {
+        if (e) {
+            e.stopPropagation();
+        }
+    }, { passive: false });
+
     const onFastTap = (e) => {
         if (e) {
             e.preventDefault();
@@ -43,6 +52,7 @@ function bindFastTap(element, handler) {
         lastTapTime = now;
         handler(e);
     };
+
     element.addEventListener('touchend', onFastTap, { passive: false });
     element.addEventListener('click', onFastTap);
 }
@@ -63,7 +73,7 @@ export function initUIBindings(ctx) {
         getPlayer
     } = ctx;
 
-    // 1. ズーム操作ボタン（高速タップ対応）
+    // 1. ズーム操作ボタン（高速タップ対応＆貫通防止）
     const btnZoomIn = document.getElementById('btn-zoom-in');
     const btnZoomOut = document.getElementById('btn-zoom-out');
 
@@ -83,7 +93,7 @@ export function initUIBindings(ctx) {
         });
     }
 
-    // 2. ランキング ＆ レーダーマップトグルボタン（高速タップ対応）
+    // 2. ランキング ＆ レーダーマップトグルボタン（高速タップ対応＆貫通防止）
     const btnToggleRanking = document.getElementById('btn-toggle-ranking');
     const btnToggleMap = document.getElementById('btn-toggle-map');
 
@@ -101,7 +111,7 @@ export function initUIBindings(ctx) {
         });
     }
 
-    // 3. サウンドON/OFFボタン（高速タップ対応）
+    // 3. サウンドON/OFFボタン（高速タップ対応＆貫通防止）
     const soundBtn = document.getElementById('btn-sound');
     if (soundBtn && !soundBtn._hasSoundBound) {
         soundBtn._hasSoundBound = true;
@@ -115,11 +125,16 @@ export function initUIBindings(ctx) {
         });
     }
 
-    // 4. ロビー：ソロプレイ開始ボタン（1秒連打デバウンス付）
+    // 4. ロビー：ソロプレイ開始ボタン（1秒連打デバウンス付＆貫通防止）
     const btnLobbySolo = document.getElementById('btn-lobby-solo');
     if (btnLobbySolo && !btnLobbySolo._hasSoloBound) {
         btnLobbySolo._hasSoloBound = true;
         let lastSoloTap = 0;
+
+        btnLobbySolo.addEventListener('touchstart', (e) => {
+            if (e) e.stopPropagation();
+        }, { passive: false });
+
         const onSoloTap = (e) => {
             if (e) {
                 e.preventDefault();
@@ -138,30 +153,51 @@ export function initUIBindings(ctx) {
         btnLobbySolo.addEventListener('click', onSoloTap);
     }
 
-    // 5. 待機室：ホスト専用ゲーム開始ボタン（全端末一斉開始ブロードキャスト連携）
+    // 5. 待機室：ホスト専用ゲーム開始ボタン（1000ms連打デバウンス配備＆一斉開始連携＆貫通防止）
     const btnWaitingStart = document.getElementById('btn-waiting-start');
     if (btnWaitingStart && !btnWaitingStart._hasStartBound) {
         btnWaitingStart._hasStartBound = true;
-        btnWaitingStart.onclick = (e) => {
+        let lastStartTapTime = 0;
+
+        btnWaitingStart.addEventListener('touchstart', (e) => {
             if (e) e.stopPropagation();
+        }, { passive: false });
+
+        const onStartTap = (e) => {
+            if (e) {
+                e.preventDefault();
+                e.stopPropagation();
+            }
             if (!NetworkManager.isHost) return;
 
-            // マルチプレイ時は全ゲスト端末へゲーム開始パケットを送信
+            const now = Date.now();
+            if (now - lastStartTapTime < 1000) return; // 1000ms デバウンスで二重起動防止
+            lastStartTapTime = now;
+
             if (NetworkManager.isMultiplayerActive && typeof NetworkManager.broadcastStartGame === 'function') {
                 NetworkManager.broadcastStartGame();
             }
 
-            // ホスト自身のゲームを始動
             initGame();
         };
+
+        btnWaitingStart.addEventListener('touchend', onStartTap, { passive: false });
+        btnWaitingStart.addEventListener('click', onStartTap);
     }
 
-    // 6. 待機室：退室ボタン
+    // 6. 待機室：退室ボタン（貫通防止）
     const btnWaitingLeave = document.getElementById('btn-waiting-leave');
     if (btnWaitingLeave && !btnWaitingLeave._hasLeaveBound) {
         btnWaitingLeave._hasLeaveBound = true;
-        btnWaitingLeave.onclick = async (e) => {
+        btnWaitingLeave.addEventListener('touchstart', (e) => {
             if (e) e.stopPropagation();
+        }, { passive: false });
+
+        btnWaitingLeave.onclick = async (e) => {
+            if (e) {
+                e.preventDefault();
+                e.stopPropagation();
+            }
             EntryShield.show('DISCONNECTING...', '退室しています...');
             await NetworkManager.exitRoom();
             EntryShield.hide();
@@ -178,13 +214,16 @@ export function initUIBindings(ctx) {
         }
     });
 
-    // 8. ★ リザルト画面：リトライボタン（直接リスポーン再戦化）
-    // マルチプレイ・ソロプレイを問わず、待機室に送還せず即座に戦場へ再出撃！
-    // ゲストの待機室永久幽閉デッドロックと、ホスト操作による生存ゲスト強制リセットを完全解消。
+    // 8. リザルト画面：リトライボタン（直接リスポーン再戦化＆貫通防止）
     const btnRetry = document.getElementById('btn-retry');
     if (btnRetry && !btnRetry._hasRetryBound) {
         btnRetry._hasRetryBound = true;
         let lastRetryTap = 0;
+
+        btnRetry.addEventListener('touchstart', (e) => {
+            if (e) e.stopPropagation();
+        }, { passive: false });
+
         const onRetryTap = (e) => {
             if (e) {
                 e.preventDefault();
@@ -199,7 +238,6 @@ export function initUIBindings(ctx) {
                 overScreen.style.display = 'none';
             }
 
-            // ★ 待機室へ戻らず、その対戦セッション内で即座に直接リスポーン（isRespawn = true）
             initGame(true);
         };
 

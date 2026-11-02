@@ -1,13 +1,12 @@
 // ==============================================================================
 // 『くねくねバトル オンライン』マルチプレイ送信ループ＆アクションキュー管理 (net_broadcaster.js)
-// v26.0.0 1KB制限超過時キュー安全差し戻し＆ゾンビ餌根絶版:
-// ・【未送信キュー保護】1010バイト制限接近時に切り離した餌取得・ドロップを先頭へ安全差し戻し（unshift）
-// ・大餌密集地帯でパケット制限に引っかかっても餌取得情報が虚無へ破棄されず、ゾンビ餌化を100%根絶
-// ・AIスロット計算のハードコード先祖返り（4+）を MAX_PLAYERS+ へ完全修正維持
-// ・最大6名（0〜5）の人間プレイヤーとAIスロット（6以降）の重複・アバター点滅を完全根絶維持
-// ・10Hzブロードキャスト送信ループの独立管理
-// ・アクション蓄積キュー（餌取得・散布肉片・撃破クラスタ・チャット）の専任管理
-// ・最大94体AI対応：スコア上位Top 5ボス ＋ プレイヤー近接AIを動的抽出して送信
+// v26.3.0 即時割り込み送信対応＆1KB常時セーフマージン版:
+// ・【即時送信対応】ブースト開始・終了などの状態変化を100ms周期を待たずに即時送信する forceImmediateSync を配備しラグを根絶
+// ・【平常時パケット安全圧縮】AI送信数を最大8体へ最適化し、基礎パケットを約620バイトへスリム化
+// ・【リーダーボード送信間引き】lb 同封を5Hz（2フレームに1回）に調整し、常時300バイト以上の送信余裕を確保
+// ・大餌密集地帯で餌取得（pk）が重なっても 1010バイト制限に接触せず、未送信キュー差し戻しの無限ループを完全根絶
+// ・【未送信キュー保護】万が一の超過時も splice 済みデータを先頭へ安全差し戻し（unshift）維持
+// ・AIスロット計算の MAX_PLAYERS+ 規格維持
 // ==============================================================================
 
 import {
@@ -25,6 +24,7 @@ export const NetBroadcaster = {
     _syncIntervalId: null,
     _aiSliceIndex: 0,
     _latestLeaderboard: null,
+    _lbThrottleCount: 0, // リーダーボード送信間引き用カウンター
 
     _pendingPicks: [],
     _pendingDrops: [],
@@ -62,6 +62,25 @@ export const NetBroadcaster = {
     },
 
     /**
+     * ブースト状態変化やリスポーン時の即時割り込み送信（Event-driven）
+     * 100msの定期送信を待たずに、自身の最新状態のみを最速で送信しラグを根絶する
+     */
+    forceImmediateSync(netManager) {
+        if (!netManager.isMultiplayerActive || !netManager.isSDKAvailable) return;
+        if (typeof window.localPlayerInstance === 'undefined' || !window.localPlayerInstance) return;
+
+        const mySnake = window.localPlayerInstance;
+        const myTuple = encodeSnakeToTuple(mySnake, netManager.mySlot, netManager.isHost);
+        
+        const packet = {
+            e: 'P',
+            l: [myTuple]
+        };
+
+        this.sendCustomMessage(packet);
+    },
+
+    /**
      * 10Hz（100ms周期）定期ブロードキャストループの開始
      * @param {Object} netManager NetworkManager インスタンス参照
      */
@@ -76,7 +95,7 @@ export const NetBroadcaster = {
             const myTuple = encodeSnakeToTuple(mySnake, netManager.mySlot, netManager.isHost);
             const tuplesList = [myTuple];
 
-            // ホスト端末専用：94体AIの3層インテリジェントLoD抽出送出
+            // ★ ホスト端末専用：94体AIの最適抽出（最大8体に絞り、パケット約200Bを安全削減）
             if (netManager.isHost && Array.isArray(window.allAISnakesInstance)) {
                 const ais = window.allAISnakesInstance;
                 const totalAIs = ais.length;
@@ -85,21 +104,21 @@ export const NetBroadcaster = {
                     const selectedSet = new Set();
                     const candidates = [];
 
-                    // 1. スコア上位Top 5のボスAIを優先選出
+                    // 1. スコア上位Top 4のボスAIを優先選出
                     const sortedAIs = [...ais].filter(a => a && !a.isDead).sort((a, b) => b.score - a.score);
-                    const topLimit = Math.min(5, sortedAIs.length);
+                    const topLimit = Math.min(4, sortedAIs.length);
                     for (let t = 0; t < topLimit; t++) {
                         selectedSet.add(sortedAIs[t]);
                         candidates.push(sortedAIs[t]);
                     }
 
-                    // 2. プレイヤー周辺3,500px以内にいる交戦・接近AIを抽出（最大4体）
+                    // 2. プレイヤー周辺3,500px以内にいる交戦・接近AIを抽出（最大3体）
                     const px = mySnake.x;
                     const py = mySnake.y;
                     const nearDistSq = 3500 * 3500;
                     let nearCount = 0;
 
-                    for (let i = 0; i < totalAIs && nearCount < 4; i++) {
+                    for (let i = 0; i < totalAIs && nearCount < 3; i++) {
                         const ai = ais[i];
                         if (!ai || ai.isDead || selectedSet.has(ai)) continue;
 
@@ -112,12 +131,12 @@ export const NetBroadcaster = {
                         }
                     }
 
-                    // 3. 残り枠を全体スライス（ローテーション）で巡回補完
-                    const BATCH_SIZE = 4;
+                    // 3. 残り枠をスライス巡回（全体で最大8体までに厳格抑制）
+                    const BATCH_SIZE = 2;
                     const startIndex = (this._aiSliceIndex * BATCH_SIZE) % totalAIs;
                     this._aiSliceIndex = (this._aiSliceIndex + 1) % Math.ceil(totalAIs / BATCH_SIZE);
 
-                    for (let i = startIndex; i < startIndex + BATCH_SIZE && candidates.length < 12; i++) {
+                    for (let i = startIndex; i < startIndex + BATCH_SIZE && candidates.length < 8; i++) {
                         const targetIdx = i % totalAIs;
                         const ai = ais[targetIdx];
                         if (ai && !ai.isDead && !selectedSet.has(ai)) {
@@ -126,7 +145,7 @@ export const NetBroadcaster = {
                         }
                     }
 
-                    // タプル化（AIスロットは MAX_PLAYERS 以降を厳密に割り当て）
+                    // タプル化（AIスロットは MAX_PLAYERS 以降を厳密割り当て）
                     for (let c = 0; c < candidates.length; c++) {
                         const ai = candidates[c];
                         const aiSlot = MAX_PLAYERS + (ai.id - 1);
@@ -140,8 +159,9 @@ export const NetBroadcaster = {
                 l: tuplesList
             };
 
-            // ホスト端末：全体リーダーボードを同封送出
-            if (netManager.isHost && this._latestLeaderboard) {
+            // ★ ホスト端末：リーダーボード同封を5Hz（2回に1回）に間引いて平常時帯域をさらに軽量化
+            this._lbThrottleCount++;
+            if (netManager.isHost && this._latestLeaderboard && (this._lbThrottleCount % 2 === 0)) {
                 packet.lb = this._latestLeaderboard;
             }
 
@@ -179,6 +199,7 @@ export const NetBroadcaster = {
     purge() {
         this.stop();
         this._aiSliceIndex = 0;
+        this._lbThrottleCount = 0;
         this._pendingPicks.length = 0;
         this._pendingDrops.length = 0;
         this._pendingClusters.length = 0;
@@ -196,11 +217,10 @@ export const NetBroadcaster = {
             const rawString = JSON.stringify(msgObj);
             const byteLength = getUtf8ByteLength(rawString);
 
-            // ★ 1010バイト接近時の安全切り離し ＆ 未送信キューへの安全差し戻し
+            // 1010バイト接近時の安全切り離し ＆ 未送信キューへの安全差し戻し
             if (byteLength >= 1010) {
                 console.warn(`[NetBroadcaster] パケットサイズが1KB制限に接近 (${byteLength} bytes)。未送信キューを安全に差し戻して送出します。`);
                 
-                // 削られたデータを元のキューの先頭へ安全に戻す（データ完全保護）
                 if (Array.isArray(msgObj.pk) && msgObj.pk.length > 0) {
                     this._pendingPicks.unshift(...msgObj.pk);
                     delete msgObj.pk;

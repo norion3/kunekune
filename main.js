@@ -1,13 +1,13 @@
 // ==============================================================================
 // 『くねくねバトル オンライン』Phase 5 マスター統合オーケストレーター (main.js)
-// v26.1.0 AI物理DeltaTime完全同期＆ホスト昇格時AI完全パージ版:
-// ・【AI物理完全同期】gameLoop から aiManager.update へ dtSec を渡し、AIスネークの移動・旋回もDeltaTime基準化
-// ・【ホスト昇格時AIパージ】新ホスト昇格時に remoteSnakes から古いAIスロット（key >= MAX_PLAYERS）を完全除去し194体倍増を根絶
+// v26.4.0 空き枠AI実体化＆ホスト昇格時幽霊パージ・途中参加整合版:
+// ・【AI欠損根絶】待機室の空きスロット（スロット1〜5のisAI枠）を自律AI実体として完全生成し、100体規模を完全維持
+// ・【旧ホスト幽霊パージ】ホスト昇格時、切断した旧ホスト（スロット0）を remoteSnakes / allSnakes から完全パージ
+// ・【待機室HOST表示動的化】updateWaitingMembersList の s.slot === 0 ハードコードを撤廃し、昇格した新ホストへ正確にHOSTバッジを表示
+// ・AI物理DeltaTime完全同期＆ホスト昇格時旧AIスロット完全パージ維持
 // ・DM招待合流時、ゲーム画面開始後に bootSequence が待機室を上書き表示する競合バグを根絶
 // ・退室したプレイヤーを remoteSnakes / allSnakes / sortedSnakes から完全パージ（メモリリーク根絶）
 // ・ホストから全人間スロット（0〜5）の確定順位マップ（ranks）を同封し、ゲスト順位9位固定バグを解消維持
-// ・ゲスト端末での他走者同士の衝突死亡誤判定を停止し、レイテンシによる他走者幽霊化を根絶維持
-// ・キル時スコア吸収率を30%から18%へ適正化＆クラスタ上限設定で急激なインフレを防止維持
 // ・カメラ追従・視野スケーリング・グリッド描画を camera.js へ完全委譲
 // ==============================================================================
 
@@ -186,12 +186,27 @@ export const UIController = {
         }
     },
 
+    /**
+     * 待機室メンバー描画（★動的HOSTバッジ判定完全対応）
+     */
     updateWaitingMembersList() {
         const listEl = document.getElementById('waiting-members-list');
         if (!listEl) return;
         listEl.innerHTML = NetworkManager.slots.slice(0, MAX_PLAYERS).map(s => {
             const isMe = s.slot === NetworkManager.mySlot;
-            const isHost = s.slot === 0;
+            
+            // ★ 動的HOST判定：スロット0固定を廃止し、自機なら isHost、他スロットなら同期フラグ・AI有無を参照
+            let isCurrentHost = false;
+            if (!s.isAI) {
+                if (isMe) {
+                    isCurrentHost = Boolean(NetworkManager.isHost);
+                } else if (s.isHost !== undefined) {
+                    isCurrentHost = Boolean(s.isHost);
+                } else {
+                    isCurrentHost = (s.slot === 0 && !NetworkManager.isHost);
+                }
+            }
+
             const badgeText = isMe ? 'YOU' : (s.isAI ? 'CPU' : `P${s.slot + 1}`);
             
             const avatarHtml = (s.portrait && !s.isAI)
@@ -204,7 +219,7 @@ export const UIController = {
                         ${avatarHtml}
                         <div class="waiting-slot-name">${s.name} ${isMe ? '(あなた)' : ''}</div>
                     </div>
-                    ${isHost ? '<div class="waiting-slot-host">HOST</div>' : ''}
+                    ${isCurrentHost ? '<div class="waiting-slot-host">HOST</div>' : ''}
                 </div>
             `;
         }).join('');
@@ -256,6 +271,35 @@ export function initGame(isRespawn = false) {
         const isGuest = NetworkManager.isMultiplayerActive && !NetworkManager.isHost;
         if (!isGuest) {
             aiManager.init(MAX_AIS, player.x, player.y);
+
+            // ★ AI欠損問題の修正：空きスロット（isAI: true）の枠を自律AI実体として完全生成
+            // NetBroadcaster の MAX_PLAYERS + (ai.id - 1) 規格と整合させ、スロット 0〜5 の空き枠として通信同期させる
+            for (let i = 0; i < MAX_PLAYERS; i++) {
+                if (i === NetworkManager.mySlot) continue;
+                const slotData = NetworkManager.slots[i];
+                if (slotData && slotData.isAI) {
+                    const dummyId = i - MAX_PLAYERS + 1; // 逆算スロットID
+                    const aiSnake = new Snake(false, dummyId, slotData.name || `CPU ${i + 1}`, slotData.color, 'normal');
+                    const angle = Math.random() * Math.PI * 2;
+                    const dist = 1500 + Math.random() * 22000;
+                    const sx = Math.max(400, Math.min(MAP_SIZE - 400, player.x + Math.cos(angle) * dist));
+                    const sy = Math.max(400, Math.min(MAP_SIZE - 400, player.y + Math.sin(angle) * dist));
+                    aiSnake.reset(sx, sy);
+                    
+                    aiManager.ais.push(aiSnake);
+                    aiManager.aiMeta.push({
+                        state: 0,
+                        persona: 'forager',
+                        targetFoodPos: null,
+                        stateTimer: 40 + Math.floor(Math.random() * 60),
+                        scavengeTarget: null,
+                        cruiseDirection: Math.random() < 0.5 ? 1 : -1,
+                        harassSubtype: 0,
+                        harassCooldown: Math.floor(Math.random() * 60)
+                    });
+                }
+            }
+
             window.allAISnakesInstance = aiManager.ais;
             allSnakes = [player, ...aiManager.ais];
         } else {
@@ -290,11 +334,21 @@ setupNetworkHandlers({
     initGame
 });
 
-// ★ 自律ホスト昇格時のAI完全引き継ぎ（旧AIスロット完全パージによる194体増殖根絶）
+// 自律ホスト昇格時のAI完全引き継ぎ（旧AIスロット完全パージによる194体増殖根絶）
 NetworkManager.setCallbacks({
     onHostPromoted() {
         console.log('[HostMigration] ホストに昇格しました。旧AIスロットを完全パージしシミュレーションを引き継ぎます。');
         
+        // ★ 旧ホスト（スロット0）のエンティティも完全パージする（幽霊化・メモリリーク防止）
+        const oldHost = remoteSnakes.get(0);
+        if (oldHost) {
+            remoteSnakes.delete(0);
+            const aIdx = allSnakes.indexOf(oldHost);
+            if (aIdx !== -1) allSnakes.splice(aIdx, 1);
+            const sIdx = sortedSnakes.indexOf(oldHost);
+            if (sIdx !== -1) sortedSnakes.splice(sIdx, 1);
+        }
+
         // 旧ホストから受信していたAIスロット（スロット6以降）を remoteSnakes から完全除去
         for (const [slot, remote] of remoteSnakes.entries()) {
             if (slot >= MAX_PLAYERS) {
@@ -306,6 +360,34 @@ NetworkManager.setCallbacks({
 
         // 自前の自律生態系AIを初期化して統合
         aiManager.init(MAX_AIS, player.x, player.y);
+        
+        // ★ 空きスロットAIの補填（ホスト昇格時）
+        for (let i = 0; i < MAX_PLAYERS; i++) {
+            if (i === NetworkManager.mySlot) continue;
+            const slotData = NetworkManager.slots[i];
+            if (slotData && slotData.isAI) {
+                const dummyId = i - MAX_PLAYERS + 1; // 逆算ID
+                const aiSnake = new Snake(false, dummyId, slotData.name || `CPU ${i + 1}`, slotData.color, 'normal');
+                const angle = Math.random() * Math.PI * 2;
+                const dist = 1500 + Math.random() * 22000;
+                const sx = Math.max(400, Math.min(MAP_SIZE - 400, player.x + Math.cos(angle) * dist));
+                const sy = Math.max(400, Math.min(MAP_SIZE - 400, player.y + Math.sin(angle) * dist));
+                aiSnake.reset(sx, sy);
+                
+                aiManager.ais.push(aiSnake);
+                aiManager.aiMeta.push({
+                    state: 0,
+                    persona: 'forager',
+                    targetFoodPos: null,
+                    stateTimer: 40 + Math.floor(Math.random() * 60),
+                    scavengeTarget: null,
+                    cruiseDirection: Math.random() < 0.5 ? 1 : -1,
+                    harassSubtype: 0,
+                    harassCooldown: Math.floor(Math.random() * 60)
+                });
+            }
+        }
+
         window.allAISnakesInstance = aiManager.ais;
         
         // 生存している人間プレイヤーを残しつつ新AIを統合
@@ -433,7 +515,7 @@ function gameLoop() {
     lastFrameTime = now;
 
     if (gameState === 'playing' || gameState === 'gameover') {
-        // ★ 自機物理演算への dtSec 完全引き渡し（フレームレート非依存化）
+        // 自機物理演算への dtSec 完全引き渡し（フレームレート非依存化）
         if (gameState === 'playing' && !player.isDead) {
             let inputAngle = null;
             if (input.active && (input.x !== 0 || input.y !== 0)) {
@@ -442,7 +524,7 @@ function gameLoop() {
             player.updatePhysics(dtSec, inputAngle, input.boost);
         }
 
-        // ★ リモート他走者への dtSec 完全引き渡し
+        // リモート他走者への dtSec 完全引き渡し
         remoteSnakes.forEach(remote => {
             if (remote.isDead) return;
 
@@ -466,7 +548,7 @@ function gameLoop() {
             remote.updatePhysics(dtSec, remote.targetAngle, remote.isBoosting);
         });
 
-        // ★ ホスト端末：AIシミュレーション・生態系思考を dtSec 基準で100%継続
+        // ホスト端末：AIシミュレーション・生態系思考を dtSec 基準で100%継続
         if (!NetworkManager.isMultiplayerActive || NetworkManager.isHost) {
             aiManager.update(player, allSnakes, frameCount, dtSec);
         }

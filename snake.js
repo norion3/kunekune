@@ -1,14 +1,14 @@
 // ==============================================================================
 // 『くねくねバトル オンライン』スネークエンティティクラス (snake.js)
-// v26.1.0 引数厳格化DeltaTime物理＆描画顔崩れ防止版:
-// ・【引数厳格判定】updatePhysics のシグネチャを arguments.length >= 3 で厳格化し、真右斜め下（0 < angle < 0.3）の型誤認バグを完全排除
+// v26.3.0 ブースト即時同期連携＆完全DeltaTime物理版:
+// ・【ブースト即時同期】自機ブースト状態変化時（開始・終了）に即座に即時パケット送出（forceImmediateSync）をトリガーし、他端末への加速反映ラグを根絶
+// ・【引数厳格判定】updatePhysics のシグネチャを arguments.length >= 3 で厳格判定し、真右斜め下（0 < angle < 0.3）の型誤認バグを完全排除
 // ・フレームレート非依存物理：30FPS〜120FPSのどの環境でも同一の旋回半径・移動速度・無敵時間を寸分違わず再現
 // ・ブースト時の白枠ストローク前に ctx.beginPath() と頭部円 arc を発行し、表情パーツ崩壊を完全根絶
 // ・無敵時間中（invulnerableTimer > 0）にブーストを入力した瞬間に無敵を即時強制解除
 // ・表情ベクター描画を snake_face.js へ完全委譲し、ファイルサイズ約40%削減維持
 // ・体節描画ステップ間引き（長大スネーク時のドローコール半減・iOS 60FPS死守）
 // ・頭上バッジの ctx.measureText() キャッシュ化（毎フレームの不要文字列レイアウト計算根絶）
-// ・ブースト消費レート適正化（毎秒約21pt消費：戦術的駆け引きの維持）
 // ・O(1) リングバッファ ＆ ゼロアロケーション体節追従
 // ==============================================================================
 
@@ -48,6 +48,7 @@ export class Snake {
         this.isDead = false;
         this.kills = 0;
         this.isBoosting = false;
+        this._prevBoostingState = false; // ブースト状態変化検知用
         this.isVisible = true;
 
         this.invulnerableTimer = 0;
@@ -77,6 +78,7 @@ export class Snake {
         this.isDead = false;
         this.kills = 0;
         this.isBoosting = false;
+        this._prevBoostingState = false;
         this.isVisible = true;
         
         this.speed = BASE_SPEED;
@@ -115,19 +117,17 @@ export class Snake {
         let inputAngle = null;
         let boostActive = false;
 
-        // ★ 引数厳格判定：arguments.length が 3 つ以上、または第3引数が明示されている場合は新シグネチャ (dtSec, angle, boost)
+        // ★ 引数厳格判定
         if (arguments.length >= 3 || typeof arg3 === 'boolean') {
             dtSec = (typeof arg1 === 'number' && arg1 > 0) ? Math.min(arg1, 0.1) : (1 / 60);
             inputAngle = (typeof arg2 === 'number') ? arg2 : null;
             boostActive = Boolean(arg3);
         } else {
-            // 旧シグネチャ互換: (inputAngle, boostActive)
             inputAngle = (typeof arg1 === 'number') ? arg1 : null;
             boostActive = Boolean(arg2);
             dtSec = 1 / 60;
         }
 
-        // 60FPS基準のタイムスケール係数（例: 30FPSなら dtSec≒0.0333, timeScale≒2.0）
         const timeScale = Math.max(0.1, Math.min(3.0, dtSec * 60));
 
         // ★ 無敵特攻キルの抑止：無敵中にブーストを入力した場合、無敵時間を即座に強制解除
@@ -135,18 +135,27 @@ export class Snake {
             if (boostActive && this.score > 60) {
                 this.invulnerableTimer = 0;
             } else {
-                // 実時間（秒）で正確に減算（フレームレート依存の無敵時間倍増を完全防止）
                 this.invulnerableTimer = Math.max(0, this.invulnerableTimer - dtSec);
             }
         }
 
-        this.isBoosting = boostActive && this.score > 60;
+        const newBoostingState = boostActive && this.score > 60;
+
+        // ★ 自機の場合：ブースト状態が変化した瞬間に即座にネットワーク同期をトリガー（ラグ根絶）
+        if (this.isPlayer && this._prevBoostingState !== newBoostingState) {
+            this._prevBoostingState = newBoostingState;
+            if (typeof window !== 'undefined' && window.NetworkManager && typeof window.NetworkManager.forceImmediateSync === 'function') {
+                window.NetworkManager.forceImmediateSync();
+            }
+        }
+
+        this.isBoosting = newBoostingState;
         
         const dynamicBaseSpeed = 3.5 + (10.0 / Math.max(10, this.size));
         const currentSpeed = this.isBoosting ? dynamicBaseSpeed * BOOST_SPEED_MULT : dynamicBaseSpeed;
         this.speed = currentSpeed;
 
-        // ★ ブースト消費レート適正化（実時間基準：毎秒約21pt消費）
+        // ブースト消費レート適正化（実時間基準：毎秒約21pt消費）
         if (this.isBoosting) {
             this.score = Math.max(50, this.score - 0.35 * timeScale);
             this.recalculateSize();
@@ -156,13 +165,13 @@ export class Snake {
             this.targetAngle = inputAngle;
         }
 
-        // 旋回計算のDeltaTimeスケーリング（30FPSでも曲がりやすさが完全に同一）
+        // 旋回計算のDeltaTimeスケーリング
         let diff = this.targetAngle - this.angle;
         while (diff < -Math.PI) diff += Math.PI * 2;
         while (diff > Math.PI) diff -= Math.PI * 2;
         this.angle += Math.sign(diff) * Math.min(Math.abs(diff), this.turnSpeed * timeScale);
 
-        // 移動座標のDeltaTimeスケーリング（速度半減を完全是正）
+        // 移動座標のDeltaTimeスケーリング
         this.x += Math.cos(this.angle) * (this.speed * timeScale);
         this.y += Math.sin(this.angle) * (this.speed * timeScale);
 
@@ -209,10 +218,9 @@ export class Snake {
         }
 
         const histLen = this.historyLength;
-        // 描画ステップ間引き：体節数が長大な場合、ステップを2に間引いてGPUドローコールを半減
         const step = (histLen > 30) ? 2 : 1;
 
-        // 胴体体節を一括パス連結で描画（ドローコール削減）
+        // 胴体体節を一括パス連結で描画
         ctx.fillStyle = this.color;
         ctx.beginPath();
         for (let i = histLen - 1; i >= 0; i -= step) {
@@ -233,7 +241,7 @@ export class Snake {
         }
         ctx.fill();
 
-        // 胴体の光彩・ウロコシャドウ（フロー効果）を一括描画
+        // 胴体の光彩・ウロコシャドウ（フロー効果）
         ctx.fillStyle = 'rgba(0, 0, 0, 0.15)';
         ctx.beginPath();
         for (let i = histLen - 1; i >= 0; i -= (step * 2)) {
@@ -262,7 +270,7 @@ export class Snake {
         ctx.translate(this.x, this.y);
         ctx.rotate(this.angle);
 
-        // GRAVITYユーザーアバター顔スキンの場合：円形マスクでポートレート写真を描画
+        // GRAVITYユーザーアバター顔スキンの場合
         if (this.face === 'user_avatar' && window.userAvatarImgInstance && window.userAvatarImgInstance.complete) {
             ctx.save();
             ctx.beginPath();
@@ -286,7 +294,7 @@ export class Snake {
             drawSnakeFace(ctx, this.face, this.size);
         }
 
-        // ブースト時の頭部発光（顔崩れバグ完全解消：頭部円のみを単独ストローク）
+        // ブースト時の頭部発光（顔崩れ防止）
         if (this.isBoosting) {
             ctx.strokeStyle = '#ffffff';
             ctx.lineWidth = 2.5;

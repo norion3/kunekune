@@ -1,10 +1,11 @@
 // ==============================================================================
 // 『くねくねバトル オンライン』リモートパケット受信反映ハンドラ (net_handlers.js)
-// v26.1.0 無敵代入順序適正化＆テレポート時バッファクリア版:
-// ・【無敵同期順序適正化】remote.reset() の後に data.isInvulnerable を反映し、3.0秒による意図せぬ上書きを完全解消
+// v26.4.0 途中参加チラつき解消＆無敵時間3秒対称化版:
+// ・【途中参加チラつき根絶】onGameStart で direct または immediate 合図を受信した際、isRespawn = true 扱いで初期化し他走者(remoteSnakes)クリアによる消滅・点滅を完全防止
+// ・【無敵対称化】リモート無敵フラグ代入時の下限を 0.5秒 から 3.0秒 へ適正化し、ゲストがホスト判定で即爆死させられる非対称即死を完全根絶
+// ・【無敵同期順序適正化】remote.reset() の直後に data.isInvulnerable を反映し、意図せぬ上書きを完全解消
 // ・【ワープ直線根絶】回線瞬断やリスポーン時の大距離テレポート検知（distSq > 160000）でバッファを即時リセット
 // ・ホスト確定の全スロット順位マップ（lbData.ranks）から自機順位を直接取得し9位固定を根絶維持
-// ・対戦中（playing）の部屋への途中参加時、待機室を即座にバイパスして戦場へ直接出撃
 // ・ゲスト端末のランキングチラつき（点滅）をシグネチャ差分ガードで完全根絶
 // ・餌捕食イベント (pk) ＆ 撃破肉片クラスタ散布 (dc) の世界反映
 // ==============================================================================
@@ -33,13 +34,14 @@ export function setupNetworkHandlers(ctx) {
     NetworkManager.setCallbacks({
         /**
          * ホストからのゲーム開始・直接参戦合図受信ハンドラ
-         * ★ 途中参加パケット (direct: true) またはホスト開始合図で即座に出撃
+         * ★ 途中参加時は isRespawn = true 扱いにして受信済み他プレイヤーの消去（点滅）を完全防止
          */
         onGameStart(packet) {
+            const isMidJoin = Boolean(packet && (packet.direct || packet.immediate));
             if (typeof initGame === 'function') {
-                initGame(false);
+                initGame(isMidJoin);
             } else if (typeof window.initGameInstance === 'function') {
-                window.initGameInstance(false);
+                window.initGameInstance(isMidJoin);
             }
         },
 
@@ -88,9 +90,9 @@ export function setupNetworkHandlers(ctx) {
                 remote.reset(data.x, data.y);
             }
 
-            // ★ 3. リモート無敵フラグの完全代入（reset() の直後に実行し 3.0秒 での上書きを完全防止）
+            // ★ 3. リモート無敵フラグの完全代入（reset() の直後に実行し、ゲスト本来の3.0秒無敵と完全同期）
             if (data.isInvulnerable) {
-                remote.invulnerableTimer = Math.max(remote.invulnerableTimer || 0, 0.5);
+                remote.invulnerableTimer = Math.max(remote.invulnerableTimer || 0, 3.0);
             } else if (!data.isInvulnerable && remote.invulnerableTimer > 0) {
                 remote.invulnerableTimer = 0;
             }

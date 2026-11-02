@@ -1,8 +1,8 @@
 // ==============================================================================
 // 『くねくねバトル オンライン』カメラ制御＆ワールド描画マネージャー (camera.js)
-// v25.1.0 カメラ補間・スケール・背景グリッド描画専任版:
-// ・生存時の自機追従 ＆ 死亡時のキラー/死亡地点スムーズ観戦カメラ補間
-// ・スネーク成長サイズ ＆ ズーム倍率に応じた視野スケーリング（ラープ補間）
+// v26.0.0 完全DeltaTime観戦追従＆視野スケール補間版:
+// ・【DeltaTime補間化】観戦カメラ座標追従および視野スケーリングに dtSec を適用し、30FPS環境での追従モッサリ感を完全解消
+// ・スネーク成長サイズ ＆ ズーム倍率に応じた視野スケーリング（指数減衰ラープ補間）
 // ・背景クリア、カメラトランスフォーム（begin / end）、200px境界グリッド線描画
 // ・main.js からカメラ描画責務を完全分離し、コードの見通しを大幅改善
 // ==============================================================================
@@ -27,28 +27,33 @@ export class CameraManager {
     }
 
     /**
-     * カメラ座標および視野スケールの更新
+     * カメラ座標および視野スケールの更新（DeltaTime対応）
      * @param {Object} player 自機スネークインスタンス
      * @param {Object} killerTargetSnake 撃破した相手スネークインスタンス
      * @param {number} zoomMultiplier 入力マネージャーのズーム倍率
+     * @param {number} [dtSec=0.016] 実経過秒数
      */
-    update(player, killerTargetSnake, zoomMultiplier) {
+    update(player, killerTargetSnake, zoomMultiplier, dtSec = 1 / 60) {
+        const timeScale = Math.max(0.1, Math.min(3.0, (typeof dtSec === 'number' && dtSec > 0 ? dtSec : 1 / 60) * 60));
+
         // 1. 座標の更新（生存時は自機位置、死亡時はキラーまたは死亡地点をスムーズ追従）
         if (player.isDead) {
             if (killerTargetSnake && !killerTargetSnake.isDead) {
-                this.spectatorCamX += (killerTargetSnake.x - this.spectatorCamX) * 0.08;
-                this.spectatorCamY += (killerTargetSnake.y - this.spectatorCamY) * 0.08;
+                const followLerp = 1.0 - Math.exp(-5.0 * (dtSec || 1 / 60));
+                this.spectatorCamX += (killerTargetSnake.x - this.spectatorCamX) * followLerp;
+                this.spectatorCamY += (killerTargetSnake.y - this.spectatorCamY) * followLerp;
             }
         } else {
             this.spectatorCamX = player.x;
             this.spectatorCamY = player.y;
         }
 
-        // 2. 視野スケーリング補間
+        // 2. 視野スケーリング補間（DeltaTime対応指数ラープ）
         const effectiveSize = player.isDead ? 16 : player.size;
         const baseTargetScale = 60.0 / (60.0 + (effectiveSize - 12) * 0.85);
         const finalTargetScale = baseTargetScale * zoomMultiplier;
-        this.scale += (finalTargetScale - this.scale) * 0.05;
+        const scaleLerp = 1.0 - Math.exp(-3.2 * (dtSec || 1 / 60));
+        this.scale += (finalTargetScale - this.scale) * scaleLerp;
     }
 
     /**

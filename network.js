@@ -1,16 +1,10 @@
 // ==============================================================================
 // 『くねくねバトル オンライン』AgentSDK公式マルチプレイ通信マネージャー (network.js)
-// v25.9.0 退室者完全パージ＆DM直接参戦競合解消版:
-// ・退室者検知時に onUserExited コールバックを発行し、main.js からインスタンスを完全除去（メモリリーク根絶）
-// ・スロット不変原則遵守：ホスト昇格時も mySlot を保持し、幽霊スネークの多重生成を完全根絶
-// ・ホスト昇格時に onHostPromoted コールバックを発火し、新ホスト端末でのAI維持を確約
-// ・対戦中（playing）の合流検知時、ROOM_MEMBERS_SYNC に act: true を同封し、
-//   さらに途中参加ゲスト専用の即時 START_GAME を自動送出して直接参戦を完全実現
-// ・全弾幕を「[ 名前バッジ ] + アクション（入室！ / 退室！）」へ刷新し主語を統一
-// ・GRAVITY公式最大上限 6名スロット（0〜5）完全対応
-// ・USER_JOIN および ROOM_MEMBERS_SYNC でのアバター portrait 完全伝播
-// ・送信ループ・アクションキューを net_broadcaster.js へ完全分離
-// ・本命ルーム誤退室（自爆 exit()）の完全防止ガード配備
+// v26.3.0 スプリットブレイン防衛＆絵文字チャット完全対応版:
+// ・【スプリットブレイン根絶】通信瞬断等による「2人のホスト」の衝突を検知し、スロット優先度に基づき自発的にゲストへサレンダー（降格）
+// ・【絵文字文字化け修正】queueChat の文字切り詰めを Array.from に変更し、サロゲートペア分断を完全防止
+// ・ブースト状態変化・リスポーン時などの即時割り込み同期 API (forceImmediateSync) の配備
+// ・切断逃げ肉片消失根絶＆退室者完全パージ維持
 // ==============================================================================
 
 import {
@@ -29,7 +23,6 @@ import { SNAKE_COLORS, MAX_PLAYERS } from './constants.js';
 
 /**
  * 未入室時の exit() による無限保留（Promiseハング）および本命ルーム誤退室を防ぐ安全退出ヘルパー
- * ★ 目的の部屋（targetRoomId）に既にいる場合、exit() を絶対に呼ばない！
  */
 async function safeExitCurrentRoom(targetRoomId = null) {
     if (typeof window === 'undefined' || !window.AgentSDK || !window.AgentSDK.room) return;
@@ -42,7 +35,6 @@ async function safeExitCurrentRoom(targetRoomId = null) {
             
             if (!activeRoomId || activeRoomId === '') return;
 
-            // 既に目的のルームに入室中の場合は exit() をスキップ（自爆退室防止）
             if (targetRoomId && String(activeRoomId) === String(targetRoomId)) {
                 console.log(`[network.js] Already in target room #${activeRoomId}. Skipping redundant exit().`);
                 return;
@@ -63,7 +55,6 @@ export const NetworkManager = {
     clientId: generateClientId(),
     myUser: { name: 'あなた', user_id: 'local_user', portrait: '' },
 
-    // GRAVITY公式上限の 6名スロット（0〜5）に完全整合
     slots: Array.from({ length: MAX_PLAYERS }, (_, i) => ({
         slot: i,
         clientId: null,
@@ -97,15 +88,15 @@ export const NetworkManager = {
         onSeedReceived: null,
         onGameStart: null,
         onLeaderboardSync: null,
-        onHostPromoted: null, // ★ ホスト昇格時イベント（AI引き継ぎ用）
-        onUserExited: null    // ★ 退出者完全パージ用
+        onHostPromoted: null,
+        onUserExited: null
     },
 
     setCallbacks(cb) {
         this.callbacks = { ...this.callbacks, ...cb };
     },
 
-    // --- キューイングAPI（NetBroadcaster へ委譲） ---
+    // --- キューイングAPI ---
     queueFoodPick(gx, gy, foodIndex) {
         if (!this.isMultiplayerActive) return;
         NetBroadcaster.queueFoodPick(gx, gy, foodIndex);
@@ -123,7 +114,9 @@ export const NetworkManager = {
 
     queueChat(messageText) {
         if (!messageText) return;
-        const cleanText = String(messageText).trim().slice(0, 15);
+        
+        // ★ サロゲートペア（絵文字）の文字化けを防止するArray.from切り詰め
+        const cleanText = Array.from(String(messageText).trim()).slice(0, 15).join('');
         if (!cleanText) return;
 
         const myName = (typeof window !== 'undefined' && window.GRAVITY_USER_NAME)
@@ -131,7 +124,6 @@ export const NetworkManager = {
             : this.myUser.name;
         const myColor = SNAKE_COLORS[this.mySlot % SNAKE_COLORS.length];
         
-        // ★ 主語バッジ統一チャット：[ ユーザー名 ] 本文
         Danmaku.push(myName, cleanText, myColor);
 
         if (this.isMultiplayerActive) {
@@ -140,8 +132,14 @@ export const NetworkManager = {
     },
 
     /**
-     * ホスト専用：待機室から全端末へゲーム開始を一斉通知する
+     * ブースト状態変化やリスポーン時の即時割り込み送信（Event-driven）
      */
+    forceImmediateSync() {
+        if (this.isMultiplayerActive) {
+            NetBroadcaster.forceImmediateSync(this);
+        }
+    },
+
     broadcastStartGame() {
         if (!this.isMultiplayerActive || !this.isHost) return;
         this._sendCustomMessage({
@@ -150,9 +148,6 @@ export const NetworkManager = {
         });
     },
 
-    /**
-     * ユーザー情報取得
-     */
     async init() {
         if (!this.isSDKAvailable) {
             console.warn('[NetworkManager] AgentSDK unavailable. Standalone mode.');
@@ -179,7 +174,6 @@ export const NetworkManager = {
                         window.localPlayerInstance.name = resolvedName;
                     }
 
-                    // 走者タブ・待機室用に自身のスロットのアバターを更新
                     if (this.slots[this.mySlot]) {
                         this.slots[this.mySlot].name = resolvedName;
                         this.slots[this.mySlot].portrait = portraitUrl;
@@ -228,9 +222,6 @@ export const NetworkManager = {
         }
     },
 
-    /**
-     * ルーム作成（最大6名）
-     */
     async createRoom(isPrivate = false) {
         if (!this.isSDKAvailable) {
             Danmaku.push('エラー', 'マルチプレイはGRAVITYアプリ内でのみ利用可能です', '#f43f5e', true);
@@ -295,7 +286,6 @@ export const NetworkManager = {
                 ? window.GRAVITY_USER_NAME
                 : this.myUser.name;
 
-            // ホスト（スロット0）の確定
             this.slots[0] = {
                 slot: 0,
                 clientId: this.clientId,
@@ -307,7 +297,6 @@ export const NetworkManager = {
                 joinTime: performance.now()
             };
 
-            // スロット1〜5を待機状態へ初期化
             for (let i = 1; i < MAX_PLAYERS; i++) {
                 this.slots[i] = {
                     slot: i,
@@ -336,9 +325,6 @@ export const NetworkManager = {
         }
     },
 
-    /**
-     * ルーム参加
-     */
     async joinRoom(roomId) {
         if (!this.isSDKAvailable || !roomId) return { success: false, msg: '無効な操作です' };
 
@@ -384,7 +370,6 @@ export const NetworkManager = {
                 ? window.GRAVITY_USER_NAME
                 : this.myUser.name;
 
-            // 6枠のスロットをリセットし、スロット1へ仮バインド
             for (let i = 0; i < MAX_PLAYERS; i++) {
                 this.slots[i] = {
                     slot: i,
@@ -412,7 +397,6 @@ export const NetworkManager = {
             this._startHostWatchdog();
             this._startBroadcasting();
 
-            // 入室直後にホストへ自発参加通知
             setTimeout(() => {
                 this._sendCustomMessage({
                     e: 'USER_JOIN',
@@ -455,10 +439,6 @@ export const NetworkManager = {
         return [];
     },
 
-    /**
-     * プレイヤー参加処理
-     * ★ ゲーム中の合流時は act: true と即時 START_GAME を同封送出し直接参戦を確約
-     */
     _handleUserJoined(data) {
         if (!this.isHost || !data) return;
         const userId = String(data.user_id || data.userId || '');
@@ -491,7 +471,6 @@ export const NetworkManager = {
 
             const isPlaying = (typeof window !== 'undefined' && window.currentGameState === 'playing');
 
-            // 全端末へ6人スロット確定一覧および現在のゲーム状態（act）を一斉同期
             this._sendCustomMessage({
                 e: 'ROOM_MEMBERS_SYNC',
                 slots: this.slots,
@@ -499,7 +478,6 @@ export const NetworkManager = {
                 act: isPlaying
             });
 
-            // ★ ゲーム進行中の場合は、途中参加者向けに即座に出撃通知を送出（直接参戦）
             if (isPlaying) {
                 this._sendCustomMessage({
                     e: 'START_GAME',
@@ -513,16 +491,10 @@ export const NetworkManager = {
             }
 
             Menu.updateParticipants(this.slots.filter(s => !s.isAI));
-
-            // ★ 主語バッジ統一入室通知：[ guestName ] 入室！
             Danmaku.push(guestName, '入室！', this.slots[targetSlot].color);
         }
     },
 
-    /**
-     * プレイヤー退出処理
-     * ★ 退室スロットを初期化し、コールバックで main.js から実体を完全パージ
-     */
     _handleUserExited(data) {
         if (!data) return;
         const userId = String(data.user_id || data.userId || '');
@@ -531,6 +503,28 @@ export const NetworkManager = {
         if (slotIdx !== -1) {
             const exitedName = this.slots[slotIdx].name;
             const isHostExited = (slotIdx === 0 && !this.isHost);
+            const isPlaying = (typeof window !== 'undefined' && window.currentGameState === 'playing');
+
+            if (this.isHost && isPlaying && typeof window !== 'undefined') {
+                let victimSnake = null;
+                if (window.allSnakesInstance) {
+                    victimSnake = window.allSnakesInstance.find(s => s.id === slotIdx);
+                }
+                if (victimSnake && !victimSnake.isDead) {
+                    const colorIdx = SNAKE_COLORS.indexOf(victimSnake.color);
+                    const safeColorIdx = colorIdx >= 0 ? colorIdx : 0;
+                    const dropCount = Math.min(25, Math.max(10, Math.floor((victimSnake.historyLength || 16) / 2)));
+                    const totalVal = Math.min(2000, Math.max(100, Math.floor(victimSnake.score * 0.22)));
+
+                    this.queueDropCluster(
+                        victimSnake.x,
+                        victimSnake.y,
+                        totalVal,
+                        dropCount,
+                        safeColorIdx
+                    );
+                }
+            }
 
             this.slots[slotIdx] = {
                 slot: slotIdx,
@@ -543,12 +537,10 @@ export const NetworkManager = {
                 joinTime: 0
             };
 
-            // ★ 退室者をゲームワールド（main.js）から完全パージ（ゾンビ化・メモリリーク防止）
             if (this.callbacks.onUserExited) {
                 this.callbacks.onUserExited(slotIdx);
             }
 
-            // ★ 主語バッジ統一退室通知：[ exitedName ] 退室！
             Danmaku.push(exitedName, '退室！', '#64748b');
 
             if (typeof window !== 'undefined' && window.UIController && typeof window.UIController.updateWaitingMembersList === 'function') {
@@ -561,7 +553,6 @@ export const NetworkManager = {
                 console.warn('[NetworkManager] ホストが退出しました。自律ホスト昇格を実行します。');
                 this.promoteToHost();
             } else if (this.isHost) {
-                const isPlaying = (typeof window !== 'undefined' && window.currentGameState === 'playing');
                 this._sendCustomMessage({
                     e: 'ROOM_MEMBERS_SYNC',
                     slots: this.slots,
@@ -600,11 +591,6 @@ export const NetworkManager = {
         }
     },
 
-    /**
-     * 自律ホスト昇格（Host Migration）
-     * ★ スロット不変原則遵守：自身の mySlot は変更せず、isHost = true のみ取得
-     * ★ スロット0は退出し空きスロットとなったため AI に復帰
-     */
     promoteToHost() {
         if (this._isPromoting || this.isHost) return;
         this._isPromoting = true;
@@ -612,7 +598,6 @@ export const NetworkManager = {
 
         this.isHost = true;
 
-        // 旧ホスト（スロット0）をAI枠へ解放
         this.slots[0] = {
             slot: 0,
             clientId: null,
@@ -624,7 +609,6 @@ export const NetworkManager = {
             joinTime: 0
         };
 
-        // 自身のスロット情報は変更せず維持
         if (this.slots[this.mySlot]) {
             this.slots[this.mySlot].isAI = false;
         }
@@ -640,12 +624,10 @@ export const NetworkManager = {
 
         Menu.updateParticipants(this.slots.filter(s => !s.isAI));
 
-        // ★ コールバック通知（main.js 側で AI 稼働の引き継ぎを実行させる）
         if (this.callbacks.onHostPromoted) {
             this.callbacks.onHostPromoted();
         }
 
-        // 新ホストとしてスロット最新状態をブロードキャスト
         const isPlaying = (typeof window !== 'undefined' && window.currentGameState === 'playing');
         this._sendCustomMessage({
             e: 'ROOM_MEMBERS_SYNC',
@@ -685,7 +667,6 @@ export const NetworkManager = {
             this._lastHostPacketTime = performance.now();
             this._hasReceivedFirstHostPacket = true;
 
-            // ホストからのゲーム開始合図を受信
             if (eventType === 'START_GAME') {
                 if (packet.seed && packet.seed !== this.currentSeed) {
                     this.currentSeed = packet.seed;
@@ -696,7 +677,6 @@ export const NetworkManager = {
                 return;
             }
 
-            // ゲストからの自発的参加通知を受信
             if (eventType === 'USER_JOIN' && this.isHost) {
                 this._handleUserJoined(packet);
                 return;
@@ -707,13 +687,25 @@ export const NetworkManager = {
                 if (Array.isArray(incomingList)) {
                     for (let i = 0; i < incomingList.length; i++) {
                         const decoded = decodeTupleToSnake(incomingList[i]);
-                        if (decoded && decoded.slot !== this.mySlot && this.callbacks.onRemoteSnakeUpdate) {
-                            this.callbacks.onRemoteSnakeUpdate(decoded);
+                        if (decoded) {
+                            // ★ スプリットブレイン（脳分裂）競合解決
+                            // 自分もホストだが、他端末からのホストパケットを受信した場合
+                            if (this.isHost && decoded.isHost && decoded.slot !== this.mySlot) {
+                                // スロット番号が小さい方を正当なホストとして優先し、自分はゲストへサレンダー（降格）
+                                if (this.mySlot > decoded.slot) {
+                                    console.warn(`[NetworkManager] スプリットブレイン検知: スロット優先度によりゲストへサレンダーします (My: ${this.mySlot} > Remote: ${decoded.slot})`);
+                                    this.isHost = false;
+                                    if(this.slots[this.mySlot]) this.slots[this.mySlot].isHost = false;
+                                }
+                            }
+
+                            if (decoded.slot !== this.mySlot && this.callbacks.onRemoteSnakeUpdate) {
+                                this.callbacks.onRemoteSnakeUpdate(decoded);
+                            }
                         }
                     }
                 }
 
-                // リーダーボード同期情報の受信処理
                 if (packet.lb && this.callbacks.onLeaderboardSync) {
                     this.callbacks.onLeaderboardSync(packet.lb);
                 }
@@ -745,7 +737,6 @@ export const NetworkManager = {
                             const senderSlot = chat.slot;
                             const senderName = this.slots[senderSlot] ? this.slots[senderSlot].name : `P${senderSlot + 1}`;
                             const badgeColor = SNAKE_COLORS[senderSlot % SNAKE_COLORS.length];
-                            // 主語バッジ統一チャット
                             Danmaku.push(senderName, chat.message, badgeColor);
                         }
                     });
@@ -779,7 +770,6 @@ export const NetworkManager = {
                     if (this.callbacks.onSeedReceived) this.callbacks.onSeedReceived(packet.seed);
                 }
 
-                // ★ ホストが既にプレイ中の場合（act: true）、直接参戦を促す
                 if (packet.act === true && !this.isHost) {
                     if (typeof window !== 'undefined' && window.currentGameState !== 'playing') {
                         if (this.callbacks.onGameStart) {

@@ -1,13 +1,12 @@
 // ==============================================================================
 // 『くねくねバトル オンライン』スネーク.io型 自律生態系AIマネージャー (ai.js)
-// v26.0.0 完全DeltaTime連携＆マイルドちょっかい調律版:
-// ・【DeltaTime連携】updatePhysics(dtSec) へ実経過秒数を渡し、30FPS〜120FPS環境でのAI速度・旋回不公平を完全根絶
-// ・ちょっかい行動（HARASS）の過剰粘着を根絶し、適度なスリルを与える10%前後の発動率へ調律
-// ・索敵反応距離を 1,800px から 1,200px へ縮小（画面内に近づいた時のみ自然に反応）
-// ・ちょっかい発動後のクールダウンを2〜3秒へ延長し、連続執拗アタックを完全防止
-// ・MAP_SIZE = 60000 を活かしたマップ環境勾配（外周安全ゾーン・中心激戦コア）維持
-// ・死体肉片のサイズ・価値に応じたハイエナ感知半径の動的スケーリング維持
-// ・CPU平方根計算ゼロ化（二乗距離判定）＆ リングバッファ O(1) 完全維持
+// v26.3.0 完全DeltaTime思考同期＆フレームレート非依存AI版:
+// ・【思考タイマー完全DeltaTime化】stateTimer および harassCooldown の減算をフレーム固定（--）から timeScale（dtSec * 60）減算へ是正
+// ・120Hzディスプレイ環境でのAI異常高速思考・せわしないステート遷移・ちょっかい連続暴走を完全根絶
+// ・【死後リスポーン実時間化】死後リスポーン待機を実時間（秒）減算で管理し、環境によるリスポーン速度格差を解消
+// ・ちょっかい行動（HARASS）の適正頻度（10%前後）と2〜3秒の適正クールダウンを30FPS〜120FPSで寸分違わず再現
+// ・索敵反応距離 1,200px ＆ ハイエナ感知半径動的スケーリング維持
+// ・二乗距離判定によるCPU負荷最小化 ＆ リングバッファ O(1) 維持
 // ==============================================================================
 
 import { MAP_SIZE, SNAKE_COLORS } from './constants.js';
@@ -41,7 +40,6 @@ export class AIManager {
             const face = this.faces[i % this.faces.length];
             const ai = new Snake(false, i, `CPU ${i}`, color, face);
 
-            // ★ 性格ペルソナの適正配分（大半を平和な採餌型とし、ちょっかい型はほどよい比率に抑制）
             const randVal = Math.random();
             let persona = 'forager'; // デフォルト採餌型（50%）
             if (randVal < 0.15) persona = 'hunter';        // 15%: たまに狩りを仕掛ける個体
@@ -56,7 +54,8 @@ export class AIManager {
                 scavengeTarget: null,
                 cruiseDirection: Math.random() < 0.5 ? 1 : -1,
                 harassSubtype: 0, // 0: 進路横切り, 1: 餌横取り, 2: 併走プレッシャー
-                harassCooldown: Math.floor(Math.random() * 60) // ちょっかい連続発生防止タイマー
+                harassCooldown: Math.floor(Math.random() * 60),
+                deadTimer: 0 // 実時間リスポーン管理用
             });
 
             // マップ全域への分散スポーン
@@ -74,7 +73,7 @@ export class AIManager {
     }
 
     /**
-     * AIシミュレーション更新（DeltaTime対応）
+     * AIシミュレーション更新（完全DeltaTime対応）
      * @param {Object} player 
      * @param {Array} allSnakes 
      * @param {number} frameCount 
@@ -84,11 +83,14 @@ export class AIManager {
         const total = this.ais.length;
         if (total === 0) return;
 
+        const safeDt = (typeof dtSec === 'number' && dtSec > 0) ? Math.min(dtSec, 0.1) : (1 / 60);
+        // 60FPS基準のタイムスケール（120FPSなら約0.5、30FPSなら約2.0）
+        const timeScale = Math.max(0.1, Math.min(3.0, safeDt * 60));
+
         const batchSize = Math.ceil(total / 4);
         const startIndex = (this.sliceIndex * batchSize) % total;
         this.sliceIndex = (this.sliceIndex + 1) % 4;
 
-        // ドロップ肉片の存在検知（ハイエナモード発動用）
         let activeDrops = null;
         if (typeof window !== 'undefined' && window.currentWorldInstance && window.currentWorldInstance.dropFoods) {
             activeDrops = window.currentWorldInstance.dropFoods;
@@ -100,8 +102,10 @@ export class AIManager {
             if (!meta) continue;
 
             if (ai.isDead) {
-                // リスポーン：自然な距離でマップ内に再配置
-                if (frameCount % 75 === 0) {
+                // ★ 実時間（約1.25秒）経過後にリスポーン
+                meta.deadTimer = (meta.deadTimer || 0) + safeDt;
+                if (meta.deadTimer >= 1.25) {
+                    meta.deadTimer = 0;
                     const ang = Math.random() * Math.PI * 2;
                     const d = 3500 + Math.random() * 14000;
                     const pX = (player && !player.isDead) ? player.x : (MAP_SIZE / 2);
@@ -118,18 +122,21 @@ export class AIManager {
 
             const shouldThink = (i >= startIndex && i < startIndex + batchSize);
             if (shouldThink) {
-                this.think(ai, meta, player, allSnakes, activeDrops);
+                this.think(ai, meta, player, allSnakes, activeDrops, timeScale);
             }
 
-            // ★ AI物理演算への dtSec 完全適用
-            ai.updatePhysics(dtSec, null, ai.isBoosting);
+            ai.updatePhysics(safeDt, null, ai.isBoosting);
         }
     }
 
-    think(ai, meta, player, allSnakes, activeDrops) {
-        meta.stateTimer--;
+    /**
+     * AI思考ルーチン（タイムスケール考慮版）
+     */
+    think(ai, meta, player, allSnakes, activeDrops, timeScale = 1.0) {
+        // ★ 思考タイマーとクールダウンを実時間基準（timeScale減算）で更新
+        meta.stateTimer -= timeScale;
         if (meta.harassCooldown > 0) {
-            meta.harassCooldown--;
+            meta.harassCooldown = Math.max(0, meta.harassCooldown - timeScale);
         }
 
         // 1. 【最優先】外壁激突回避
@@ -217,32 +224,29 @@ export class AIManager {
             }
         }
 
-        // 4. 【プレイヤー接近時の「ちょっかい行動」トリガー判定（★マイルド調律）】
+        // 4. 【プレイヤー接近時の「ちょっかい行動」トリガー判定（マイルド調律）】
         const isPlayerActive = player && !player.isDead && player.isVisible;
         if (isPlayerActive && meta.harassCooldown <= 0 && meta.state !== AI_STATE.HARASS) {
             const pdx = player.x - ai.x;
             const pdy = player.y - ai.y;
             const pDistSq = pdx * pdx + pdy * pdy;
 
-            // 索敵反応距離を 1,800px → 1,200px へ縮小（目の前に近づいた時のみ適度に反応）
             const harassRangeSq = 1200 * 1200;
 
             if (pDistSq < harassRangeSq) {
-                // 発動率を約10%〜15%に抑制（10回に1回程度、たまに前を横切るくらいの絶妙な頻度）
                 const triggerRate = meta.persona === 'harasser' ? 0.20 : 0.08;
                 if (Math.random() < triggerRate) {
                     meta.state = AI_STATE.HARASS;
-                    meta.stateTimer = 35 + Math.floor(Math.random() * 30); // 0.6〜1.0秒程度でサッと終わる
+                    meta.stateTimer = 35 + Math.floor(Math.random() * 30);
                     meta.harassSubtype = Math.floor(Math.random() * 3);
-                    meta.harassCooldown = 120 + Math.floor(Math.random() * 90); // 実行後は2〜3.5秒間のクールダウン
+                    meta.harassCooldown = 120 + Math.floor(Math.random() * 90);
                 }
             }
         }
 
-        // 5. 【ステートタイマー満了時の自然遷移（採餌への復帰を促進）】
+        // 5. 【ステートタイマー満了時の自然遷移】
         if (meta.stateTimer <= 0) {
             if (meta.state === AI_STATE.HARASS) {
-                // ちょっかい行動完了後は、粘着せずに必ず平和な採餌モードへ復帰
                 meta.state = AI_STATE.FORAGING;
                 meta.stateTimer = 80 + Math.floor(Math.random() * 70);
                 ai.isBoosting = false;
@@ -268,21 +272,18 @@ export class AIManager {
                 }
 
                 if (meta.harassSubtype === 0) {
-                    // ①「進路横切り（Cut-In Harassment）」
                     const leadDist = 380 + player.size * 1.5;
                     const predictX = player.x + Math.cos(player.angle) * leadDist;
                     const predictY = player.y + Math.sin(player.angle) * leadDist;
                     ai.targetAngle = Math.atan2(predictY - ai.y, predictX - ai.x);
                     ai.isBoosting = ai.score > 90 && Math.random() < 0.45;
                 } else if (meta.harassSubtype === 1) {
-                    // ②「併走・プレッシャー（Shoulder Pressure）」
                     const lateralAngle = player.angle + (Math.random() < 0.5 ? Math.PI / 2.2 : -Math.PI / 2.2);
                     const flankX = player.x + Math.cos(lateralAngle) * (player.size * 3.2 + ai.size * 2.2);
                     const flankY = player.y + Math.sin(lateralAngle) * (player.size * 3.2 + ai.size * 2.2);
                     ai.targetAngle = Math.atan2(flankY - ai.y, flankX - ai.x) * 0.3 + player.angle * 0.7;
                     ai.isBoosting = ai.score > 100 && player.isBoosting && Math.random() < 0.40;
                 } else {
-                    // ③「餌横取りダッシュ（Greedy Snatch）」
                     const frontX = player.x + Math.cos(player.angle) * 280;
                     const frontY = player.y + Math.sin(player.angle) * 280;
                     ai.targetAngle = Math.atan2(frontY - ai.y, frontX - ai.x);

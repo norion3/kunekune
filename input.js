@@ -1,12 +1,12 @@
 /**
  * ==============================================================================
  * 『くねくねバトル オンライン』入力制御モジュール (input.js)
- * v25.0.0 左手専任58%タッチ制限＆ブースト干渉完全根絶版:
+ * v26.1.0 誤タップ完全遮断＆動的追従ジョイスティック版:
  * ・ジョイスティック開始判定を画面左側（幅58%以内）に限定し、右手ブースト操作時の誤爆・操作抜けを100%根絶
- * ・死亡時・リザルト画面表示中の背後ジョイスティック誤反応・表示チラつきを完全防止
+ * ・左下UIボタングループ領域（画面左端かつ画面下部140px以内）のタップ時はジョイスティック発火を完全バイパス
+ * ・ボトムシートメニュー展開中、死亡時、リザルト画面表示中の背後ジョイスティック誤反応・表示チラつきを完全防止
  * ・スコア10,000〜30,000超の巨大スネーク時でも周囲を広く見渡せるズームレンジ（0.35〜1.50）維持
  * ・指の移動に合わせて基点が滑らかに追従する「動的追従型ジョイスティック」完全維持
- * ・画面長押しによるブースト誤爆防止（専用ボタン加速）
  * ==============================================================================
  */
 
@@ -104,13 +104,24 @@ export class InputManager {
         if (typeof window !== 'undefined' && window.currentGameState !== 'playing') return;
         if (typeof window !== 'undefined' && window.localPlayerInstance && window.localPlayerInstance.isDead) return;
 
+        // メニューが開いている場合はジョイスティックを受け付けない
+        const menuOverlay = document.getElementById('menu-overlay');
+        if (menuOverlay && menuOverlay.style.display === 'block') return;
+
         e.preventDefault();
 
         if (!this.active && e.touches.length > 0) {
-            // ★ 画面左半分（横幅58%以内）のタッチのみをジョイスティックとして認識
             const allowableWidth = window.innerWidth * 0.58;
+            const screenHeight = window.innerHeight;
+
             for (let i = 0; i < e.touches.length; i++) {
                 const t = e.touches[i];
+
+                // ★ 左下UI領域（MENUボタンや音量ボタンがある幅80px×下部160px以内）への接触は除外
+                const isBottomLeftUIZone = (t.clientX <= 80 && t.clientY >= screenHeight - 160);
+                if (isBottomLeftUIZone) continue;
+
+                // 画面左側58%以内であればジョイスティック開始
                 if (t.clientX <= allowableWidth) {
                     this.touchId = t.identifier;
                     this.startJoystick(t.clientX, t.clientY);
@@ -147,6 +158,14 @@ export class InputManager {
         this.canvas.addEventListener('mousedown', (e) => {
             if (typeof window !== 'undefined' && window.currentGameState !== 'playing') return;
             if (typeof window !== 'undefined' && window.localPlayerInstance && window.localPlayerInstance.isDead) return;
+
+            const menuOverlay = document.getElementById('menu-overlay');
+            if (menuOverlay && menuOverlay.style.display === 'block') return;
+
+            // 左下UIエリア除外
+            const isBottomLeftUIZone = (e.clientX <= 80 && e.clientY >= window.innerHeight - 160);
+            if (isBottomLeftUIZone) return;
+
             isMouseDown = true;
             this.startJoystick(e.clientX, e.clientY);
         });
@@ -199,7 +218,6 @@ export class InputManager {
             const normX = dx / dist;
             const normY = dy / dist;
 
-            // 基点（center）を過剰移動分だけ指の進行方向へスライド
             this.center.x += normX * excess;
             this.center.y += normY * excess;
 
