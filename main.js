@@ -1,7 +1,9 @@
 // ==============================================================================
 // 『くねくねバトル オンライン』Phase 7 マスター統合オーケストレーター (main.js)
-// v27.4.0 スコア短縮フォーマット(k/M)＆UIオーバーフロー完全防止版:
-// ・【スコア単位短縮フォーマッター】formatScore を新設。10,000以上で「12.5k」、1,000,000以上で「1.2M」と短縮表示
+// v28.2.0 CPUキルログ完全排除＆スコア短縮フォーマット(k/M)版:
+// ・【CPUキルログ完全排除】画面を埋め尽くしていた「CPUがCPUを撃破！」という無意味なチャット通知を完全遮断。
+// 　プレイヤー（自機）または人間の参加者が関与した撃破のみを通知表示し、チャット欄の視認性を劇的に向上
+// ・【スコア単位短縮フォーマッター】formatScore を配備。10,000以上で「12.5k」、1,000,000以上で「1.2M」と短縮表示
 // ・【ランキング文字被り解消】スコアが6桁・7桁になっても名前列と重ならず、右枠を突き破らないようレイアウト最適化
 // ・【ゴースト完全パージ】切断されたスロットの残留ゴーストを即時完全消去
 // ・【デッドレコニング旋回ジッター解消】相殺ベクトルに targetAngle を使用し、カーブ時の振動を完全根絶
@@ -697,7 +699,14 @@ function gameLoop() {
                 const absorbedScore = Math.max(120, Math.floor(victim.score * 0.18));
                 killer.addScore(absorbedScore);
 
-                Danmaku.push(killer.name, `${victim.name} を撃破！`, killer.color || '#ff3366');
+                // ★ 改善：【CPU同士の撃破チャット（Danmaku）を完全排除】
+                // プレイヤー（自機）、または人間の参加者が関与した撃破のみ通知を表示
+                const isKillerHuman = killer.isPlayer || (NetworkManager.isMultiplayerActive && killer.id !== undefined && killer.id < MAX_PLAYERS && NetworkManager.slots[killer.id] && !NetworkManager.slots[killer.id].isAI);
+                const isVictimHuman = victim.isPlayer || (NetworkManager.isMultiplayerActive && victim.id !== undefined && victim.id < MAX_PLAYERS && NetworkManager.slots[victim.id] && !NetworkManager.slots[victim.id].isAI);
+
+                if (isKillerHuman || isVictimHuman) {
+                    Danmaku.push(killer.name, `${victim.name} を撃破！`, killer.color || '#ff3366');
+                }
             }
 
             if (victim.isPlayer) {
@@ -758,7 +767,7 @@ function gameLoop() {
 
                 const listEl = document.getElementById('leaderboard-list');
                 if (listEl && listEl.parentElement && listEl.parentElement.style.display !== 'none') {
-                    // ★ 修正：formatScore(s.score) を適用し、スコアが10万・100万になっても枠内へ綺麗に収める
+                    // ★ formatScore(s.score) を適用し、スコアが10万・100万になっても枠内へ綺麗に収める
                     listEl.innerHTML = topList.map((s, idx) => `
                         <div style="display:flex; justify-content:space-between; align-items:center; color:${s === player ? '#ffdd00' : '#ffffff'}; font-weight:${s === player ? 'bold' : 'normal'}; font-size:12px; gap:6px;">
                             <span style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:88px;">${idx + 1}. ${s.name}</span>

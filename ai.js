@@ -1,15 +1,15 @@
 // ==============================================================================
 // 『くねくねバトル オンライン』スネーク.io型 自律生態系AIマネージャー (ai.js)
-// v27.8.0 動的循環スポーン＆過疎化完全防止・生態系完成版:
-// ・【動的循環スポーン(過疎化根絶)】シングル版の秀逸な密度制御アルゴリズムを完全統合
-// 　プレイヤーから遠く離れすぎたAI（距離 > 視野×2.5 + 8000px）を安全に再配置対象とし、
-// 　プレイヤーの視野外周（前方2500〜6000px）へ滑らかに循環再スポーン
-// 　マップ全域60000pxの広大さを保ちながら、どこへ移動しても常に敵・獲物と遭遇する高密度テンポを実現
-// ・【画面外仮想成長】プレイヤー視界外のAIも性格に応じて自動採餌・スコア更新（ランキングリアルタイム変動）
-// ・【カミカゼ暗殺特攻(ambusher)】小型AIが巨大スネークの首元へブースト割り込みを仕掛け、一発逆転のスリルを復元
-// ・【ビビり逃走の限定化】スコア差による過度な逃避を撤廃し、巨大化後も戦闘が途切れないゲームバランスを確立
-// ・【包囲狩猟知能】巨大AIが小型の獲物をとぐろ巻き(コイリング)で囲い込む高度なAIルーチン
-// ・【完全DeltaTime】思考、仮想成長、リスポーンタイマーのフレームレート非依存化
+// v28.1.0 完全機能継承・生態系ピラミッド＆適正密度調律版:
+// ・【全機能完全継承】カミカゼ暗殺(AMBUSH)、包囲コイリング(HUNTER)、3種ちょっかい(HARASS)、
+// 　ハイエナ肉片争奪(SCAVENGER)、ビビり逃走(PANIC)、大回遊(CRUISING)、完全DeltaTime、
+// 　動的循環スポーン、画面外仮想成長の全ルーチンを一切省略せず100%完全保持
+// ・【初期スコアのピラミッド化】開幕から巨大な敵だらけになるインフレを解消。
+// 　80%を小型(50〜150pt)、15%を中型(200〜600pt)、5%のみをボス格(1000〜2500pt)とする自然な分布へ最適化
+// ・【適正密度・息苦しさ解消】プレイヤー周囲が敵だらけ（レーダーが真っ赤）になる過密を解消。
+// 　開幕の配備範囲を広域(2000〜16000px)へ分散し、動的循環スポーンの再配置距離も
+// 　(4000〜8500px) へ適正拡大。「探せば敵が見つかり、適度に交戦できる」広大な深宇宙の距離感を復元
+// ・【画面外成長のマイルド化】画面外AIの仮想成長レートを約1/3に調律し、プレイヤーの努力が報われるテンポを確立
 // ==============================================================================
 
 import { MAP_SIZE, SNAKE_COLORS } from './constants.js';
@@ -20,7 +20,7 @@ const AI_STATE = {
     FORAGING: 0,   // マイペース採餌（平和に餌を食べる）
     CRUISING: 1,   // 大回遊パトロール（広大な空間を悠然と横断・巨大な壁）
     SCAVENGER: 2,  // ハイエナ肉片争奪（撃破残骸や大量餌へ一斉殺到）
-    HUNTER: 3,     // 狡猾な狩猟（好戦的な個体によるキル狙い）
+    HUNTER: 3,     // 狡猾な狩猟（好戦的な個体によるキル狙い・包囲コイリング）
     HARASS: 4,     // ちょっかい行動（進路横切り・並走威嚇・餌横取り）
     PANIC: 5,      // ビビり逃走（特定臆病個体のみ限定発動）
     AMBUSH: 6      // カミカゼ特攻（巨大スネークの首元へ捨て身の突進）
@@ -70,19 +70,27 @@ export class AIManager {
                 ambushTarget: null
             });
 
-            // 初期配置：プレイヤー周辺（2000〜8000px）へ重点配備し、開幕直後から熱い交戦を演出
+            // ★ 初期配置の広域分散化（開幕直後の異常過密・敵だらけ状態を解消）
             const angle = Math.random() * Math.PI * 2;
-            const dist = 1800 + Math.random() * 7000;
+            const dist = 2000 + Math.random() * 16000;
             const sx = Math.max(400, Math.min(MAP_SIZE - 400, playerX + Math.cos(angle) * dist));
             const sy = Math.max(400, Math.min(MAP_SIZE - 400, playerY + Math.sin(angle) * dist));
             ai.reset(sx, sy);
 
-            // 初期スコアのバリエーション（一部を中堅〜ボス格として配置）
-            if (Math.random() < 0.20) {
-                ai.addScore(Math.floor(1500 + Math.random() * 5000));
-            } else if (Math.random() < 0.45) {
-                ai.addScore(Math.floor(200 + Math.random() * 1200));
+            // ★ ピラミッド型スコア分布（初期インフレの完全解消）
+            // 全員が巨大化している不自然さを根絶し、大半が自分と同等以下の適正難易度へ
+            const scoreRand = Math.random();
+            if (scoreRand < 0.05) {
+                // 5%: ごく稀にマップを回遊するボス格（1000〜2500pt）
+                ai.addScore(Math.floor(1000 + Math.random() * 1500));
+            } else if (scoreRand < 0.20) {
+                // 15%: 中堅個体（200〜600pt）
+                ai.addScore(Math.floor(200 + Math.random() * 400));
+            } else {
+                // 80%: 基本となる小型・ザコ個体（初期50pt + わずかなゆらぎ 0〜100pt）
+                ai.addScore(Math.floor(Math.random() * 100));
             }
+
             this.ais.push(ai);
         }
     }
@@ -101,7 +109,7 @@ export class AIManager {
         const safeDt = (typeof dtSec === 'number' && dtSec > 0) ? Math.min(dtSec, 0.1) : (1 / 60);
         const timeScale = Math.max(0.1, Math.min(3.0, safeDt * 60));
 
-        // 1. 【画面外AIの仮想バックグラウンド成長】（ランキング静止バグの完全根絶）
+        // 1. 【画面外AIの仮想バックグラウンド成長】（ランキング静止バグを防ぎつつ、インフレを抑えたマイルド調律）
         this._virtualGrowthTimer += safeDt;
         if (this._virtualGrowthTimer >= 0.5) {
             const growthInterval = this._virtualGrowthTimer;
@@ -114,14 +122,16 @@ export class AIManager {
                 const meta = this.aiMeta[i];
                 if (!meta) continue;
 
-                let gainRate = 20;
-                if (meta.persona === 'hunter' || meta.persona === 'cruiser') gainRate = 35;
-                if (meta.persona === 'forager') gainRate = 25;
+                // 成長レートを適正化（毎秒 6〜14pt 程度に抑制）
+                let gainRate = 6;
+                if (meta.persona === 'hunter' || meta.persona === 'cruiser') gainRate = 14;
+                if (meta.persona === 'forager') gainRate = 9;
 
                 ai.addScore(gainRate * growthInterval);
 
-                if (Math.random() < 0.015) {
-                    const killBonus = Math.floor(300 + Math.random() * 1500);
+                // 仮想キル発生頻度と獲得量をマイルド化
+                if (Math.random() < 0.006) {
+                    const killBonus = Math.floor(150 + Math.random() * 500);
                     ai.addScore(killBonus);
                     ai.kills = (ai.kills || 0) + 1;
                 }
@@ -142,9 +152,9 @@ export class AIManager {
         const pY = isPlayerAlive ? player.y : (MAP_SIZE / 2);
         const pAngle = isPlayerAlive ? player.angle : 0;
 
-        // ★ シングル版統合：動的循環スポーン判定用の遠隔閾値
-        // プレイヤーから約12000px以上離れたAIは「誰もいない荒野」にいるため、プレイヤー周辺へ再配置
-        const recycleDistSq = 12500 * 12500;
+        // ★ 動的循環スポーン判定用の遠隔閾値（15,000px）
+        // プレイヤーから極端に離れたAIのみを対象とし、近場の生態系は乱さない
+        const recycleDistSq = 15000 * 15000;
 
         for (let i = 0; i < total; i++) {
             const ai = this.ais[i];
@@ -157,15 +167,16 @@ export class AIManager {
                 if (meta.deadTimer >= 1.25) {
                     meta.deadTimer = 0;
 
-                    // ★ シングル版準拠：リスポーン位置をプレイヤーの周囲（視野外周 2500〜7000px）に設定
+                    // ★ リスポーン位置を広域に散らし、倒した敵がすぐ目の前に再出現する不快感を解消
                     const ang = Math.random() * Math.PI * 2;
-                    const d = 2500 + Math.random() * 5500;
+                    const d = 4000 + Math.random() * 8000;
                     const rx = Math.max(400, Math.min(MAP_SIZE - 400, pX + Math.cos(ang) * d));
                     const ry = Math.max(400, Math.min(MAP_SIZE - 400, pY + Math.sin(ang) * d));
                     ai.reset(rx, ry);
 
-                    if (Math.random() < 0.25) {
-                        ai.addScore(Math.floor(400 + Math.random() * 2500));
+                    // 復活時の中型化確率を10%へ引き下げ
+                    if (Math.random() < 0.10) {
+                        ai.addScore(Math.floor(150 + Math.random() * 450));
                     }
 
                     meta.state = AI_STATE.FORAGING;
@@ -176,21 +187,20 @@ export class AIManager {
                 continue;
             }
 
-            // ★ シングル版統合：【動的循環スポーン（過疎化防止ループ）】
-            // 生存AIでもプレイヤーから遠ざかりすぎた場合、プレイヤーの進行方向前方・周囲へ安全にワープ再配置
+            // ★ 【動的循環スポーン（過疎化防止 ＆ 絶妙な交戦密度ループ）】
+            // 遠く離れすぎたAIを、プレイヤーの視野外周（4,000〜8,500px）へ前方を広くカバーして再配置
+            // プレイヤー周囲が敵で埋まる過密を防ぎつつ、適度に探索すると必ず敵と会えるバランスを実現
             if (isPlayerAlive && !ai.isVisible && (frameCount + i) % 60 === 0) {
                 const distToPlayerSq = (ai.x - pX) ** 2 + (ai.y - pY) ** 2;
                 if (distToPlayerSq > recycleDistSq) {
-                    // プレイヤーの進行方向（前方180度）を優先した外周へスポーン
-                    const forwardBiasAngle = pAngle + (Math.random() - 0.5) * Math.PI * 1.2;
-                    const spawnDist = 3000 + Math.random() * 4500;
+                    const forwardBiasAngle = pAngle + (Math.random() - 0.5) * Math.PI * 1.5;
+                    const spawnDist = 4200 + Math.random() * 4800;
                     const nx = Math.max(400, Math.min(MAP_SIZE - 400, pX + Math.cos(forwardBiasAngle) * spawnDist));
                     const ny = Math.max(400, Math.min(MAP_SIZE - 400, pY + Math.sin(forwardBiasAngle) * spawnDist));
 
-                    // リングバッファ履歴を再構築して安全に座標更新
                     ai.x = nx;
                     ai.y = ny;
-                    ai.angle = forwardBiasAngle + Math.PI; // プレイヤー方向に向かって入ってくる
+                    ai.angle = forwardBiasAngle + Math.PI; // プレイヤーの方向へ緩やかに進入
                     ai.targetAngle = ai.angle;
                     ai.distCounter = 0;
                     ai.headIdx = 0;
@@ -211,7 +221,7 @@ export class AIManager {
     }
 
     /**
-     * AI思考ルーチン（カミカゼ特攻・包囲狩猟・過度な逃走抑制）
+     * AI思考ルーチン（カミカゼ特攻・包囲狩猟・過度な逃走抑制・O(1)リングバッファ）
      */
     think(ai, meta, player, allSnakes, activeDrops, timeScale = 1.0) {
         meta.stateTimer -= timeScale;
@@ -277,6 +287,7 @@ export class AIManager {
         if (threatFound) return;
 
         // 3. 【カミカゼ暗殺特攻（AMBUSH）】
+        // 小型個体が巨大スネークの首元へブースト割り込みを仕掛け、一発逆転を狙うsnake.ioの本質的スリル
         if ((meta.persona === 'ambusher' || (meta.persona === 'harasser' && Math.random() < 0.4)) && ai.score > 60) {
             let giantTarget = null;
             let minGiantDistSq = 1400 * 1400;
@@ -311,7 +322,7 @@ export class AIManager {
             }
         }
 
-        // 4. 【ビビり逃走の限定化】（臆病型のみ近距離で発動）
+        // 4. 【ビビり逃走の限定化】（臆病型のみ至近距離で発動し、敵が全員逃げる過疎化を防止）
         if (meta.persona === 'timid' && meta.panicCooldown <= 0 && meta.state !== AI_STATE.PANIC && ai.score > 60) {
             let giantThreat = null;
             const panicDistSq = 350 * 350;
@@ -476,6 +487,7 @@ export class AIManager {
                 }
 
                 if (huntTarget) {
+                    // 包囲コイリング狩猟知能：巨大AIが獲物の周囲を円を描くように回り込み、囲い込む
                     if (ai.size > huntTarget.size * 1.5 && ai.size > 28) {
                         const toTargetAngle = Math.atan2(huntTarget.y - ai.y, huntTarget.x - ai.x);
                         ai.targetAngle = toTargetAngle + Math.PI / 2.5;
