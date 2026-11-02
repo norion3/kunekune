@@ -1,11 +1,13 @@
 /**
  * ==============================================================================
  * 『くねくねバトル オンライン』一体型HUD ＆ 自機中心相対追従レーダー (hud.js)
- * v25.6.0 人間厳格判定＆高視認性ゴールド方向ポインター版:
+ * v25.7.0 自機カスタムカラー完全連動＆高視認性ゴールド方向ポインター版:
+ * ・【自機カスタムカラー完全連動】レーダー中央の自機マークコアに player.color（選択カラー）を反映
+ * 　ピンク、ライム、紫など、CUSTOMメニューで選んだ本体色がミニマップ上でも直感的に一致
+ * ・自機マークの外枠にクッキリとした白色リング（#ffffff）を配備し、暗い背景でも埋もれない高い視認性を両立
  * ・【AI人間誤判定根絶】マルチ有効かつ slots[s.id] が人間（!isAI）である場合のみ二重リング描画
- * ・ソロプレイ時や空き枠AI（ID: 1〜5）が誤って他ユーザー表示される不具合を100%解消
- * ・【方向マーカー刷新】自機リングの外側へ突き出す高輝度ゴールド矢印（#fde047）＋黒輪郭線を配備
- * ・背景やシアンリングと同化せず、進行方向（angle）が一瞬で直感視認可能
+ * ・ソロプレイ時や空き枠AI（ID: 1〜5）が誤って他ユーザー表示される不具合を100%排除
+ * ・【方向マーカー】自機リングの外側へ突き出す高輝度ゴールド矢印（#fde047）＋黒輪郭線を完全維持
  * ・カメラ視野枠の極薄ハイライト＋四隅フォーカス枠（[ ]）維持
  * ・描画負荷軽減：2フレームに1回（30FPS）描画スロットリング ＆ Offscreen キャッシュ維持
  * ==============================================================================
@@ -79,7 +81,7 @@ export class HUDManager {
 
     /**
      * 自機中心の相対追従レーダーをメインCanvasに直接描画
-     * 人間厳格識別・ゴールド方向ポインター・カメラ視野ハイライト版
+     * 自機カラー連動・人間厳格識別・ゴールド方向ポインター・カメラ視野ハイライト版
      */
     drawRadar(ctx, canvasWidth, safeTop, player, otherEntities, cameraScale) {
         if (!this.showMap || !player) return;
@@ -147,9 +149,7 @@ export class HUDManager {
                     const s = otherEntities[i];
                     if (s === player || s.isDead) continue;
 
-                    // ★ 人間プレイヤー厳格判定：
-                    // 自機以外は「マルチプレイ有効」かつ「有効スロット（0〜5）」かつ「!isAI」であること
-                    // （ソロプレイ時やCPU 1〜5が誤って人間二重リングになるバグを100%排除）
+                    // 人間プレイヤー厳格判定
                     let isHuman = false;
                     if (s.isPlayer) {
                         isHuman = true;
@@ -169,9 +169,7 @@ export class HUDManager {
                     }
 
                     if (isHuman) {
-                        // ==========================================================
-                        // ★ 人間プレイヤー描画：動的カスタムカラー ＋ 二重パルスリング
-                        // ==========================================================
+                        // 人間プレイヤー描画：動的カスタムカラー ＋ 二重パルスリング
                         const humanColor = s.color || '#ff3366';
                         const pulseScale = 1.0 + Math.sin(this.radarFrameCount * 0.18 + (s.id || 0)) * 0.22;
 
@@ -194,9 +192,7 @@ export class HUDManager {
                         rCtx.arc(drawX, drawY, 1.2, 0, Math.PI * 2);
                         rCtx.fill();
                     } else {
-                        // ==========================================================
-                        // ★ AIスネーク描画：格上（赤）／格下（控えめドット）
-                        // ==========================================================
+                        // AIスネーク描画：格上（赤）／格下（控えめドット）
                         const isBigger = s.score > player.score;
                         let isTopEnemy = false;
                         for (let k = 0; k < this.topEnemyCount; k++) {
@@ -224,13 +220,13 @@ export class HUDManager {
                 }
             }
 
-            // 3. ★ 自機の画面カメラ視野枠（自然なカメラ画角ハイライト ＋ フォーカス枠）
+            // 3. 自機の画面カメラ視野枠（自然なカメラ画角ハイライト ＋ フォーカス枠）
             const camRectW = viewW * radarRatio;
             const camRectH = viewH * radarRatio;
             const left = radarCenter - camRectW / 2;
             const top = radarCenter - camRectH / 2;
 
-            // 画面内エリアの極薄シアンハイライト（障害物ではなく視野であることが明快）
+            // 画面内エリアの極薄シアンハイライト
             rCtx.fillStyle = 'rgba(56, 189, 248, 0.07)';
             rCtx.fillRect(left, top, camRectW, camRectH);
 
@@ -257,9 +253,8 @@ export class HUDManager {
             rCtx.lineTo(left + camRectW, top + camRectH - bracketLen);
             rCtx.stroke();
 
-            // 4. ★ 自機中心ドット ＆ 進行方向コンパスポインター（▲）
+            // 4. 自機中心ドット ＆ 進行方向コンパスポインター（▲）
             const pAngle = (player.angle !== undefined) ? player.angle : 0;
-            // 先端を自機リング（半径5.0）の外側へ 18.0px まで大きく突き出し、根元もリング外周（6.5px）からスタート
             const arrowTipDist = 18.0;
             const arrowWingDist = 7.5;
             const arrowWingAngle = 0.45;
@@ -274,7 +269,7 @@ export class HUDManager {
             const wingRightX = radarCenter + Math.cos(pAngle + arrowWingAngle) * arrowWingDist;
             const wingRightY = radarCenter + Math.sin(pAngle + arrowWingAngle) * arrowWingDist;
 
-            // ステルスコンパス形状：自機円と重ならず、外側へくっきり突き出す矢印
+            // ステルスコンパス形状：高輝度ゴールドイエロー ＋ 黒輪郭線
             rCtx.beginPath();
             rCtx.moveTo(tipX, tipY);
             rCtx.lineTo(wingLeftX, wingLeftY);
@@ -285,23 +280,32 @@ export class HUDManager {
             rCtx.fillStyle = '#fde047'; // 高輝度ゴールドイエロー
             rCtx.fill();
 
-            // 極太1.8pxブラック輪郭線で背景やカメラ枠と100%分離
             rCtx.strokeStyle = 'rgba(0, 0, 0, 0.95)';
             rCtx.lineWidth = 1.8;
             rCtx.lineJoin = 'round';
             rCtx.stroke();
 
-            // 自機中心（白丸 ＋ ネオンシアンリング）
-            rCtx.fillStyle = '#ffffff';
+            // ★ 自機マーク：選択されたカスタムカラー（player.color）と完全連動
+            const myColor = player.color || '#00e5ff';
+
+            // 外枠：白色の高コントラストリング（背景やカメラ枠との境界をクッキリ分離）
+            rCtx.strokeStyle = '#ffffff';
+            rCtx.lineWidth = 1.5;
             rCtx.beginPath();
-            rCtx.arc(radarCenter, radarCenter, 3.2, 0, Math.PI * 2);
+            rCtx.arc(radarCenter, radarCenter, 4.8, 0, Math.PI * 2);
+            rCtx.stroke();
+
+            // 中心コア：選択したカスタムカラー
+            rCtx.fillStyle = myColor;
+            rCtx.beginPath();
+            rCtx.arc(radarCenter, radarCenter, 3.4, 0, Math.PI * 2);
             rCtx.fill();
 
-            rCtx.strokeStyle = '#00e5ff';
-            rCtx.lineWidth = 1.4;
+            // コア中央の微小ハイライト（ツヤ感演出）
+            rCtx.fillStyle = 'rgba(255, 255, 255, 0.85)';
             rCtx.beginPath();
-            rCtx.arc(radarCenter, radarCenter, 5.0, 0, Math.PI * 2);
-            rCtx.stroke();
+            rCtx.arc(radarCenter, radarCenter, 1.2, 0, Math.PI * 2);
+            rCtx.fill();
 
             // 5. レーダー外枠
             rCtx.strokeStyle = 'rgba(0, 229, 255, 0.45)';
