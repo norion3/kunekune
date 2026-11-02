@@ -1,9 +1,10 @@
 // ==============================================================================
 // 『くねくねバトル オンライン』Phase 7 マスター統合オーケストレーター (main.js)
-// v27.1.0 堅牢同期・ゴースト根絶＆ジッター解消版:
-// ・【ゴースト完全パージ】gameLoop内でslots情報と実体を照合し、切断等で空き枠(isAI:true)になったスロットの残留ゴーストを即時完全消去
-// ・【デッドレコニング修正】二重加算の相殺ベクトルに targetAngle を使用し、旋回時の激しい振動(ジッター)を完全根絶
-// ・【デッドレコニング完全化】他走者の予測座標（仮想ターゲット）を自走させ、実座標をLerp追従させる方式
+// v27.4.0 スコア短縮フォーマット(k/M)＆UIオーバーフロー完全防止版:
+// ・【スコア単位短縮フォーマッター】formatScore を新設。10,000以上で「12.5k」、1,000,000以上で「1.2M」と短縮表示
+// ・【ランキング文字被り解消】スコアが6桁・7桁になっても名前列と重ならず、右枠を突き破らないようレイアウト最適化
+// ・【ゴースト完全パージ】切断されたスロットの残留ゴーストを即時完全消去
+// ・【デッドレコニング旋回ジッター解消】相殺ベクトルに targetAngle を使用し、カーブ時の振動を完全根絶
 // ・【餌同期の絶対座標化】checkFoodConsumption のコールバックを絶対座標 (x, y) に適応
 // ==============================================================================
 
@@ -39,6 +40,18 @@ import { NetBroadcaster } from './net_broadcaster.js';
 import { initUIBindings, updateZoomButtonsState } from './ui_binder.js';
 import { setupNetworkHandlers } from './net_handlers.js';
 import { hookLobbyNetworkEvents } from './net_lobby_hooks.js';
+
+// --- スコア表示用単位短縮ヘルパー（10万・100万時のUIオーバーフロー防止） ---
+export function formatScore(val) {
+    const s = Math.floor(val || 0);
+    if (s >= 1000000) {
+        return (s / 1000000).toFixed(1).replace(/\.0$/, '') + 'M';
+    }
+    if (s >= 10000) {
+        return (s / 1000).toFixed(1).replace(/\.0$/, '') + 'k';
+    }
+    return s.toLocaleString();
+}
 
 // --- プラットフォーム環境検知 ---
 export const PlatformDetector = {
@@ -479,7 +492,7 @@ function handleGameOver(killer) {
     const duration = Math.floor((Date.now() - gameStartTime) / 1000);
 
     document.getElementById('res-rank').innerText = `${exactRank} 位`;
-    document.getElementById('res-score').innerText = finalScore;
+    document.getElementById('res-score').innerText = formatScore(finalScore);
     document.getElementById('res-kills').innerText = player.kills;
     document.getElementById('res-time').innerText = `${duration} 秒`;
     document.getElementById('res-size').innerText = Math.floor(player.maxSize);
@@ -552,10 +565,9 @@ function gameLoop() {
         remoteSnakes.forEach((remote, slotIdx) => {
             if (remote.isDead) return;
 
-            // ★ 1. ゴースト検知＆完全パージ（タスクキル・回線切断による無敵残留防止）
+            // ★ ゴースト検知＆完全パージ
             if (NetworkManager.isMultiplayerActive) {
                 const slotData = NetworkManager.slots[slotIdx];
-                // スロットが空き(isAI:true)または無効になっているのに実体がある場合はゴースト
                 if (!slotData || slotData.isAI) {
                     console.warn(`[Sync] ゴースト検知: 切断されたスロット ${slotIdx} の残留エンティティを完全パージします。`);
                     remoteSnakes.delete(slotIdx);
@@ -563,7 +575,7 @@ function gameLoop() {
                     if (aIdx !== -1) allSnakes.splice(aIdx, 1);
                     const sIdx = sortedSnakes.indexOf(remote);
                     if (sIdx !== -1) sortedSnakes.splice(sIdx, 1);
-                    return; // 以降の処理をスキップ
+                    return;
                 }
             }
 
@@ -573,11 +585,10 @@ function gameLoop() {
                 return;
             }
 
-            // ★ 2. 究極のデッドレコニング＆二重加算防止（ジッターの完全根絶）
+            // デッドレコニング＆二重加算防止
             if (remote.targetNetX !== undefined && remote.targetNetY !== undefined) {
                 const timeScale = Math.max(0.1, Math.min(3.0, dtSec * 60));
                 
-                // 仮想ターゲットを自走させる（デッドレコニング予測）
                 remote.targetNetX += Math.cos(remote.targetAngle) * (remote.speed * timeScale);
                 remote.targetNetY += Math.sin(remote.targetAngle) * (remote.speed * timeScale);
 
@@ -586,19 +597,15 @@ function gameLoop() {
                     remote.x = remote.targetNetX;
                     remote.y = remote.targetNetY;
                 } else {
-                    // 実座標を仮想ターゲットへLerp（引き寄せ）
                     const lerpFactor = 1.0 - Math.exp(-15.0 * dtSec);
                     remote.x += (remote.targetNetX - remote.x) * lerpFactor;
                     remote.y += (remote.targetNetY - remote.y) * lerpFactor;
                 }
                 
-                // ★ 修正：次ステップの updatePhysics による「自走」を相殺するため、実角度ではなく予測に使用した targetAngle で逆算する。
-                // これにより、急激なターン中であっても引き寄せ方向と相殺方向が完全一致し、激しい振動（ジッター）が消滅します。
                 remote.x -= Math.cos(remote.targetAngle) * (remote.speed * timeScale);
                 remote.y -= Math.sin(remote.targetAngle) * (remote.speed * timeScale);
             }
             
-            // リングバッファ履歴の保存のために updatePhysics は呼び出す
             remote.updatePhysics(dtSec, remote.targetAngle, remote.isBoosting);
         });
 
@@ -751,10 +758,11 @@ function gameLoop() {
 
                 const listEl = document.getElementById('leaderboard-list');
                 if (listEl && listEl.parentElement && listEl.parentElement.style.display !== 'none') {
+                    // ★ 修正：formatScore(s.score) を適用し、スコアが10万・100万になっても枠内へ綺麗に収める
                     listEl.innerHTML = topList.map((s, idx) => `
-                        <div style="display:flex; justify-content:space-between; color:${s === player ? '#ffdd00' : '#ffffff'}; font-weight:${s === player ? 'bold' : 'normal'}; font-size:12px;">
-                            <span style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:85px;">${idx + 1}. ${s.name}</span>
-                            <span>${Math.floor(s.score)}</span>
+                        <div style="display:flex; justify-content:space-between; align-items:center; color:${s === player ? '#ffdd00' : '#ffffff'}; font-weight:${s === player ? 'bold' : 'normal'}; font-size:12px; gap:6px;">
+                            <span style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:88px;">${idx + 1}. ${s.name}</span>
+                            <span style="font-feature-settings:'tnum'; text-align:right; font-weight:700;">${formatScore(s.score)}</span>
                         </div>
                     `).join('');
                 }

@@ -1,21 +1,34 @@
 // ==============================================================================
 // 『くねくねバトル オンライン』スネークエンティティクラス (snake.js)
-// v26.3.0 ブースト即時同期連携＆完全DeltaTime物理版:
-// ・【ブースト即時同期】自機ブースト状態変化時（開始・終了）に即座に即時パケット送出（forceImmediateSync）をトリガーし、他端末への加速反映ラグを根絶
-// ・【引数厳格判定】updatePhysics のシグネチャを arguments.length >= 3 で厳格判定し、真右斜め下（0 < angle < 0.3）の型誤認バグを完全排除
-// ・フレームレート非依存物理：30FPS〜120FPSのどの環境でも同一の旋回半径・移動速度・無敵時間を寸分違わず再現
-// ・ブースト時の白枠ストローク前に ctx.beginPath() と頭部円 arc を発行し、表情パーツ崩壊を完全根絶
-// ・無敵時間中（invulnerableTimer > 0）にブーストを入力した瞬間に無敵を即時強制解除
-// ・表情ベクター描画を snake_face.js へ完全委譲し、ファイルサイズ約40%削減維持
-// ・体節描画ステップ間引き（長大スネーク時のドローコール半減・iOS 60FPS死守）
-// ・頭上バッジの ctx.measureText() キャッシュ化（毎フレームの不要文字列レイアウト計算根絶）
-// ・O(1) リングバッファ ＆ ゼロアロケーション体節追従
+// v27.7.0 シングル版索敵演出融合・獲物パルスリング＆頭上バッジ適正化版:
+// ・【ズームアウト獲物パルスリング強調】シングル版の秀逸な索敵演出を統合
+// 　カメラがズームアウトした際(cameraScale < 0.75)、自機より小さい獲物スネークや小型AIの周囲に
+// 　動的な半透明ネオンパルスリングを描画。豆粒になっても一瞬で獲物を視認・追跡可能に
+// ・【頭上バッジのスコア短縮対応】スコアが10万〜100万点に達した際、k/M短縮フォーマットと連動し
+// 　頭上カプセル枠を突き破る不具合を解消
+// ・【ブースト即時同期】自機ブースト状態変化時（開始・終了）の即時パケット送出（forceImmediateSync）
+// ・【引数厳格判定】updatePhysics のシグネチャを arguments.length >= 3 で厳格判定し型誤認バグを完全排除
+// ・フレームレート非依存物理（完全DeltaTime）、ブースト時表情崩壊防止、O(1)リングバッファを完全維持
 // ==============================================================================
 
 import { BASE_SPEED, BOOST_SPEED_MULT, TURN_SPEED_PLAYER, MAP_SIZE } from './constants.js';
 import { drawSnakeFace } from './snake_face.js';
 
 const MAX_HISTORY = 2048; // リングバッファ最大長
+
+/**
+ * 頭上バッジ用スコア短縮フォーマッター
+ */
+function formatBadgeScore(val) {
+    const s = Math.floor(val || 0);
+    if (s >= 1000000) {
+        return (s / 1000000).toFixed(1).replace(/\.0$/, '') + 'M pt';
+    }
+    if (s >= 10000) {
+        return (s / 1000).toFixed(1).replace(/\.0$/, '') + 'k pt';
+    }
+    return `${s.toLocaleString()} pt`;
+}
 
 export class Snake {
     constructor(isPlayer = false, id = 0, name = '', color = '#00e5ff', face = 'normal') {
@@ -208,8 +221,33 @@ export class Snake {
         }
     }
 
-    draw(ctx, frameCount, cameraScale) {
+    draw(ctx, frameCount, cameraScale = 1.0) {
         if (this.isDead || !this.isVisible) return;
+
+        // ★ シングル版の秀逸な設計：ズームアウト時の獲物スネーク強調パルスリング
+        // ズームアウト時(cameraScale < 0.75)、自機より小さい敵や小型AIが豆粒になって見失うのを防ぐ
+        const localPlayer = (typeof window !== 'undefined' && window.localPlayerInstance) ? window.localPlayerInstance : null;
+        if (!this.isPlayer && cameraScale < 0.75 && localPlayer && !localPlayer.isDead) {
+            if (this.size < localPlayer.size * 0.65 || this.score < localPlayer.score * 0.5) {
+                const pulse = 1.0 + Math.sin(frameCount * 0.16 + this.x) * 0.18;
+                const ringRadius = Math.max(this.size * 2.2, 18 / cameraScale) * pulse;
+
+                ctx.save();
+                ctx.fillStyle = this.color;
+                ctx.globalAlpha = 0.15;
+                ctx.beginPath();
+                ctx.arc(this.x, this.y, ringRadius, 0, Math.PI * 2);
+                ctx.fill();
+
+                ctx.strokeStyle = this.color;
+                ctx.lineWidth = Math.max(1.2, 1.8 / cameraScale);
+                ctx.globalAlpha = 0.55;
+                ctx.beginPath();
+                ctx.arc(this.x, this.y, ringRadius, 0, Math.PI * 2);
+                ctx.stroke();
+                ctx.restore();
+            }
+        }
 
         if (this.invulnerableTimer > 0) {
             ctx.globalAlpha = (Math.floor(Date.now() / 100) % 2 === 0) ? 0.4 : 0.8;
@@ -241,19 +279,19 @@ export class Snake {
         }
         ctx.fill();
 
-        // 胴体の光彩・ウロコシャドウ（フロー効果）
-        ctx.fillStyle = 'rgba(0, 0, 0, 0.15)';
+        // 胴体の光彩・生体ウロコシャドウ（シングル版準拠の滑らかなフロー効果）
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.18)';
         ctx.beginPath();
         for (let i = histLen - 1; i >= 0; i -= (step * 2)) {
             const flow = Math.sin(frameCount * 0.25 - i * 0.3);
-            if (flow <= 0.4) continue;
+            if (flow <= 0.3) continue;
 
             const idx = (this.headIdx + i) % MAX_HISTORY;
             const pt = this.history[idx];
             if (!pt) continue;
 
             const progress = i / histLen;
-            const segmentRadius = this.size * (1 - Math.pow(progress, 2.5) * 0.5) * 0.7;
+            const segmentRadius = this.size * (1 - Math.pow(progress, 2.5) * 0.5) * 0.72;
 
             const waveOffset = Math.sin(frameCount * 0.18 - i * 0.35) * (this.size * 0.2);
             const normAngle = (pt.angle || 0) + Math.PI / 2;
@@ -318,7 +356,8 @@ export class Snake {
         ctx.translate(this.x, badgeY);
 
         const currentFloorScore = Math.floor(this.score);
-        const scoreText = `${currentFloorScore.toLocaleString()} pt`;
+        // ★ 10万・100万時のバッジはみ出しを防止する短縮フォーマット
+        const scoreText = formatBadgeScore(currentFloorScore);
         const nameText = this.name.length > 10 ? this.name.slice(0, 9) + '…' : this.name;
 
         if (this._cachedBadgeScore !== currentFloorScore || this._cachedBadgeName !== nameText) {
@@ -328,7 +367,7 @@ export class Snake {
             const scoreW = ctx.measureText(scoreText).width;
             ctx.font = 'bold 9.5px sans-serif';
             const nameW = ctx.measureText(nameText).width;
-            this._cachedBadgeWidth = Math.max(54, Math.min(84, Math.max(scoreW, nameW) + 14));
+            this._cachedBadgeWidth = Math.max(54, Math.min(92, Math.max(scoreW, nameW) + 14));
         }
 
         const badgeW = this._cachedBadgeWidth;

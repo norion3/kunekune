@@ -1,12 +1,14 @@
 // ==============================================================================
 // 『くねくねバトル オンライン』UIイベントバインダーモジュール (ui_binder.js)
-// v26.3.0 タッチ貫通・ジョイスティック暴発完全根絶版:
+// v27.4.0 ズーム下限解放＆超広大視野連動版:
+// ・【ズーム下限解放】対数ズーム刷新に伴い、手動縮小リミットを 0.45 から 0.20 まで大幅解放
+// 　スコア数万〜100万の巨大成長時にも「ー（縮小）」ボタンが早期無効化されず、広大な周囲の戦況を自由に見渡せる
+// ・【ボタン状態適正化】updateZoomButtonsState の判定閾値を新レンジ（0.20 〜 1.50）へ同期
 // ・【タッチ貫通根絶】bindFastTap に touchstart の stopPropagation() を配備し、MENUや音量ボタンタップ時にCanvasへタッチが抜けてジョイスティックが誤爆する事故を完全解消
 // ・【待機室開始デバウンス】btnWaitingStart に 1000ms のタップデバウンスを配備し、ホスト連打による二重 initGame 実行を完全防止
 // ・リトライ時に待機室へ幽閉されるデッドロックを根絶し、マルチ/ソロ問わず即座に戦場へ直接リスポーン再戦
 // ・ホスト死亡リトライ時に戦っている生存ゲストが巻き添えリセットされる事故を完全防止
 // ・ズーム・ランキング・マップ・サウンド操作へ touchend 高速タップリスナーを配備し、300ms操作遅延を解消
-// ・ホスト開始時の全ゲスト一斉始動 ＆ ロビー操作の net_lobby_hooks.js 一本化維持
 // ==============================================================================
 
 import { Menu } from './menu.js';
@@ -19,10 +21,11 @@ export function updateZoomButtonsState(zoomMultiplier) {
     const btnIn = document.getElementById('btn-zoom-in');
     const btnOut = document.getElementById('btn-zoom-out');
     if (btnIn) {
-        btnIn.classList.toggle('disabled', zoomMultiplier >= 1.39);
+        btnIn.classList.toggle('disabled', zoomMultiplier >= 1.48);
     }
     if (btnOut) {
-        btnOut.classList.toggle('disabled', zoomMultiplier <= 0.46);
+        // 下限を 0.46 から 0.22 へ引き下げ、超広大な視野角への手動切り替えを許可
+        btnOut.classList.toggle('disabled', zoomMultiplier <= 0.22);
     }
 }
 
@@ -73,14 +76,14 @@ export function initUIBindings(ctx) {
         getPlayer
     } = ctx;
 
-    // 1. ズーム操作ボタン（高速タップ対応＆貫通防止）
+    // 1. ズーム操作ボタン（高速タップ対応＆下限解放レンジ化）
     const btnZoomIn = document.getElementById('btn-zoom-in');
     const btnZoomOut = document.getElementById('btn-zoom-out');
 
     if (btnZoomIn && !btnZoomIn._hasZoomInBound) {
         btnZoomIn._hasZoomInBound = true;
         bindFastTap(btnZoomIn, () => {
-            input.zoomMultiplier = Math.min(1.40, input.zoomMultiplier + 0.12);
+            input.zoomMultiplier = Math.min(1.50, input.zoomMultiplier + 0.12);
             updateZoomButtonsState(input.zoomMultiplier);
         });
     }
@@ -88,7 +91,8 @@ export function initUIBindings(ctx) {
     if (btnZoomOut && !btnZoomOut._hasZoomOutBound) {
         btnZoomOut._hasZoomOutBound = true;
         bindFastTap(btnZoomOut, () => {
-            input.zoomMultiplier = Math.max(0.45, input.zoomMultiplier - 0.12);
+            // 下限を 0.45 から 0.20 へ解放
+            input.zoomMultiplier = Math.max(0.20, input.zoomMultiplier - 0.12);
             updateZoomButtonsState(input.zoomMultiplier);
         });
     }

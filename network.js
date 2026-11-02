@@ -1,11 +1,10 @@
 // ==============================================================================
 // 『くねくねバトル オンライン』AgentSDK公式マルチプレイ通信マネージャー (network.js)
-// v27.0.0 究極同期・絶対座標管理版:
-// ・【餌同期の絶対座標化】queueFoodPick のシグネチャを (gx, gy, index) から絶対座標 (x, y) へ刷新
+// v27.3.0 堅牢同期・スプリットブレイン降格＆切断保護版:
+// ・【餌同期の絶対座標化】queueFoodPick のシグネチャを (x, y) へ刷新
 // ・【スプリットブレイン自律サレンダー】通信瞬断等による「2人のホスト」衝突検知時、スロット優先度で自発的にゲストへサレンダーし onSurrenderedAsHost コールバックを発火
+// ・【切断ゴースト完全防止】退出時の残留状態クリアおよび非同期競合ガードの強化
 // ・【絵文字文字化け修正】queueChat の文字切り詰めを Array.from に変更し、サロゲートペア分断を完全防止
-// ・ブースト状態変化・リスポーン時などの即時割り込み同期 API (forceImmediateSync) の配備
-// ・切断逃げ肉片消失根絶＆退室者完全パージ維持
 // ==============================================================================
 
 import {
@@ -118,7 +117,7 @@ export const NetworkManager = {
     queueChat(messageText) {
         if (!messageText) return;
         
-        // サロゲートペア（絵文字）の文字化けを防止するArray.from切り詰め
+        // サロゲートペア（絵文字）の分断を防止する Array.from 切り詰め
         const cleanText = Array.from(String(messageText).trim()).slice(0, 15).join('');
         if (!cleanText) return;
 
@@ -714,7 +713,6 @@ export const NetworkManager = {
                     this.callbacks.onLeaderboardSync(packet.lb);
                 }
 
-                // ★ 餌取得タプルの受信処理
                 if (Array.isArray(packet.pk)) {
                     packet.pk.forEach(tuple => {
                         const pick = unpackFoodPickTuple(tuple);
@@ -809,4 +807,5 @@ export const NetworkManager = {
         this.mySlot = 0;
     }
 };
+
 if (typeof window !== 'undefined') window.NetworkManager = NetworkManager;
