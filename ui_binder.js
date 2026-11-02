@@ -1,14 +1,14 @@
 // ==============================================================================
 // 『くねくねバトル オンライン』UIイベントバインダーモジュール (ui_binder.js)
-// v27.4.0 ズーム下限解放＆超広大視野連動版:
+// v27.5.0 ワールドリセットボタンバインド＆ソロ専用世界再生成版:
+// ・【ワールドリセットボタンバインド】#btn-world-reset へ高速タップリスナー（bindFastTap）を配備
+// 　ソロプレイ時限定で initGame(false) を呼び出し、巨大化したAI・餌・プレイヤーを新品のピラミッド生態系へ即座に再初期化
+// ・マルチプレイ中は誤操作・同期破綻を防ぐためリセット要求を完全ガード
 // ・【ズーム下限解放】対数ズーム刷新に伴い、手動縮小リミットを 0.45 から 0.20 まで大幅解放
-// 　スコア数万〜100万の巨大成長時にも「ー（縮小）」ボタンが早期無効化されず、広大な周囲の戦況を自由に見渡せる
 // ・【ボタン状態適正化】updateZoomButtonsState の判定閾値を新レンジ（0.20 〜 1.50）へ同期
-// ・【タッチ貫通根絶】bindFastTap に touchstart の stopPropagation() を配備し、MENUや音量ボタンタップ時にCanvasへタッチが抜けてジョイスティックが誤爆する事故を完全解消
+// ・【タッチ貫通根絶】bindFastTap に touchstart の stopPropagation() を配備し、MENU・音量・リセットボタンタップ時のジョイスティック誤爆を完全解消
 // ・【待機室開始デバウンス】btnWaitingStart に 1000ms のタップデバウンスを配備し、ホスト連打による二重 initGame 実行を完全防止
 // ・リトライ時に待機室へ幽閉されるデッドロックを根絶し、マルチ/ソロ問わず即座に戦場へ直接リスポーン再戦
-// ・ホスト死亡リトライ時に戦っている生存ゲストが巻き添えリセットされる事故を完全防止
-// ・ズーム・ランキング・マップ・サウンド操作へ touchend 高速タップリスナーを配備し、300ms操作遅延を解消
 // ==============================================================================
 
 import { Menu } from './menu.js';
@@ -129,7 +129,26 @@ export function initUIBindings(ctx) {
         });
     }
 
-    // 4. ロビー：ソロプレイ開始ボタン（1秒連打デバウンス付＆貫通防止）
+    // ★ 4. ワールドリセットボタン（ソロ専用・高速タップ対応＆貫通防止）
+    const btnWorldReset = document.getElementById('btn-world-reset');
+    if (btnWorldReset && !btnWorldReset._hasResetBound) {
+        btnWorldReset._hasResetBound = true;
+        bindFastTap(btnWorldReset, () => {
+            // マルチプレイ中は同期保護のためリセット不可
+            if (NetworkManager && NetworkManager.isMultiplayerActive) {
+                return;
+            }
+            // リザルト画面が出ている場合は閉じる
+            const overScreen = document.getElementById('over-screen');
+            if (overScreen) {
+                overScreen.style.display = 'none';
+            }
+            // isRespawn = false により、巨大化AI・ワールド餌・プレイヤーを完全に初期化して新品の世界を生成
+            initGame(false);
+        });
+    }
+
+    // 5. ロビー：ソロプレイ開始ボタン（1秒連打デバウンス付＆貫通防止）
     const btnLobbySolo = document.getElementById('btn-lobby-solo');
     if (btnLobbySolo && !btnLobbySolo._hasSoloBound) {
         btnLobbySolo._hasSoloBound = true;
@@ -157,7 +176,7 @@ export function initUIBindings(ctx) {
         btnLobbySolo.addEventListener('click', onSoloTap);
     }
 
-    // 5. 待機室：ホスト専用ゲーム開始ボタン（1000ms連打デバウンス配備＆一斉開始連携＆貫通防止）
+    // 6. 待機室：ホスト専用ゲーム開始ボタン（1000ms連打デバウンス配備＆一斉開始連携＆貫通防止）
     const btnWaitingStart = document.getElementById('btn-waiting-start');
     if (btnWaitingStart && !btnWaitingStart._hasStartBound) {
         btnWaitingStart._hasStartBound = true;
@@ -189,7 +208,7 @@ export function initUIBindings(ctx) {
         btnWaitingStart.addEventListener('click', onStartTap);
     }
 
-    // 6. 待機室：退室ボタン（貫通防止）
+    // 7. 待機室：退室ボタン（貫通防止）
     const btnWaitingLeave = document.getElementById('btn-waiting-leave');
     if (btnWaitingLeave && !btnWaitingLeave._hasLeaveBound) {
         btnWaitingLeave._hasLeaveBound = true;
@@ -209,7 +228,7 @@ export function initUIBindings(ctx) {
         };
     }
 
-    // 7. メニュー着せ替えコールバック初期化
+    // 8. メニュー着せ替えコールバック初期化
     Menu.init((face, color) => {
         const p = getPlayer();
         if (p) {
@@ -218,7 +237,7 @@ export function initUIBindings(ctx) {
         }
     });
 
-    // 8. リザルト画面：リトライボタン（直接リスポーン再戦化＆貫通防止）
+    // 9. リザルト画面：リトライボタン（直接リスポーン再戦化＆貫通防止）
     const btnRetry = document.getElementById('btn-retry');
     if (btnRetry && !btnRetry._hasRetryBound) {
         btnRetry._hasRetryBound = true;

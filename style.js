@@ -1,15 +1,16 @@
 // ==============================================================================
 // 『くねくねバトル オンライン』iOS WebKit & iPhone 干渉完全マスクスタイル (style.js)
-// v26.1.0 高空セーフ弾幕通過帯＆右上いいねアンカー完全遮光版:
-// ・【弾幕自機被り根絶】コンテナ高さを 42vh から 18vh（約150px）へ圧縮
-// ・下端を画面上部33%で完全停止させ、画面中央（50%）の自機・交戦視界への直撃被さりを100%排除
+// v26.2.0 リセットボタンスタイル＆誤操作防止マージン・ランキング幅最適化版:
+// ・【リセットボタンスタイル新設】音量ボタンの上に並ぶ #btn-world-reset の透過ガラスモーフィズム定義
+// 　タップ時にSVG回転矢印が心地よく逆回転するアニメーション演出を配備
+// ・【誤操作防止物理マージン】音量ボタンとの間に +4px の追加マージン（計14pxの隙間）を確保し、
+// 　親指の肉による誤爆を物理的に遮断
+// ・【ランキングパネル幅適正化】#stats-box の min-width を 152px に拡張し、
+// 　スコアが10万〜100万点（k/M短縮時含む）になっても名前とスコアの間に十分な余白を常時確保
+// ・【弾幕自機被り根絶】コンテナ高さを 18vh（約150px）へ圧縮、画面中央の視界被さりを100%排除
 // ・【いいね誘導アンカー】95%完全遮光ディープネイビー ＋ blur(16px) ネオンフロスト維持
-// ・ミニマップと重なっても背後の格子線やドットが一切透けず、文字が100%クッキリ読める z-index: 220 確立
-// ・星屑や白い肉片と重なってもクッキリ読める多層テキストシャドウ＆視認性強化
-// ・右側アクション群を 215px 引き上げ、公式「ルーム招待」ボタンとの物理的被りを100%根絶
-// ・走者リスト（.participants-list）のスクロールバーを完全不可視化＆右パディング確保
-// ・左下：MENU真上に音量ボタンを縦並び配置（ジョイスティック領域広大開放維持）
-// ・待機室6名枠（max-height: 320px）のスクロールなし完全表示維持
+// ・右側アクション群を 215px 引き上げ、公式「ルーム招待」ボタンとの物理的被りを根絶
+// ・走者リスト（.participants-list）のスクロールバー完全不可視化維持
 // ==============================================================================
 
 export function injectStyles() {
@@ -64,7 +65,7 @@ export function injectStyles() {
 
         /* ==========================================================================
            左上：ランキング展開パネル
-           ★ backdrop-filter を完全撤廃し、Canvasの背景がリアルタイムに透けて見える極薄アルファ化
+           ★ min-width を 152px に適正化し、スコア10万〜100万時も名前との十分な余白を確保
            ========================================================================== */
         #stats-box {
             position: absolute;
@@ -77,7 +78,7 @@ export function injectStyles() {
             color: #ffffff;
             font-size: 12px;
             box-shadow: 0 4px 14px rgba(0, 0, 0, 0.25);
-            min-width: 136px;
+            min-width: 152px;
             pointer-events: auto;
             z-index: 30;
             animation: stats-appear 0.18s ease-out;
@@ -107,8 +108,7 @@ export function injectStyles() {
         }
 
         /* ==========================================================================
-           左下ボタングループ：低頻度操作（MENU、サウンド）
-           ★ MENUの真上に音量ボタンを縦並び配置（ジョイスティック領域広大開放）
+           左下ボタングループ：MENU、音量、リセット（縦並び配置）
            ========================================================================== */
         .bottom-left-group {
             position: absolute;
@@ -174,6 +174,22 @@ export function injectStyles() {
             text-shadow: 0 1px 2px rgba(0, 0, 0, 0.9);
         }
 
+        /* ★ 新設：ワールドリセットボタン固有スタイル（誤操作防止マージン＋回転エフェクト） */
+        .btn-world-reset {
+            margin-bottom: 4px; /* 音量ボタンとの隙間を計14px（gap:10px + 4px）に広げ、誤タップを防止 */
+            border-color: rgba(0, 229, 255, 0.35);
+        }
+        .btn-world-reset svg {
+            fill: #38bdf8;
+            width: 21px;
+            height: 21px;
+            transition: transform 0.25s ease, fill 0.15s;
+        }
+        .btn-world-reset:active svg {
+            transform: rotate(-180deg) scale(0.92);
+            fill: #00e5ff;
+        }
+
         /* ズーム限界到達時の無効化スタイル */
         .bottom-round-btn.disabled {
             opacity: 0.22;
@@ -186,8 +202,7 @@ export function injectStyles() {
 
         /* ==========================================================================
            右側ボタングループ：高頻度操作（ズーム＋/ー、ランキング、マップ）
-           ★ 下部基準位置を 215px へ大幅引き上げ
-           ＝GRAVITY公式の「ルーム招待 [↑]」ボタンとの重なりを100%完全に根絶
+           ★ 下部基準位置を 215px 引き上げ（招待ボタン被り根絶）
            ========================================================================== */
         .right-action-group {
             position: absolute;
@@ -204,7 +219,7 @@ export function injectStyles() {
             fill: #00e5ff;
         }
 
-        /* BOOSTボタン：右手親指が最も自然に届く黄金位置（リアルタイム高透過） */
+        /* BOOSTボタン：右手親指が最も自然に届く黄金位置 */
         #btn-boost {
             position: absolute;
             bottom: var(--safe-bottom);
@@ -269,10 +284,7 @@ export function injectStyles() {
         }
 
         /* ==========================================================================
-           弾幕チャット（★高空セーフ通過帯 刷新版）
-           ・最上部ヘッダーUI直下（var(--safe-top) + 16px）を起点に配置
-           ・高さを 42vh から 18vh（約150px）へ厳格に圧縮
-           ・下端到達高度を画面上部33%で完全停止させ、画面中央（50%）の自機・交戦視界への被さりを100%根絶！
+           弾幕チャット（高空セーフ通過帯）
            ========================================================================== */
         #danmaku-container {
             position: absolute;
@@ -294,7 +306,6 @@ export function injectStyles() {
             font-size: 13.5px;
             font-weight: 800;
             color: #ffffff;
-            /* ★ 多層テキストシャドウ：白い星屑や肉片と重なってもクッキリ読める高コントラストフチ取り */
             text-shadow: 0 1px 3px rgba(0, 0, 0, 0.98), 0 0 5px #000000, 0 0 8px rgba(0, 0, 0, 0.9);
             animation: danmaku-fly 6.2s linear forwards;
             pointer-events: none;
@@ -327,15 +338,13 @@ export function injectStyles() {
         }
 
         /* ==========================================================================
-           右上公式メニューいいね誘導アンカー（ミニマップ重畳・高コントラスト完全遮光版）
-           ★ 右上配置の必然性を活かし、ミニマップの上に重なっても文字が100%読める仕様
+           右上公式メニューいいね誘導アンカー
            ========================================================================== */
         #like-guide-anchor {
             position: fixed;
-            /* 右上の公式 [↑] アイコン直下に吸着 */
             top: max(56px, env(safe-area-inset-top, 24px) + 46px);
             right: 14px;
-            z-index: 220; /* ミニマップ(Canvas: z-index 10)より確実に前面 */
+            z-index: 220;
             display: flex;
             flex-direction: column;
             align-items: flex-end;
@@ -349,7 +358,6 @@ export function injectStyles() {
             transform: translateY(0) scale(1);
         }
 
-        /* 右上ボタンを指し示すネオン矢印 */
         .like-guide-arrow {
             width: 0;
             height: 0;
@@ -366,9 +374,8 @@ export function injectStyles() {
             100% { transform: translateY(-5px); }
         }
 
-        /* 高密度・95%完全遮光ネオンフキダシ（ミニマップが背後にあっても文字が100%読める） */
         .like-guide-bubble {
-            background: rgba(11, 5, 26, 0.95); /* 95%完全遮光ディープネイビー */
+            background: rgba(11, 5, 26, 0.95);
             backdrop-filter: blur(16px);
             -webkit-backdrop-filter: blur(16px);
             border: 1.5px solid #38bdf8;
@@ -526,10 +533,7 @@ export function injectStyles() {
             cursor: pointer;
         }
 
-        /* ==========================================================================
-           走者一覧タブ
-           ★ スクロールバー完全不可視化＆右パディング確保により「HOST」や「↗」の文字被りを完全解消
-           ========================================================================== */
+        /* 走者一覧タブ */
         .participants-list {
             display: flex;
             flex-direction: column;
@@ -918,7 +922,7 @@ export function injectStyles() {
             cursor: pointer;
         }
 
-        /* 待機室オーバーレイ（最大高さを320pxへ拡張し、6名スロット全員をスクロールなしで完全表示） */
+        /* 待機室オーバーレイ */
         #waiting-overlay {
             display: none;
             position: absolute;

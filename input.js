@@ -1,15 +1,17 @@
 /**
  * ==============================================================================
  * 『くねくねバトル オンライン』入力制御モジュール (input.js)
- * v27.9.0 スワイプ即時検出＆動的レスキュー・極限レスポンス版:
- * ・【動的レスキュー(スワイプ取りこぼし根絶)】画面端や左下除外ゾーンから指を滑らせて進入した場合でも、
- * 　touchmove 側で即座に検知し、進入地点を起点としてジョイスティックをゼロ遅延起動
- * ・【初速スワイプ即時反映】タッチ開始直後に指の移動量を即座に入力ベクトル(input.x, y)へ変換し、
- * 　初動スワイプ時の自機の旋回遅延（モッサリ感）を完全解消
+ * v28.0.0 ボタン実体ピンポイント除外＆操作不能エリア極小化版:
+ * ・【無効エリアの極小化】従来の「幅90px×下部240px」という広大な矩形除外ゾーンを完全撤廃！
+ * 　document.elementFromPoint による実体ヒットテストを導入し、ボタン（MENU、音量、リセット等）の
+ * 　真上をタップした時のみジョイスティックを遮断。ボタン同士の隙間やボタンのすぐ横を触れた場合は
+ * 　0ミリ秒で即座にジョイスティックが起動し、操作不能ストレスを根絶
+ * ・【動的レスキュー完全維持】ボタンの上から指を滑らせて外れた瞬間、touchmove 側で即座に検知し
+ * 　抜け出た地点を起点としてジョイスティックをシームレス起動
+ * ・【初速スワイプ即時反映】タッチ開始直後の指の移動量を即座に入力ベクトル(input.x, y)へ変換し旋回遅延をゼロ化
  * ・【マルチタッチ厳格捕捉】touchstart 時に changedTouches を優先走査し、右手ブースト操作中の左手指捕捉率100%
  * ・【ゴーストアクティブ根絶】画面上の指が0本になった際(e.touches.length === 0)、確実にジョイスティックをリセット
- * ・【UI干渉防止】左下UIボタングループ領域（幅90px×下部240px）でのタップ誤爆防止を維持
- * ・【ズームレンジ適正化】0.20〜1.50 の広域視野連動
+ * ・【ズームレンジ連動】0.20〜1.50 の広域視野連動
  * ==============================================================================
  */
 
@@ -103,10 +105,29 @@ export class InputManager {
     }
 
     /**
-     * 左下UI領域（MENUボタンや音量ボタン）かどうかを判定
+     * ★ ピンポイント実体ヒットテスト（無効エリアの極小化）
+     * 大雑把な四角い領域除外を撤廃し、タッチ直下に「実際にボタンが存在する場合のみ」除外
+     * ボタンの隙間やボタンのすぐ横を触った場合は false を返し、即座にジョイスティックを発動させる
+     * @param {number} clientX 
+     * @param {number} clientY 
+     * @returns {boolean}
      */
-    _isBottomLeftUIZone(x, y, screenHeight) {
-        return (x <= 90 && y >= screenHeight - 240);
+    _isUIElement(clientX, clientY) {
+        if (typeof document === 'undefined' || typeof document.elementFromPoint !== 'function') {
+            return false;
+        }
+
+        const target = document.elementFromPoint(clientX, clientY);
+        if (!target) return false;
+
+        // CanvasやUIレイヤーそのものは操作可能
+        if (target.id === 'game-canvas' || target.id === 'ui-layer' || target.tagName === 'HTML' || target.tagName === 'BODY') {
+            return false;
+        }
+
+        // ボタン実体、またはHUDパネル上を直接触れている場合のみ除外
+        const isClickableUI = Boolean(target.closest('button, .bottom-round-btn, #btn-boost, .stats-box, #stats-box, .sheet-tabs, .chat-chips-grid, .chat-input-bar'));
+        return isClickableUI;
     }
 
     handleTouchStart(e) {
@@ -120,7 +141,7 @@ export class InputManager {
 
         e.preventDefault();
 
-        // ★ 改善：もし前回のタッチが解放されずに残っていた場合、指リストと照合して安全クリア
+        // 前回のタッチが解放されずに残っていた場合、指リストと照合して安全クリア
         if (this.active && this.touchId !== null) {
             const isTouchStillPresent = Array.from(e.touches).some(t => t.identifier === this.touchId);
             if (!isTouchStillPresent) {
@@ -130,15 +151,15 @@ export class InputManager {
 
         if (!this.active) {
             const allowableWidth = window.innerWidth * 0.58;
-            const screenHeight = window.innerHeight;
 
-            // ★ 改善：changedTouches（今触れた指）を優先的に走査し、マルチタッチ競合を防止
+            // changedTouches（今触れた指）を優先的に走査し、マルチタッチ競合を防止
             const touchesToCheck = (e.changedTouches && e.changedTouches.length > 0) ? e.changedTouches : e.touches;
 
             for (let i = 0; i < touchesToCheck.length; i++) {
                 const t = touchesToCheck[i];
 
-                if (this._isBottomLeftUIZone(t.clientX, t.clientY, screenHeight)) continue;
+                // ★ ボタン実体の真上を直接触れた場合のみ除外（隙間やボタンのすぐ横は除外しない）
+                if (this._isUIElement(t.clientX, t.clientY)) continue;
 
                 // 画面左側58%以内であればジョイスティック開始
                 if (t.clientX <= allowableWidth) {
@@ -153,11 +174,9 @@ export class InputManager {
     handleTouchMove(e) {
         e.preventDefault();
 
-        const screenHeight = window.innerHeight;
         const allowableWidth = window.innerWidth * 0.58;
 
-        // ★ 改善：【動的レスキュー処理】
-        // 左下除外ゾーンや画面外から指を滑らせて通常エリアに入ってきた場合、未アクティブ状態から即座に開始
+        // ★ 動的レスキュー処理（ボタン実体の上から指を滑らせて外れた瞬間にゼロ遅延開始）
         if (!this.active) {
             if (typeof window !== 'undefined' && window.currentGameState !== 'playing') return;
             if (typeof window !== 'undefined' && window.localPlayerInstance && window.localPlayerInstance.isDead) return;
@@ -167,7 +186,7 @@ export class InputManager {
 
             for (let i = 0; i < e.touches.length; i++) {
                 const t = e.touches[i];
-                if (!this._isBottomLeftUIZone(t.clientX, t.clientY, screenHeight) && t.clientX <= allowableWidth) {
+                if (!this._isUIElement(t.clientX, t.clientY) && t.clientX <= allowableWidth) {
                     this.touchId = t.identifier;
                     this.startJoystick(t.clientX, t.clientY);
                     break;
@@ -211,7 +230,8 @@ export class InputManager {
             const menuOverlay = document.getElementById('menu-overlay');
             if (menuOverlay && menuOverlay.style.display === 'block') return;
 
-            if (this._isBottomLeftUIZone(e.clientX, e.clientY, window.innerHeight)) return;
+            // ボタン実体の上であれば無視
+            if (this._isUIElement(e.clientX, e.clientY)) return;
 
             isMouseDown = true;
             this.startJoystick(e.clientX, e.clientY);

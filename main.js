@@ -1,6 +1,9 @@
 // ==============================================================================
 // 『くねくねバトル オンライン』Phase 7 マスター統合オーケストレーター (main.js)
-// v28.2.0 CPUキルログ完全排除＆スコア短縮フォーマット(k/M)版:
+// v28.3.0 リセットボタンソロ/マルチ動的表示連動＆CPUキルログ完全排除版:
+// ・【リセットボタン動的表示連動】updateResetButtonVisibility を新設。
+// 　ソロプレイ対戦中のみ #btn-world-reset を表示し、マルチプレイ時（ロビー・待機室・マルチ対戦中）は
+// 　完全に非表示（display: none）化。誤操作やマルチプレイ時の同期事故を根本から排除
 // ・【CPUキルログ完全排除】画面を埋め尽くしていた「CPUがCPUを撃破！」という無意味なチャット通知を完全遮断。
 // 　プレイヤー（自機）または人間の参加者が関与した撃破のみを通知表示し、チャット欄の視認性を劇的に向上
 // ・【スコア単位短縮フォーマッター】formatScore を配備。10,000以上で「12.5k」、1,000,000以上で「1.2M」と短縮表示
@@ -53,6 +56,16 @@ export function formatScore(val) {
         return (s / 1000).toFixed(1).replace(/\.0$/, '') + 'k';
     }
     return s.toLocaleString();
+}
+
+// --- ワールドリセットボタンの表示/非表示動的制御ヘルパー ---
+export function updateResetButtonVisibility() {
+    const btnReset = document.getElementById('btn-world-reset');
+    if (!btnReset) return;
+
+    // ソロプレイ対戦中（playing）のみ表示、マルチプレイ中やロビー/待機室/ゲームオーバー時は非表示
+    const shouldShow = (gameState === 'playing') && (!NetworkManager || !NetworkManager.isMultiplayerActive);
+    btnReset.style.display = shouldShow ? 'flex' : 'none';
 }
 
 // --- プラットフォーム環境検知 ---
@@ -148,6 +161,8 @@ export const UIController = {
         if (waiting) waiting.style.display = 'none';
         if (over) over.style.display = 'none';
         if (stats) stats.style.display = 'none';
+        
+        updateResetButtonVisibility();
         this.refreshLobbyGreeting();
     },
 
@@ -167,6 +182,8 @@ export const UIController = {
         if (over) over.style.display = 'none';
         if (tag) tag.innerText = `ROOM #${String(roomId).slice(-5)}`;
         if (startBtn) startBtn.style.display = NetworkManager.isHost ? 'block' : 'none';
+        
+        updateResetButtonVisibility();
         this.updateWaitingMembersList();
     },
 
@@ -180,6 +197,8 @@ export const UIController = {
         if (lobby) lobby.style.display = 'none';
         if (waiting) waiting.style.display = 'none';
         if (over) over.style.display = 'none';
+
+        updateResetButtonVisibility();
     },
 
     refreshLobbyGreeting() {
@@ -322,6 +341,8 @@ export function initGame(isRespawn = false) {
         }
         sortedSnakes = [...allSnakes];
     }
+
+    updateResetButtonVisibility();
 }
 
 if (typeof window !== 'undefined') {
@@ -427,6 +448,8 @@ NetworkManager.setCallbacks({
         const currentPlayers = allSnakes.filter(s => s.isPlayer || (s.id !== undefined && s.id < MAX_PLAYERS));
         allSnakes = [...currentPlayers, ...aiManager.ais];
         sortedSnakes = [...allSnakes];
+
+        updateResetButtonVisibility();
     },
 
     onSurrenderedAsHost() {
@@ -437,6 +460,8 @@ NetworkManager.setCallbacks({
         const currentRemotes = Array.from(remoteSnakes.values());
         allSnakes = [player, ...currentRemotes];
         sortedSnakes = [...allSnakes];
+
+        updateResetButtonVisibility();
     },
 
     onUserExited(slotIdx) {
@@ -467,6 +492,8 @@ function handleGameOver(killer) {
     window.currentGameState = gameState;
     Sound.stopBoostSound();
     Sound.playCrash();
+
+    updateResetButtonVisibility();
 
     killerTargetSnake = (killer && !killer.isDead) ? killer : null;
     camera.spectatorCamX = player.x;
@@ -699,7 +726,6 @@ function gameLoop() {
                 const absorbedScore = Math.max(120, Math.floor(victim.score * 0.18));
                 killer.addScore(absorbedScore);
 
-                // ★ 改善：【CPU同士の撃破チャット（Danmaku）を完全排除】
                 // プレイヤー（自機）、または人間の参加者が関与した撃破のみ通知を表示
                 const isKillerHuman = killer.isPlayer || (NetworkManager.isMultiplayerActive && killer.id !== undefined && killer.id < MAX_PLAYERS && NetworkManager.slots[killer.id] && !NetworkManager.slots[killer.id].isAI);
                 const isVictimHuman = victim.isPlayer || (NetworkManager.isMultiplayerActive && victim.id !== undefined && victim.id < MAX_PLAYERS && NetworkManager.slots[victim.id] && !NetworkManager.slots[victim.id].isAI);
@@ -767,7 +793,6 @@ function gameLoop() {
 
                 const listEl = document.getElementById('leaderboard-list');
                 if (listEl && listEl.parentElement && listEl.parentElement.style.display !== 'none') {
-                    // ★ formatScore(s.score) を適用し、スコアが10万・100万になっても枠内へ綺麗に収める
                     listEl.innerHTML = topList.map((s, idx) => `
                         <div style="display:flex; justify-content:space-between; align-items:center; color:${s === player ? '#ffdd00' : '#ffffff'}; font-weight:${s === player ? 'bold' : 'normal'}; font-size:12px; gap:6px;">
                             <span style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:88px;">${idx + 1}. ${s.name}</span>

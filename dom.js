@@ -1,9 +1,11 @@
 // ==============================================================================
 // 『くねくねバトル オンライン』自律DOMマウントモジュール (dom.js)
-// v25.0.0 DM招待特化・クリーンレイアウト＆待機室6名枠完全表示版:
+// v25.1.0 ワールドリセットボタン新設＆左下クリーンレイアウト版:
+// ・【ワールドリセットボタン新設】音量ボタンの上に透過ガラスモーフィズム仕様のリセットボタン（#btn-world-reset）を配備
+// 　絵文字を使わず既存ボタンと調和するSVG回転リフレッシュ矢印を採用（マルチ時は完全非表示）
 // ・手動の部屋IDコピーや手動入力欄を排除し、GRAVITY公式DM招待にフォーカスしたシンプルUI
-// ・左下ボタングループ：MENUボタンの真上に音量ボタンを縦並び配置（ジョイスティック領域広大開放）
-// ・右側ボタングループ：ズーム・ランキング・マップを215px上方へ引き上げ（公式招待ボタン被り根絶）
+// ・左下ボタングループ：MENU、音量、リセットを縦並び配置
+// ・右側ボタングループ：ズーム・ランキング・マップを上方へ引き上げ集約
 // ・待機室リスト枠の拡張（max-height: 320px）：最大6名全員をスクロールなしで綺麗に収容
 // ・CUSTOMタブ：GRAVITYユーザーアイコンを顔にできる「マイアイコン」選択ボタン完備
 // ・ランキングパネル（#stats-box）：総数100体表示（/ 100）へ整合
@@ -112,7 +114,7 @@ export function mountDOM() {
             <div class="like-guide-bubble">メニューから<br>「❤️いいね」してね！</div>
         </div>
 
-        <!-- ★ 左下ボタングループ：低頻度操作（MENU、サウンド）を縦並び配置（ジョイスティック領域広大開放） -->
+        <!-- ★ 左下ボタングループ：低頻度操作（MENU、サウンド、リセット）を縦並び配置 -->
         <div class="bottom-left-group">
             <button id="btn-menu" type="button" class="bottom-round-btn btn-menu-round" aria-label="Menu">
                 <svg viewBox="0 0 24 24">
@@ -129,9 +131,16 @@ export function mountDOM() {
                     <path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"/>
                 </svg>
             </button>
+
+            <!-- ★ 新設：ワールドリセットボタン（ソロ専用・絵文字なし・透過SVG回転矢印） -->
+            <button id="btn-world-reset" type="button" class="bottom-round-btn btn-world-reset" aria-label="Reset World" style="display: none;">
+                <svg viewBox="0 0 24 24">
+                    <path d="M17.65 6.35A7.958 7.958 0 0 0 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08A5.99 5.99 0 0 1 12 18c-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/>
+                </svg>
+            </button>
         </div>
 
-        <!-- ★ 右側ボタングループ：高頻度操作（ズーム＋/ー、ランキング、マップ）を上方へ引き上げ集約（招待ボタン被り根絶） -->
+        <!-- ★ 右側ボタングループ：高頻度操作（ズーム＋/ー、ランキング、マップ）を上方へ引き上げ集約 -->
         <div class="right-action-group">
             <button id="btn-zoom-in" type="button" class="bottom-round-btn btn-action-44" aria-label="Zoom In">
                 <svg viewBox="0 0 24 24">
@@ -364,7 +373,7 @@ export function mountDOM() {
     `;
     document.body.appendChild(lobbyOverlay);
 
-    // 7. マッチング待機室画面（★公式DM招待にフォーカスしたシンプル構成、6名枠完全収容）
+    // 7. マッチング待機室画面（公式DM招待にフォーカスしたシンプル構成、6名枠完全収容）
     const waitingOverlay = document.createElement('div');
     waitingOverlay.id = 'waiting-overlay';
     waitingOverlay.innerHTML = `
