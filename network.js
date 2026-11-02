@@ -1,7 +1,7 @@
 // ==============================================================================
 // 『くねくねバトル オンライン』AgentSDK公式マルチプレイ通信マネージャー (network.js)
-// v26.3.0 スプリットブレイン防衛＆絵文字チャット完全対応版:
-// ・【スプリットブレイン根絶】通信瞬断等による「2人のホスト」の衝突を検知し、スロット優先度に基づき自発的にゲストへサレンダー（降格）
+// v26.4.0 スプリットブレイン完全サレンダー＆絵文字チャット対応版:
+// ・【スプリットブレイン自律サレンダー】通信瞬断等による「2人のホスト」衝突検知時、スロット優先度で自発的にゲストへサレンダーし onSurrenderedAsHost コールバックを発火
 // ・【絵文字文字化け修正】queueChat の文字切り詰めを Array.from に変更し、サロゲートペア分断を完全防止
 // ・ブースト状態変化・リスポーン時などの即時割り込み同期 API (forceImmediateSync) の配備
 // ・切断逃げ肉片消失根絶＆退室者完全パージ維持
@@ -89,7 +89,8 @@ export const NetworkManager = {
         onGameStart: null,
         onLeaderboardSync: null,
         onHostPromoted: null,
-        onUserExited: null
+        onUserExited: null,
+        onSurrenderedAsHost: null // ★ スプリットブレイン降格時のAIパージ用コールバック
     },
 
     setCallbacks(cb) {
@@ -696,6 +697,11 @@ export const NetworkManager = {
                                     console.warn(`[NetworkManager] スプリットブレイン検知: スロット優先度によりゲストへサレンダーします (My: ${this.mySlot} > Remote: ${decoded.slot})`);
                                     this.isHost = false;
                                     if(this.slots[this.mySlot]) this.slots[this.mySlot].isHost = false;
+
+                                    // ★ 自前で生成していた余剰AIをパージさせるためコールバックを発火
+                                    if (this.callbacks.onSurrenderedAsHost) {
+                                        this.callbacks.onSurrenderedAsHost();
+                                    }
                                 }
                             }
 

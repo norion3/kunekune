@@ -1,12 +1,13 @@
 // ==============================================================================
 // 『くねくねバトル オンライン』スネーク.io型 自律生態系AIマネージャー (ai.js)
-// v26.3.0 完全DeltaTime思考同期＆フレームレート非依存AI版:
-// ・【思考タイマー完全DeltaTime化】stateTimer および harassCooldown の減算をフレーム固定（--）から timeScale（dtSec * 60）減算へ是正
+// v26.4.0 生態系アクセント（ビビり逃走＆横取りダッシュ）＆完全DeltaTime版:
+// ・【ビビり逃走アクセント】格上巨大スネーク（スコア2倍以上）急接近時、小型AIが驚いて身を翻し0.3秒だけ小ダッシュ逃走
+// ・【横取りダッシュアクセント】ハイエナ採餌の最後の350pxで一瞬ブーストを踏み込み、肉片を我先にかっさらう人間味アクション
+// ・【思考タイマー完全DeltaTime化】stateTimer および harassCooldown を timeScale（dtSec * 60）減算で完全統一
 // ・120Hzディスプレイ環境でのAI異常高速思考・せわしないステート遷移・ちょっかい連続暴走を完全根絶
-// ・【死後リスポーン実時間化】死後リスポーン待機を実時間（秒）減算で管理し、環境によるリスポーン速度格差を解消
+// ・【死後リスポーン実時間化】実時間（秒）減算で管理し、環境によるリスポーン速度格差を解消
 // ・ちょっかい行動（HARASS）の適正頻度（10%前後）と2〜3秒の適正クールダウンを30FPS〜120FPSで寸分違わず再現
-// ・索敵反応距離 1,200px ＆ ハイエナ感知半径動的スケーリング維持
-// ・二乗距離判定によるCPU負荷最小化 ＆ リングバッファ O(1) 維持
+// ・索敵反応距離 1,200px ＆ 二乗距離判定によるCPU負荷最小化 ＆ リングバッファ O(1) 維持
 // ==============================================================================
 
 import { MAP_SIZE, SNAKE_COLORS } from './constants.js';
@@ -18,7 +19,8 @@ const AI_STATE = {
     CRUISING: 1,   // 大回遊パトロール（広大な空間を悠然と横断・巨大な壁）
     SCAVENGER: 2,  // ハイエナ肉片争奪（撃破残骸や大量餌へ一斉殺到）
     HUNTER: 3,     // 狡猾な狩猟（好戦的な個体によるキル狙い）
-    HARASS: 4      // ちょっかい行動（進路横切り・並走威嚇・餌横取り）
+    HARASS: 4,     // ちょっかい行動（進路横切り・並走威嚇・餌横取り）
+    PANIC: 5       // ★ アクセント：ビビり逃走（巨大スネーク接近時にサッと身を翻す）
 };
 
 export class AIManager {
@@ -55,6 +57,7 @@ export class AIManager {
                 cruiseDirection: Math.random() < 0.5 ? 1 : -1,
                 harassSubtype: 0, // 0: 進路横切り, 1: 餌横取り, 2: 併走プレッシャー
                 harassCooldown: Math.floor(Math.random() * 60),
+                panicCooldown: 0, // ビビり逃走クールダウン
                 deadTimer: 0 // 実時間リスポーン管理用
             });
 
@@ -102,7 +105,7 @@ export class AIManager {
             if (!meta) continue;
 
             if (ai.isDead) {
-                // ★ 実時間（約1.25秒）経過後にリスポーン
+                // 実時間（約1.25秒）経過後にリスポーン
                 meta.deadTimer = (meta.deadTimer || 0) + safeDt;
                 if (meta.deadTimer >= 1.25) {
                     meta.deadTimer = 0;
@@ -116,6 +119,7 @@ export class AIManager {
                     meta.state = AI_STATE.FORAGING;
                     meta.stateTimer = 50;
                     meta.harassCooldown = 90;
+                    meta.panicCooldown = 60;
                 }
                 continue;
             }
@@ -133,10 +137,12 @@ export class AIManager {
      * AI思考ルーチン（タイムスケール考慮版）
      */
     think(ai, meta, player, allSnakes, activeDrops, timeScale = 1.0) {
-        // ★ 思考タイマーとクールダウンを実時間基準（timeScale減算）で更新
         meta.stateTimer -= timeScale;
         if (meta.harassCooldown > 0) {
             meta.harassCooldown = Math.max(0, meta.harassCooldown - timeScale);
+        }
+        if (meta.panicCooldown > 0) {
+            meta.panicCooldown = Math.max(0, meta.panicCooldown - timeScale);
         }
 
         // 1. 【最優先】外壁激突回避
@@ -193,6 +199,36 @@ export class AIManager {
 
         if (threatFound) return;
 
+        // ★ アクセント①：【ビビり逃走リアクション（Panic Evasion）】
+        // 自分よりスコアが2倍以上ある格上スネークが 500px 以内に急接近してきた時、身を翻して小ダッシュ逃走
+        if (meta.panicCooldown <= 0 && meta.state !== AI_STATE.PANIC && ai.score > 60) {
+            let giantThreat = null;
+            const panicDistSq = 500 * 500;
+
+            for (let i = 0; i < allSnakes.length; i++) {
+                const other = allSnakes[i];
+                if (other === ai || other.isDead || !other.isVisible) continue;
+                if (other.score >= ai.score * 2.0) {
+                    const gdx = other.x - ai.x;
+                    const gdy = other.y - ai.y;
+                    if (gdx * gdx + gdy * gdy < panicDistSq) {
+                        giantThreat = other;
+                        break;
+                    }
+                }
+            }
+
+            if (giantThreat) {
+                meta.state = AI_STATE.PANIC;
+                meta.stateTimer = 18; // 約0.3秒でサッと終わる小リアクション
+                meta.panicCooldown = 180; // 次回まで約3秒クールダウン
+                const awayAngle = Math.atan2(ai.y - giantThreat.y, ai.x - giantThreat.x);
+                ai.targetAngle = awayAngle + (Math.random() - 0.5) * 0.4;
+                ai.isBoosting = ai.score > 75; // 驚いてピュッとダッシュ
+                return;
+            }
+        }
+
         // 3. 【ハイエナモード判定】死体肉片のサイズ・価値に応じた感知半径の動的スケーリング
         if (activeDrops && activeDrops.length > 0 && meta.persona !== 'cruiser') {
             let nearestDrop = null;
@@ -219,14 +255,18 @@ export class AIManager {
                 meta.scavengeTarget = nearestDrop;
                 const toDropAngle = Math.atan2(nearestDrop.y - ai.y, nearestDrop.x - ai.x);
                 ai.targetAngle = toDropAngle;
-                ai.isBoosting = ai.score > 90 && Math.random() < 0.50;
+
+                // ★ アクセント②：【おこぼれ横取りダッシュ（Scavenger Snatch）】
+                // 肉片まで 350px 以内に迫ったら「我先に！」と一瞬ブーストを踏み込む
+                const isNearDrop = minDropDistSq < (350 * 350);
+                ai.isBoosting = (ai.score > 85 && isNearDrop) || (ai.score > 100 && Math.random() < 0.35);
                 return;
             }
         }
 
         // 4. 【プレイヤー接近時の「ちょっかい行動」トリガー判定（マイルド調律）】
         const isPlayerActive = player && !player.isDead && player.isVisible;
-        if (isPlayerActive && meta.harassCooldown <= 0 && meta.state !== AI_STATE.HARASS) {
+        if (isPlayerActive && meta.harassCooldown <= 0 && meta.state !== AI_STATE.HARASS && meta.state !== AI_STATE.PANIC) {
             const pdx = player.x - ai.x;
             const pdy = player.y - ai.y;
             const pDistSq = pdx * pdx + pdy * pdy;
@@ -246,7 +286,7 @@ export class AIManager {
 
         // 5. 【ステートタイマー満了時の自然遷移】
         if (meta.stateTimer <= 0) {
-            if (meta.state === AI_STATE.HARASS) {
+            if (meta.state === AI_STATE.HARASS || meta.state === AI_STATE.PANIC) {
                 meta.state = AI_STATE.FORAGING;
                 meta.stateTimer = 80 + Math.floor(Math.random() * 70);
                 ai.isBoosting = false;
@@ -264,6 +304,11 @@ export class AIManager {
 
         // 6. 【各ステートの行動実行】
         switch (meta.state) {
+            case AI_STATE.PANIC: {
+                // ビビり逃走持続（短時間で終わる）
+                break;
+            }
+
             case AI_STATE.HARASS: {
                 if (!isPlayerActive) {
                     meta.state = AI_STATE.FORAGING;

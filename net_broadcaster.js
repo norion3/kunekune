@@ -1,11 +1,12 @@
 // ==============================================================================
 // 『くねくねバトル オンライン』マルチプレイ送信ループ＆アクションキュー管理 (net_broadcaster.js)
-// v26.3.0 即時割り込み送信対応＆1KB常時セーフマージン版:
+// v26.5.0 レートリミット時キュー安全差し戻し＆即時割り込み送信対応版:
+// ・【データ蒸発完全根絶】25ms レートリミッターに接触して送信をスキップした際、パケットに同封されていた未送信データ（pk, dp, dc, ch）をキュー先頭へ安全に差し戻し（unshift）し、データロストを100%防止
+// ・【AgentSDK防衛レートリミッター】同一フレーム内多重送信によるパケットサイレント破棄を防ぐ25msスロットリング
 // ・【即時送信対応】ブースト開始・終了などの状態変化を100ms周期を待たずに即時送信する forceImmediateSync を配備しラグを根絶
-// ・【平常時パケット安全圧縮】AI送信数を最大8体へ最適化し、基礎パケットを約620バイトへスリム化
+// ・【平常時パケット安全圧縮】AI 送信数を最大8体へ最適化し、基礎パケットを約620バイトへスリム化
 // ・【リーダーボード送信間引き】lb 同封を5Hz（2フレームに1回）に調整し、常時300バイト以上の送信余裕を確保
-// ・大餌密集地帯で餌取得（pk）が重なっても 1010バイト制限に接触せず、未送信キュー差し戻しの無限ループを完全根絶
-// ・【未送信キュー保護】万が一の超過時も splice 済みデータを先頭へ安全差し戻し（unshift）維持
+// ・【未送信キュー保護】1010 バイト接近時の超過回避時も splice 済みデータを先頭へ安全差し戻し（unshift）維持
 // ・AIスロット計算の MAX_PLAYERS+ 規格維持
 // ==============================================================================
 
@@ -25,6 +26,7 @@ export const NetBroadcaster = {
     _aiSliceIndex: 0,
     _latestLeaderboard: null,
     _lbThrottleCount: 0, // リーダーボード送信間引き用カウンター
+    _lastSentTime: 0,    // ★ AgentSDK 25ms レートリミッター用タイムスタンプ
 
     _pendingPicks: [],
     _pendingDrops: [],
@@ -200,6 +202,7 @@ export const NetBroadcaster = {
         this.stop();
         this._aiSliceIndex = 0;
         this._lbThrottleCount = 0;
+        this._lastSentTime = 0;
         this._pendingPicks.length = 0;
         this._pendingDrops.length = 0;
         this._pendingClusters.length = 0;
@@ -207,12 +210,32 @@ export const NetBroadcaster = {
     },
 
     /**
-     * 1024バイト厳守ガード付き送信ラッパー
-     * ★ パケット超過時に削ったデータを破棄せずキュー先頭へ安全に差し戻す（Unshift）
+     * 1024バイト厳守ガード ＆ 25msレートリミッター付き安全送信ラッパー
      * @param {Object} msgObj 送信パケットオブジェクト
      */
     sendCustomMessage(msgObj) {
         if (typeof window === 'undefined' || !window.AgentSDK || !window.AgentSDK.room || typeof window.AgentSDK.room.sendMessage !== 'function') return;
+
+        // ★ AgentSDK防衛：同一フレーム連打によるサイレント破棄を防ぐ25msレートリミッター
+        const now = performance.now();
+        if (now - this._lastSentTime < 25) {
+            // ★ データ蒸発防止：送信がスキップされた場合、切り取っていたキューを安全に先頭へ差し戻す
+            if (Array.isArray(msgObj.pk) && msgObj.pk.length > 0) {
+                this._pendingPicks.unshift(...msgObj.pk);
+            }
+            if (Array.isArray(msgObj.dp) && msgObj.dp.length > 0) {
+                this._pendingDrops.unshift(...msgObj.dp);
+            }
+            if (Array.isArray(msgObj.dc) && msgObj.dc.length > 0) {
+                this._pendingClusters.unshift(...msgObj.dc);
+            }
+            if (Array.isArray(msgObj.ch) && msgObj.ch.length > 0) {
+                this._pendingChats.unshift(...msgObj.ch);
+            }
+            return;
+        }
+        this._lastSentTime = now;
+
         try {
             const rawString = JSON.stringify(msgObj);
             const byteLength = getUtf8ByteLength(rawString);
@@ -232,6 +255,10 @@ export const NetBroadcaster = {
                 if (Array.isArray(msgObj.dc) && msgObj.dc.length > 0) {
                     this._pendingClusters.unshift(...msgObj.dc);
                     delete msgObj.dc;
+                }
+                if (Array.isArray(msgObj.ch) && msgObj.ch.length > 0) {
+                    this._pendingChats.unshift(...msgObj.ch);
+                    delete msgObj.ch;
                 }
                 delete msgObj.lb;
 
