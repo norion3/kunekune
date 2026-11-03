@@ -1,10 +1,12 @@
 // ==============================================================================
 // 『くねくねバトル オンライン』Phase 7 マスター統合オーケストレーター (main.js)
-// v28.5.0 デッドレコニング補正適正化＆胴体消失完全根絶版:
-// ・【デッドレコニング補正閾値緩和】remoteSnakes のワープ判定閾値を旧 400px (distSq > 160000)
-// 　から 1000px (distSq > 1000000) へ緩和し、net_handlers.js と完全同期。
-// 　さらに超大距離ワープ時でも胴体履歴(history)を平行移動させて形状を維持し、
-// 　通常ラグによる敵スネークの胴体瞬間消失・頭だけ化・カクつきを完全根絶
+// v28.6.0 ホスト昇格時ダミーAI完全継承＆デッドレコニングshiftHistory統合版:
+// ・【ホスト昇格時ダミーAI完全継承】onHostPromoted において、空き枠AI（ID: 95〜100）の
+// 　スナップショット保持・引き継ぎロジックを新設。ホスト切断・昇格時でも空き枠AIが
+// 　初期スコア50ptでリセット（記憶喪失）されず、育ったスコア・位置を完全維持
+// ・【デッドレコニング shiftHistory 公式統合】ゲームループ内の大距離ワープ補正時、
+// 　snake.js の公式カプセル化API `remote.shiftHistory(shiftX, shiftY)` を統一適用。
+// 　生の配列書き換えを根絶し、通常ラグによる胴体消滅・点滅を完全に解消
 // ・【空き枠AIダミーID適正化維持】initGame および onHostPromoted 内で、
 // 　既存AI（1〜94）と衝突しない正の専用ID空間 `MAX_AIS + i + 1`（95〜100）へ統一維持
 // ・【リセットボタン動的表示連動】updateResetButtonVisibility により、
@@ -381,6 +383,7 @@ NetworkManager.setCallbacks({
             if (sIdx !== -1) sortedSnakes.splice(sIdx, 1);
         }
 
+        // 既存のAIスナップショット保持（通常AI + 空き枠ダミーAI）
         const oldAiSnapshots = new Map();
         for (const [slot, remote] of remoteSnakes.entries()) {
             if (slot >= MAX_PLAYERS && remote && !remote.isDead) {
@@ -419,18 +422,33 @@ NetworkManager.setCallbacks({
             }
         }
 
+        // ★ 空き枠ダミーAI（ID: 95〜100）のスナップショット完全引継ぎ
         for (let i = 0; i < MAX_PLAYERS; i++) {
             if (i === NetworkManager.mySlot) continue;
             const slotData = NetworkManager.slots[i];
             if (slotData && slotData.isAI) {
-                // ホスト昇格時も一意な正のID空間（95〜100）へ割り当て
                 const dummyId = MAX_AIS + i + 1;
                 const aiSnake = new Snake(false, dummyId, slotData.name || `CPU ${i + 1}`, slotData.color, 'normal');
-                const angle = Math.random() * Math.PI * 2;
-                const dist = 1500 + Math.random() * 22000;
-                const sx = Math.max(400, Math.min(MAP_SIZE - 400, player.x + Math.cos(angle) * dist));
-                const sy = Math.max(400, Math.min(MAP_SIZE - 400, player.y + Math.sin(angle) * dist));
-                aiSnake.reset(sx, sy);
+                
+                // ゲスト時代に受信していたリモート情報があれば座標・スコアを引き継ぐ
+                const existingRemote = remoteSnakes.get(i);
+                if (existingRemote && !existingRemote.isDead) {
+                    aiSnake.x = existingRemote.x;
+                    aiSnake.y = existingRemote.y;
+                    aiSnake.score = existingRemote.score;
+                    aiSnake.angle = existingRemote.angle;
+                    aiSnake.targetAngle = existingRemote.angle;
+                    aiSnake.color = existingRemote.color || aiSnake.color;
+                    aiSnake.face = existingRemote.face || aiSnake.face;
+                    aiSnake.recalculateSize();
+                    remoteSnakes.delete(i); // ローカルAIに昇格するためリモートからは削除
+                } else {
+                    const angle = Math.random() * Math.PI * 2;
+                    const dist = 1500 + Math.random() * 22000;
+                    const sx = Math.max(400, Math.min(MAP_SIZE - 400, player.x + Math.cos(angle) * dist));
+                    const sy = Math.max(400, Math.min(MAP_SIZE - 400, player.y + Math.sin(angle) * dist));
+                    aiSnake.reset(sx, sy);
+                }
                 
                 aiManager.ais.push(aiSnake);
                 aiManager.aiMeta.push({
@@ -619,7 +637,7 @@ function gameLoop() {
             }
 
             // =========================================================================
-            // デッドレコニング＆二重加算防止（補正閾値 1000px 緩和＆胴体維持補正）
+            // デッドレコニング＆二重加算防止（shiftHistory による安全平行移動補正）
             // =========================================================================
             if (remote.targetNetX !== undefined && remote.targetNetY !== undefined) {
                 const timeScale = Math.max(0.1, Math.min(3.0, dtSec * 60));
@@ -629,21 +647,12 @@ function gameLoop() {
 
                 const distSq = (remote.targetNetX - remote.x) ** 2 + (remote.targetNetY - remote.y) ** 2;
                 
-                // ★ 400px (160000) から 1000px (1000000) に緩和し、通常ラグでの不要な瞬間移動を排除
                 if (distSq > 1000000) {
                     const shiftX = remote.targetNetX - remote.x;
                     const shiftY = remote.targetNetY - remote.y;
                     
-                    // 胴体履歴を平行移動させて形状を維持
-                    const histLen = remote.historyLength || 0;
-                    for (let i = 0; i < histLen; i++) {
-                        const idx = (remote.headIdx + i) % 2048;
-                        const pt = remote.history[idx];
-                        if (pt) {
-                            pt.x += shiftX;
-                            pt.y += shiftY;
-                        }
-                    }
+                    // ★ snake.js の公式 shiftHistory API を適用し、形状を完全維持したまま平行移動
+                    remote.shiftHistory(shiftX, shiftY);
                     remote.x = remote.targetNetX;
                     remote.y = remote.targetNetY;
                 } else {
