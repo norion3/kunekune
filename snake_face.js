@@ -1,17 +1,23 @@
 // ==============================================================================
 // 『くねくねバトル オンライン』スネーク表情ベクター描画モジュール (snake_face.js)
-// v29.3.0 メニューSVG完全準拠＆「ω口」マスコットフェイス刷新版:
-// ・【メニューSVGと1:1完全一致】メニューの顔アイコンを「唯一の正」とし、
-// 　眉毛の角度・長さ・目の位置・口の弧を寸分違わずCanvasへ忠実に直写
-// 　（怒り眉が飛び出たり角度が不自然に歪むバグを座標変換の適正化で完全根絶）
-// ・【4番目の舌を完全撤廃＆「ω口」へ刷新】不自然だった舌出しを廃止し、
-// 　他にはないキュッと上がった波型リップ「ω口（ネコ口／マスコット口）」を新設。
-// 　1番目（上品な微笑み）と明確に差別化された、愛くるしく見やすい新表情を確立
-// ・【頭部比率の黄金比】scale: 1.68/40 により頭部円からのはみ出しを完全防止
+// v30.0.0 メニューアイコン黄金比率＆愛嬌最大化マスコットフェイス版:
+// ・【頭部比率の黄金比スケールアップ】顔の基準スケールを (size * 1.68)/40 から
+// 　(size * 2.32)/40 へ大幅拡大。頭部円の中央に豆粒化していた顔パーツを頭部いっぱいに展開し、
+// 　メニューアイコンが持つ「ぽてっとしたマスコットの愛らしさ」を完全再現
+// ・【パッチリ瞳＆ダブルハイライト】白目を1.3倍に拡大し、黒目の中にメイン光＋サブ光の
+// 　ダブルハイライト（うるうる光彩）を常時焼き付け。遠景ズームでも瞳の輝きを死守
+// ・【目と口のディスタンス最適化】胴体側に離れて面長化していた口の位置を目元の直下へ引き上げ、
+// 　ゆるキャラ・アニメマスコット特有の「顎上がりベビーフェイス比率」を確立
+// ・【各表情の完全調律】
+// 　- normal: パッチリ潤んだ瞳＋上品な微笑み
+// 　- angry: 大きいまん丸瞳＋生意気キュートなキリリ眉＋への字口
+// 　- happy: 優しいアーチ糸目＋ふんわりピンクチーク＋にっこり口
+// 　- cool/smile: 前を見つめる大きな瞳＋キュッと上がった波型「ω口（ネコ口）」
+// 　- cute: 溢れんばかりの超巨大瞳＋キラキラ光彩＋ちょこんとおちょぼ口
 // ==============================================================================
 
 /**
- * スネーク頭部ベース円の上にメニューSVGと1:1完全一致する愛らしい表情パーツを描画
+ * スネーク頭部ベース円の上にメニューSVGと1:1調和する愛らしい表情パーツを描画
  * @param {CanvasRenderingContext2D} ctx 描画対象の2Dコンテキスト（頭部ローカル座標系）
  * @param {string} face 表情タイプ ('normal' | 'cool' | 'smile' | 'angry' | 'happy' | 'cute')
  * @param {number} size スネークの頭部半径
@@ -19,82 +25,87 @@
 export function drawSnakeFace(ctx, face, size) {
     ctx.save();
 
-    // メニューSVG (40x40) をスネーク頭部へジャストフィットさせる黄金スケール
-    const scale = (size * 1.68) / 40;
+    // ★ メニューアイコンの愛嬌を完全再現する新・黄金スケール（顔の豆粒化を解消）
+    const scale = (size * 2.32) / 40;
 
-    // メニューSVGの向き（上:額、下:口、左:左目、右:右目）を
-    // スネーク頭部ローカル（+X:進行方向先端、±Y:左右）へ寸分狂わず写像する変換
-    // x_local = (y_svg - 20) * scale + (size * 0.14)
-    // y_local = (x_svg - 20) * scale
-    ctx.transform(0, scale, scale, 0, size * 0.14, 0);
+    // スネーク頭部ローカル（+X: 進行方向先端、±Y: 左右）への最適射影変換
+    // 進行方向の先端寄りにオフセットを配置し、前を見つめる自然なキャラクター感を演出
+    ctx.transform(0, scale, scale, 0, size * 0.16, 0);
     ctx.translate(-20, -20);
 
     switch (face) {
         case 'angry': {
             // =================================================================
-            // 2. いかり（メニューSVGと1:1完全一致）
+            // 2. いかり（生意気キュートなマスコット怒り顔）
             // =================================================================
-            // 白目
+            // 大きな白目
             ctx.fillStyle = '#ffffff';
             ctx.beginPath();
-            ctx.arc(14, 21, 5.5, 0, Math.PI * 2);
-            ctx.arc(26, 21, 5.5, 0, Math.PI * 2);
+            ctx.arc(13.5, 20.5, 6.2, 0, Math.PI * 2);
+            ctx.arc(26.5, 20.5, 6.2, 0, Math.PI * 2);
             ctx.fill();
 
-            // 瞳
+            // 内寄りのキリッとした黒目
             ctx.fillStyle = '#111827';
             ctx.beginPath();
-            ctx.arc(15.5, 21, 2.6, 0, Math.PI * 2);
-            ctx.arc(27.5, 21, 2.6, 0, Math.PI * 2);
+            ctx.arc(15.2, 20.5, 3.2, 0, Math.PI * 2);
+            ctx.arc(27.2, 20.5, 3.2, 0, Math.PI * 2);
             ctx.fill();
 
-            // メニューSVGと寸分違わぬキリッとした怒り眉
+            // 瞳のハイライト
+            ctx.fillStyle = '#ffffff';
+            ctx.beginPath();
+            ctx.arc(14.2, 19.2, 1.2, 0, Math.PI * 2);
+            ctx.arc(26.2, 19.2, 1.2, 0, Math.PI * 2);
+            ctx.fill();
+
+            // キリッとした怒り眉
             ctx.strokeStyle = '#111827';
-            ctx.lineWidth = 2.2;
+            ctx.lineWidth = 2.4;
             ctx.lineCap = 'round';
             ctx.beginPath();
-            ctx.moveTo(9, 13);
-            ctx.lineTo(19, 18);
-            ctx.moveTo(31, 13);
-            ctx.lineTo(21, 18);
+            ctx.moveTo(8.5, 12.5);
+            ctx.lineTo(19.0, 17.5);
+            ctx.moveTo(31.5, 12.5);
+            ctx.lineTo(21.0, 17.5);
             ctx.stroke();
 
-            // への字口
+            // キュートなへの字口（目に近づけて幼さをキープ）
             ctx.beginPath();
-            ctx.arc(20, 31, 3.0, -Math.PI * 0.8, -Math.PI * 0.2);
+            ctx.arc(20, 28.5, 3.2, -Math.PI * 0.8, -Math.PI * 0.2);
             ctx.stroke();
             break;
         }
 
         case 'happy': {
             // =================================================================
-            // 3. にこにこ（メニューSVGと1:1完全一致）
+            // 3. にこにこ（ふんわりチーク＆愛され笑顔）
             // =================================================================
             ctx.strokeStyle = '#111827';
-            ctx.lineWidth = 2.5;
+            ctx.lineWidth = 2.6;
             ctx.lineCap = 'round';
 
-            // 笑顔目アーチ
+            // ふっくら太めの笑顔目アーチ（潰れ防止）
             ctx.beginPath();
-            ctx.arc(14, 21, 4.5, Math.PI, 0);
+            ctx.arc(13.5, 20.5, 5.5, Math.PI, 0);
             ctx.stroke();
 
             ctx.beginPath();
-            ctx.arc(26, 21, 4.5, Math.PI, 0);
+            ctx.arc(26.5, 20.5, 5.5, Math.PI, 0);
             ctx.stroke();
 
-            // ピンクのほっぺチーク
-            ctx.fillStyle = 'rgba(255, 99, 132, 0.75)';
+            // 鮮やかで可愛いピンクのほっぺチーク
+            ctx.fillStyle = 'rgba(255, 99, 132, 0.82)';
             ctx.beginPath();
-            ctx.arc(9, 25, 3.0, 0, Math.PI * 2);
-            ctx.arc(31, 25, 3.0, 0, Math.PI * 2);
+            ctx.arc(8.5, 24.5, 3.6, 0, Math.PI * 2);
+            ctx.arc(31.5, 24.5, 3.6, 0, Math.PI * 2);
             ctx.fill();
 
-            // にっこり口元
+            // 目元にキュッと近づけたにっこり口
             ctx.strokeStyle = '#111827';
-            ctx.lineWidth = 2.0;
+            ctx.lineWidth = 2.2;
             ctx.beginPath();
-            ctx.arc(20, 23.5, 3.0, 0.15 * Math.PI, 0.85 * Math.PI);
+            ctx.arc(20, 24.0, 3.8, 0.12 * Math.PI, 0.88 * Math.PI);
             ctx.stroke();
             break;
         }
@@ -102,73 +113,83 @@ export function drawSnakeFace(ctx, face, size) {
         case 'cool':
         case 'smile': {
             // =================================================================
-            // 4. ★ 新設「ω口（ネコ口／マスコット口）」（舌出し完全撤廃版）
-            // 舌をなくし、キュッと上がった波型リップ「ω」で最高に愛嬌ある表情
+            // 4. ★ 新設「ω口（ネコ口／マスコットリップ）」
+            // キュッと上がった波型リップとパッチリ瞳の最強コンビ
             // =================================================================
             // 大きなパッチリ白目
             ctx.fillStyle = '#ffffff';
             ctx.beginPath();
-            ctx.arc(14, 20, 5.8, 0, Math.PI * 2);
-            ctx.arc(26, 20, 5.8, 0, Math.PI * 2);
+            ctx.arc(13.5, 19.5, 6.4, 0, Math.PI * 2);
+            ctx.arc(26.5, 19.5, 6.4, 0, Math.PI * 2);
             ctx.fill();
 
             // 前方を見つめる黒目
             ctx.fillStyle = '#111827';
             ctx.beginPath();
-            ctx.arc(15, 19, 2.7, 0, Math.PI * 2);
-            ctx.arc(25, 19, 2.7, 0, Math.PI * 2);
+            ctx.arc(14.5, 18.5, 3.3, 0, Math.PI * 2);
+            ctx.arc(25.5, 18.5, 3.3, 0, Math.PI * 2);
             ctx.fill();
 
-            // ハイライト光彩
+            // うるうるダブルハイライト
             ctx.fillStyle = '#ffffff';
             ctx.beginPath();
-            ctx.arc(14.2, 18.2, 1.0, 0, Math.PI * 2);
-            ctx.arc(24.2, 18.2, 1.0, 0, Math.PI * 2);
+            // メイン光
+            ctx.arc(13.6, 17.5, 1.4, 0, Math.PI * 2);
+            ctx.arc(24.6, 17.5, 1.4, 0, Math.PI * 2);
+            // サブ光
+            ctx.arc(15.6, 19.6, 0.8, 0, Math.PI * 2);
+            ctx.arc(26.6, 19.6, 0.8, 0, Math.PI * 2);
             ctx.fill();
 
-            // ★ キュートな「ω口」（ネコ口・マスコットリップ）
+            // ★ キュートな「ω口」（目元のすぐ下にバランス良く配置）
             ctx.strokeStyle = '#111827';
-            ctx.lineWidth = 2.2;
+            ctx.lineWidth = 2.3;
             ctx.lineCap = 'round';
             ctx.lineJoin = 'round';
             ctx.beginPath();
-            // 左側のふくらみ
-            ctx.arc(17.8, 27.2, 2.3, -Math.PI * 0.1, Math.PI * 0.85);
-            // 右側のふくらみ
-            ctx.arc(22.2, 27.2, 2.3, 0.15 * Math.PI, Math.PI * 1.1);
+            // 左のふくらみ
+            ctx.arc(17.6, 26.2, 2.5, -Math.PI * 0.15, Math.PI * 0.85);
+            // 右のふくらみ
+            ctx.arc(22.4, 26.2, 2.5, 0.15 * Math.PI, Math.PI * 1.15);
             ctx.stroke();
             break;
         }
 
         case 'cute': {
             // =================================================================
-            // 5. キュート（うるうる瞳・メニューSVGと1:1完全一致）
+            // 5. キュート（超巨大うるうる瞳＆おちょぼ口）
             // =================================================================
+            // 顔いっぱいに広がる特大白目
             ctx.fillStyle = '#ffffff';
             ctx.beginPath();
-            ctx.arc(14, 20, 6.5, 0, Math.PI * 2);
-            ctx.arc(26, 20, 6.5, 0, Math.PI * 2);
+            ctx.arc(13.5, 19.5, 7.2, 0, Math.PI * 2);
+            ctx.arc(26.5, 19.5, 7.2, 0, Math.PI * 2);
             ctx.fill();
 
+            // 吸い込まれそうな大きな黒目
             ctx.fillStyle = '#0f172a';
             ctx.beginPath();
-            ctx.arc(15, 20, 3.5, 0, Math.PI * 2);
-            ctx.arc(27, 20, 3.5, 0, Math.PI * 2);
+            ctx.arc(14.5, 19.5, 4.4, 0, Math.PI * 2);
+            ctx.arc(27.5, 19.5, 4.4, 0, Math.PI * 2);
             ctx.fill();
 
-            // うるうる瞳のハイライト
+            // うるうる輝く大小のダブルハイライト
             ctx.fillStyle = '#ffffff';
             ctx.beginPath();
-            ctx.arc(16.5, 18.5, 1.3, 0, Math.PI * 2);
-            ctx.arc(28.5, 18.5, 1.3, 0, Math.PI * 2);
+            // メインハイライト
+            ctx.arc(16.5, 17.5, 1.8, 0, Math.PI * 2);
+            ctx.arc(29.5, 17.5, 1.8, 0, Math.PI * 2);
+            // サブハイライト
+            ctx.arc(13.2, 21.0, 1.0, 0, Math.PI * 2);
+            ctx.arc(26.2, 21.0, 1.0, 0, Math.PI * 2);
             ctx.fill();
 
-            // 控えめなおちょぼ口
+            // ちょこんと愛らしい小さなおちょぼ口
             ctx.strokeStyle = '#111827';
-            ctx.lineWidth = 1.8;
+            ctx.lineWidth = 2.0;
             ctx.lineCap = 'round';
             ctx.beginPath();
-            ctx.arc(20, 25.5, 2.5, 0.15 * Math.PI, 0.85 * Math.PI);
+            ctx.arc(20, 26.0, 2.4, 0.15 * Math.PI, 0.85 * Math.PI);
             ctx.stroke();
             break;
         }
@@ -176,35 +197,37 @@ export function drawSnakeFace(ctx, face, size) {
         case 'normal':
         default: {
             // =================================================================
-            // 1. ノーマル（王道微笑み顔・メニューSVGと1:1完全一致）
+            // 1. ノーマル（王道パッチリ微笑みマスコット）
             // =================================================================
-            // 白目
+            // 大きな白目
             ctx.fillStyle = '#ffffff';
             ctx.beginPath();
-            ctx.arc(14, 20, 5.5, 0, Math.PI * 2);
-            ctx.arc(26, 20, 5.5, 0, Math.PI * 2);
+            ctx.arc(13.5, 19.5, 6.4, 0, Math.PI * 2);
+            ctx.arc(26.5, 19.5, 6.4, 0, Math.PI * 2);
             ctx.fill();
 
-            // 黒目
+            // 前方を見つめる黒目
             ctx.fillStyle = '#111827';
             ctx.beginPath();
-            ctx.arc(15, 19, 2.6, 0, Math.PI * 2);
-            ctx.arc(25, 19, 2.6, 0, Math.PI * 2);
+            ctx.arc(14.8, 18.5, 3.2, 0, Math.PI * 2);
+            ctx.arc(25.8, 18.5, 3.2, 0, Math.PI * 2);
             ctx.fill();
 
-            // ハイライト
+            // 瞳をきらめかせるダブルハイライト
             ctx.fillStyle = '#ffffff';
             ctx.beginPath();
-            ctx.arc(14.2, 18.2, 0.9, 0, Math.PI * 2);
-            ctx.arc(24.2, 18.2, 0.9, 0, Math.PI * 2);
+            ctx.arc(13.8, 17.5, 1.4, 0, Math.PI * 2);
+            ctx.arc(24.8, 17.5, 1.4, 0, Math.PI * 2);
+            ctx.arc(15.8, 19.5, 0.8, 0, Math.PI * 2);
+            ctx.arc(26.8, 19.5, 0.8, 0, Math.PI * 2);
             ctx.fill();
 
-            // 上品な微笑みスマイルライン
+            // 目元のすぐ下にある上品でキュートな微笑み口
             ctx.strokeStyle = '#111827';
-            ctx.lineWidth = 2.0;
+            ctx.lineWidth = 2.2;
             ctx.lineCap = 'round';
             ctx.beginPath();
-            ctx.arc(20, 24.5, 3.5, 0.15 * Math.PI, 0.85 * Math.PI);
+            ctx.arc(20, 24.8, 3.6, 0.12 * Math.PI, 0.88 * Math.PI);
             ctx.stroke();
             break;
         }
