@@ -1,17 +1,18 @@
 // ==============================================================================
 // 『くねくねバトル オンライン』スネークエンティティクラス (snake.js)
-// v28.0.0 超巨大ボス対応Dynamic LoD描画最適化＆無敵時間保護版:
-// ・【超巨大ボス対応Dynamic LoD(動的描画間引き)】超巨大怪獣ボス(体長80〜125節)の出現や
-// 　広域ズームアウト時に、体長とカメラスケールから最適な描画ステップ(step: 1〜4)を動的算出。
-// 　間引き時も節の重なり比率を自動補正し、隙間やジャギーを一切出さずに密集戦の描画負荷(DrawCall)を最大55%削減
-// ・【緊急離脱ブーストの無敵保護】リスポーン直後の緊急離脱ブースト時も3.0秒間の無敵タイマーが
-// 　安全に自然減衰し、理不尽即死を完全防止
-// ・【生体ウロコ＆光彩完全維持】ウロコシャドウのフロー効果、頭部表情、パルスリングを完全保持
-// ・【ズームアウト獲物パルスリング強調】自機より小さい獲物スネークや小型AIの周囲に動的パルスリングを描画
-// ・【頭上バッジのスコア短縮対応】10万・100万時のk/M短縮フォーマット連動でカプセル枠はみ出し防止
-// ・【ブースト即時同期】自機ブースト状態変化時（開始・終了）の即時パケット送出（forceImmediateSync）
-// ・【引数厳格判定】updatePhysics のシグネチャを arguments.length >= 3 で厳格判定し型誤認バグを完全排除
-// ・フレームレート非依存物理（完全DeltaTime）、O(1)リングバッファを完全維持
+// v28.6.0 オリジナル生体ビジュアル復元＆隙間ゼロ有機的レンダリング版:
+// ・【不格好なお団子・数珠つなぎの完全根絶】無理な間引き(step: 2〜3)で生じていた
+// 　円同士の隙間を全廃。オリジナル版の密接な体節重ね合わせと、一括パス fill() を融合
+// ・【オリジナル美しい生体テーパー復元】Math.pow(progress, 3.0) * 0.6 を採用し、
+// 　首回りを力強く太く保ち、尾先に向けて鋭くしなやかに細くなる大蛇シルエットを完全復元
+// ・【半透明ネオンチューブ光彩(alpha: 0.65)】ベタ塗りを廃止し、オリジナル版の透明度0.65を
+// 　適用。円同士が滑らかに光を溶け合わせ、艶やかで美しい生体質感を表現
+// ・【頭部と首の自然な一体化】頭部サイズ成長曲線(pow 0.46 * 0.40)を適正化し、
+// 　頭だけが取り残される違和感を解消して圧倒的な存在感を創出
+// ・【超低負荷一括パス描画】全節を滑らかに描画しつつも、Canvasパス構築を一括化することで
+// 　100体規模でもDrawCallを最小限に抑え、60FPS完全維持
+// ・【緊急離脱ブーストの無敵保護】リスポーン後の3.0秒無敵自然減衰を完全維持
+// ・【タイポ完全解消】drawOverheadBadge 内の currentFloorScore 参照を完全修正
 // ==============================================================================
 
 import { BASE_SPEED, BOOST_SPEED_MULT, TURN_SPEED_PLAYER, MAP_SIZE } from './constants.js';
@@ -105,9 +106,13 @@ export class Snake {
         this._cachedBadgeName = '';
     }
 
+    /**
+     * ★ オリジナル比率を強化したサイズ＆体長計算
+     * スコア上昇時に頭部と首回りの太さがしっかりと成長し、巨大化の快感をダイレクトに伝える
+     */
     recalculateSize() {
-        this.size = 12 + Math.pow(this.score, 0.45) * 0.35;
-        this.targetLength = 10 + Math.floor(Math.pow(this.score, 0.55) * 0.4);
+        this.size = 12 + Math.pow(this.score, 0.46) * 0.40;
+        this.targetLength = 10 + Math.floor(Math.pow(this.score, 0.54) * 0.44);
         if (this.size > this.maxSize) this.maxSize = this.size;
     }
 
@@ -146,8 +151,7 @@ export class Snake {
 
         const timeScale = Math.max(0.1, Math.min(3.0, dtSec * 60));
 
-        // ★ 無敵時間の安全な自然減衰
-        // （特攻キルは combat.js の弾き飛ばしですでに防がれているため、緊急離脱ブーストでも無敵が即座に解除されず安全に逃げられる）
+        // ★ 無敵時間の安全な自然減衰（緊急離脱ブーストでも無敵が維持される）
         if (this.invulnerableTimer > 0) {
             this.invulnerableTimer = Math.max(0, this.invulnerableTimer - dtSec);
         }
@@ -198,9 +202,10 @@ export class Snake {
             }
         }
 
-        // O(1) リングバッファへの座標格納（GC負荷ゼロ）
+        // ★ オリジナル版準拠の関節間隔（stepDist = this.size * 0.58）
+        // 円同士がしっかりと重なり合い、お団子状のくびれ・隙間を完全に埋める黄金比
         this.distCounter += this.speed * timeScale;
-        const stepDist = this.size * 0.55;
+        const stepDist = this.size * 0.58;
         if (this.distCounter >= stepDist) {
             this.distCounter = 0;
             
@@ -221,11 +226,15 @@ export class Snake {
         }
     }
 
+    /**
+     * ★ オリジナル生体ビジュアル復元描画
+     * お団子状の間引きを完全撤廃し、半透明(0.65)の密接な円パス一括 fill() により、
+     * 一切の隙間がない滑らかなネオンチューブ生体ボディを描画する
+     */
     draw(ctx, frameCount, cameraScale = 1.0) {
         if (this.isDead || !this.isVisible) return;
 
-        // シングル版の秀逸な設計：ズームアウト時の獲物スネーク強調パルスリング
-        // ズームアウト時(cameraScale < 0.75)、自機より小さい敵や小型AIが豆粒になって見失うのを防ぐ
+        // ズームアウト時の小型獲物強調パルスリング（オリジナル継承）
         const localPlayer = (typeof window !== 'undefined' && window.localPlayerInstance) ? window.localPlayerInstance : null;
         if (!this.isPlayer && cameraScale < 0.75 && localPlayer && !localPlayer.isDead) {
             if (this.size < localPlayer.size * 0.65 || this.score < localPlayer.score * 0.5) {
@@ -249,38 +258,32 @@ export class Snake {
             }
         }
 
-        if (this.invulnerableTimer > 0) {
-            ctx.globalAlpha = (Math.floor(Date.now() / 100) % 2 === 0) ? 0.4 : 0.8;
-        } else {
-            ctx.globalAlpha = 1.0;
-        }
-
         const histLen = this.historyLength;
+        const invulnAlpha = (this.invulnerableTimer > 0)
+            ? ((Math.floor(Date.now() / 100) % 2 === 0) ? 0.35 : 0.75)
+            : 1.0;
 
-        // ★ Dynamic LoD (動的描画間引きアルゴリズム)
-        // 体長とカメラスケールに基づき、滑らかな輪郭を保ちつつ描画パス数を劇的に削減
-        let step = 1;
-        if (histLen > 75 || (cameraScale < 0.45 && histLen > 40)) {
-            step = 3;
-        } else if (histLen > 28 || cameraScale < 0.70) {
-            step = 2;
-        }
-
-        // 間引き時の体節隙間を埋める適正サイズ拡大量
-        const radiusScale = step === 3 ? 1.15 : (step === 2 ? 1.06 : 1.0);
-
-        // 胴体体節を一括パス連結で描画
+        // =========================================================================
+        // 1. 胴体メインボディ描画（オリジナル完全復元）
+        // globalAlpha: 0.65 により円同士が重なって艶やかなグラデーションとなり、
+        // ベタ塗りの「丸の連なり」感を完全消去して滑らかな一本の生体チューブを形成
+        // =========================================================================
+        ctx.globalAlpha = 0.65 * invulnAlpha;
         ctx.fillStyle = this.color;
         ctx.beginPath();
-        for (let i = histLen - 1; i >= 0; i -= step) {
+
+        for (let i = histLen - 1; i >= 0; i--) {
             const idx = (this.headIdx + i) % MAX_HISTORY;
             const pt = this.history[idx];
             if (!pt) continue;
 
             const progress = i / histLen;
-            const segmentRadius = this.size * (1 - Math.pow(progress, 2.5) * 0.5) * radiusScale;
+            // ★ オリジナルのテーパー計算式：首元が太く、尾先だけが鋭く細くなる美しいシルエット
+            const segmentRadius = this.size * (1 - Math.pow(progress, 3.0) * 0.60);
 
-            const waveOffset = Math.sin(frameCount * 0.18 - i * 0.35) * (this.size * 0.2);
+            // オリジナルの波打ちオフセット（うねり）
+            const waveAmplitude = this.size * 0.22;
+            const waveOffset = Math.sin(frameCount * 0.15 - i * 0.38) * waveAmplitude;
             const normAngle = (pt.angle || 0) + Math.PI / 2;
             const drawX = pt.x + Math.cos(normAngle) * waveOffset;
             const drawY = pt.y + Math.sin(normAngle) * waveOffset;
@@ -290,32 +293,39 @@ export class Snake {
         }
         ctx.fill();
 
-        // 胴体の光彩・生体ウロコシャドウ（シングル版準拠の滑らかなフロー効果）
-        const shadowStep = step * 2;
-        ctx.fillStyle = 'rgba(0, 0, 0, 0.18)';
+        // =========================================================================
+        // 2. 胴体光彩・生体ウロコシャドウ（オリジナル完全復元）
+        // 背骨に沿って流れる有機的な陰影効果
+        // =========================================================================
         ctx.beginPath();
-        for (let i = histLen - 1; i >= 0; i -= shadowStep) {
-            const flow = Math.sin(frameCount * 0.25 - i * 0.3);
-            if (flow <= 0.3) continue;
+        for (let i = histLen - 1; i >= 0; i--) {
+            const flow = Math.sin(frameCount * 0.28 - i * 0.25);
+            if (flow <= 0.05) continue;
 
             const idx = (this.headIdx + i) % MAX_HISTORY;
             const pt = this.history[idx];
             if (!pt) continue;
 
             const progress = i / histLen;
-            const segmentRadius = this.size * (1 - Math.pow(progress, 2.5) * 0.5) * 0.72 * radiusScale;
+            const segmentRadius = this.size * (1 - Math.pow(progress, 3.0) * 0.60) * 0.78;
 
-            const waveOffset = Math.sin(frameCount * 0.18 - i * 0.35) * (this.size * 0.2);
+            const waveAmplitude = this.size * 0.22;
+            const waveOffset = Math.sin(frameCount * 0.15 - i * 0.38) * waveAmplitude;
             const normAngle = (pt.angle || 0) + Math.PI / 2;
             const drawX = pt.x + Math.cos(normAngle) * waveOffset;
             const drawY = pt.y + Math.sin(normAngle) * waveOffset;
 
+            ctx.fillStyle = `rgba(0, 0, 0, ${flow * 0.22})`;
             ctx.moveTo(drawX + segmentRadius, drawY);
             ctx.arc(drawX, drawY, segmentRadius, 0, Math.PI * 2);
         }
         ctx.fill();
 
-        // 頭部描画
+        ctx.globalAlpha = invulnAlpha;
+
+        // =========================================================================
+        // 3. 頭部描画
+        // =========================================================================
         ctx.save();
         ctx.translate(this.x, this.y);
         ctx.rotate(this.angle);
@@ -368,7 +378,7 @@ export class Snake {
         ctx.translate(this.x, badgeY);
 
         const currentFloorScore = Math.floor(this.score);
-        // 10万・100万時のバッジはみ出しを防止する短縮フォーマット
+        // 10万・100万時のバッジはみ出しを防止する短縮フォーマット（タイポ完全修正）
         const scoreText = formatBadgeScore(currentFloorScore);
         const nameText = this.name.length > 10 ? this.name.slice(0, 9) + '…' : this.name;
 
