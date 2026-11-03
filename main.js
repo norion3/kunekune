@@ -1,20 +1,17 @@
 // ==============================================================================
 // 『くねくねバトル オンライン』Phase 7 マスター統合オーケストレーター (main.js)
-// v28.7.0 ゲスト退出時ダミーAI即時補充＆生態系完全保護版:
+// v29.0.0 モジュール分割スリム化＆完全生態系・食物連鎖保護版:
+// ・【モジュール分割による軽量化】起動・自動合流（boot.js）およびホスト昇格移行
+// 　（host_migration.js）を外部モジュールへ安全に移譲。約690行から約500行へ大幅スリム化し、
+// 　メンテナンス性と出力安全性を最高水準へ最適化
 // ・【ゲスト退出時ダミーAI即時補充】onUserExited 内で、人間ゲストが退出した際に
 // 　空き枠となったスロットへ即座にダミーAI（ID: MAX_AIS + slotIdx + 1）を生成・配備。
 // 　入退室の繰り返しによるスネーク数減少（過疎化・定員割れ）を完全根絶し100体を死守
-// ・【ホスト昇格時ダミーAI完全継承】onHostPromoted において、空き枠AI（ID: 95〜100）の
-// 　スナップショット保持・引き継ぎロジックを配備。ホスト切断・昇格時でも空き枠AIが
-// 　初期スコア50ptでリセット（記憶喪失）されず、育ったスコア・位置を完全維持
-// ・【デッドレコニング shiftHistory 公式統合】ゲームループ内の大距離ワープ補正時、
-// 　snake.js の公式カプセル化API `remote.shiftHistory(shiftX, shiftY)` を統一適用。
-// 　生の配列書き換えを根絶し、通常ラグによる胴体消滅・点滅を完全に解消
-// ・【空き枠AIダミーID適正化維持】initGame および onHostPromoted 内で、
-// 　既存AI（1〜94）と衝突しない正の専用ID空間 `MAX_AIS + i + 1`（95〜100）へ統一維持
-// ・【リセットボタン動的表示連動】updateResetButtonVisibility により、
-// 　ソロプレイ対戦中のみ #btn-world-reset を表示し、マルチプレイ時は安全に非表示維持
-// ・【CPUキルログ完全排除】プレイヤー（自機）または人間の参加者が関与した撃破のみ通知表示
+// ・【デッドレコニング shiftHistory 公式統合】大距離ワープ補正時、
+// 　snake.js の公式カプセル化API `remote.shiftHistory(shiftX, shiftY)` を統一適用
+// ・【空き枠AIダミーID適正化維持】MAX_AIS + i + 1（95〜100）の専用ID空間を完全維持
+// ・【リセットボタン動的表示連動】updateResetButtonVisibility によりソロ対戦中のみ表示
+// ・【CPUキルログ完全排除】プレイヤーまたは人間参加者が関与した撃破のみ通知表示
 // ・【スコア単位短縮フォーマッター】formatScore 配備（10k / 1M 短縮表示）
 // ・【ゴースト完全パージ】切断スロット残留エンティティの即時消去
 // ・【餌同期の絶対座標化】checkFoodConsumption のコールバックを絶対座標 (x, y) に適応
@@ -51,7 +48,8 @@ import { NetworkManager } from './network.js';
 import { NetBroadcaster } from './net_broadcaster.js';
 import { initUIBindings, updateZoomButtonsState } from './ui_binder.js';
 import { setupNetworkHandlers } from './net_handlers.js';
-import { hookLobbyNetworkEvents } from './net_lobby_hooks.js';
+import { handleHostMigration } from './host_migration.js';
+import { runBootSequence } from './boot.js';
 
 // --- スコア表示用単位短縮ヘルパー（10万・100万時のUIオーバーフロー防止） ---
 export function formatScore(val) {
@@ -70,7 +68,6 @@ export function updateResetButtonVisibility() {
     const btnReset = document.getElementById('btn-world-reset');
     if (!btnReset) return;
 
-    // ソロプレイ対戦中（playing）のみ表示、マルチプレイ中やロビー/待機室/ゲームオーバー時は非表示
     const shouldShow = (gameState === 'playing') && (!NetworkManager || !NetworkManager.isMultiplayerActive);
     btnReset.style.display = shouldShow ? 'flex' : 'none';
 }
@@ -102,7 +99,7 @@ function updateLayout() {
     }
 }
 
-// 画面回転・リサイズ時の二重計測ガード（iOS WebView対策）
+// 画面回転・リサイズ時の二重計測ガード
 let resizeDebounceTimer = null;
 window.addEventListener('resize', () => {
     updateLayout();
@@ -367,110 +364,19 @@ setupNetworkHandlers({
 
 NetworkManager.setCallbacks({
     onHostPromoted() {
-        console.log('[HostMigration] ホストに昇格しました。世界線を引き継ぎシミュレーションを開始します。');
-        
-        const oldHost = remoteSnakes.get(0);
-        if (oldHost) {
-            if (!oldHost.isDead && oldHost.score > 60) {
-                const colorIdx = SNAKE_COLORS.indexOf(oldHost.color);
-                const safeColorIdx = colorIdx >= 0 ? colorIdx : 0;
-                const dropCount = Math.min(30, Math.max(12, Math.floor((oldHost.historyLength || 16) / 2)));
-                const totalVal = Math.min(3000, Math.max(150, Math.floor(oldHost.score * 0.28)));
-                NetworkManager.queueDropCluster(oldHost.x, oldHost.y, totalVal, dropCount, safeColorIdx);
-            }
-            remoteSnakes.delete(0);
-            const aIdx = allSnakes.indexOf(oldHost);
-            if (aIdx !== -1) allSnakes.splice(aIdx, 1);
-            const sIdx = sortedSnakes.indexOf(oldHost);
-            if (sIdx !== -1) sortedSnakes.splice(sIdx, 1);
-        }
-
-        const oldAiSnapshots = new Map();
-        for (const [slot, remote] of remoteSnakes.entries()) {
-            if (slot >= MAX_PLAYERS && remote && !remote.isDead) {
-                oldAiSnapshots.set(slot - MAX_PLAYERS + 1, {
-                    x: remote.x,
-                    y: remote.y,
-                    score: remote.score,
-                    angle: remote.angle,
-                    color: remote.color,
-                    face: remote.face
-                });
-            }
-        }
-
-        for (const [slot, remote] of remoteSnakes.entries()) {
-            if (slot >= MAX_PLAYERS) {
-                remoteSnakes.delete(slot);
-                const aIdx = allSnakes.indexOf(remote);
-                if (aIdx !== -1) allSnakes.splice(aIdx, 1);
-            }
-        }
-
-        aiManager.init(MAX_AIS, player.x, player.y);
-        for (let i = 0; i < aiManager.ais.length; i++) {
-            const ai = aiManager.ais[i];
-            const snap = oldAiSnapshots.get(ai.id);
-            if (snap) {
-                ai.x = snap.x;
-                ai.y = snap.y;
-                ai.score = snap.score;
-                ai.angle = snap.angle;
-                ai.targetAngle = snap.angle;
-                ai.color = snap.color || ai.color;
-                ai.face = snap.face || ai.face;
-                ai.recalculateSize();
-            }
-        }
-
-        for (let i = 0; i < MAX_PLAYERS; i++) {
-            if (i === NetworkManager.mySlot) continue;
-            const slotData = NetworkManager.slots[i];
-            if (slotData && slotData.isAI) {
-                const dummyId = MAX_AIS + i + 1;
-                const aiSnake = new Snake(false, dummyId, slotData.name || `CPU ${i + 1}`, slotData.color, 'normal');
-                
-                const existingRemote = remoteSnakes.get(i);
-                if (existingRemote && !existingRemote.isDead) {
-                    aiSnake.x = existingRemote.x;
-                    aiSnake.y = existingRemote.y;
-                    aiSnake.score = existingRemote.score;
-                    aiSnake.angle = existingRemote.angle;
-                    aiSnake.targetAngle = existingRemote.angle;
-                    aiSnake.color = existingRemote.color || aiSnake.color;
-                    aiSnake.face = existingRemote.face || aiSnake.face;
-                    aiSnake.recalculateSize();
-                    remoteSnakes.delete(i);
-                } else {
-                    const angle = Math.random() * Math.PI * 2;
-                    const dist = 1500 + Math.random() * 22000;
-                    const sx = Math.max(400, Math.min(MAP_SIZE - 400, player.x + Math.cos(angle) * dist));
-                    const sy = Math.max(400, Math.min(MAP_SIZE - 400, player.y + Math.sin(angle) * dist));
-                    aiSnake.reset(sx, sy);
-                }
-                
-                aiManager.ais.push(aiSnake);
-                aiManager.aiMeta.push({
-                    state: 0,
-                    persona: 'forager',
-                    targetFoodPos: null,
-                    stateTimer: 40 + Math.floor(Math.random() * 60),
-                    scavengeTarget: null,
-                    cruiseDirection: Math.random() < 0.5 ? 1 : -1,
-                    harassSubtype: 0,
-                    harassCooldown: Math.floor(Math.random() * 60),
-                    deadTimer: 0
-                });
-            }
-        }
-
-        window.allAISnakesInstance = aiManager.ais;
-        
-        const currentPlayers = allSnakes.filter(s => s.isPlayer || (s.id !== undefined && s.id < MAX_PLAYERS));
-        allSnakes = [...currentPlayers, ...aiManager.ais];
-        sortedSnakes = [...allSnakes];
-
-        updateResetButtonVisibility();
+        handleHostMigration({
+            remoteSnakes,
+            allSnakes,
+            sortedSnakesRef: {
+                get list() { return sortedSnakes; },
+                set list(v) { sortedSnakes = v; }
+            },
+            setAllSnakes: (list) => { allSnakes = list; },
+            aiManager,
+            player,
+            NetworkManager,
+            updateResetButtonVisibility
+        });
     },
 
     onSurrenderedAsHost() {
@@ -495,6 +401,7 @@ NetworkManager.setCallbacks({
             if (sIdx !== -1) sortedSnakes.splice(sIdx, 1);
         }
 
+        // 退出した人間スロットへ即座にダミーAIを補充し、過疎化・定員割れを防止
         if (NetworkManager.isHost && NetworkManager.isMultiplayerActive && slotIdx < MAX_PLAYERS && slotIdx !== NetworkManager.mySlot) {
             const dummyId = MAX_AIS + slotIdx + 1;
             const existingFake = allSnakes.find(s => !s.isPlayer && s.id === dummyId);
@@ -584,51 +491,6 @@ function handleGameOver(killer) {
     document.getElementById('res-size').innerText = Math.floor(player.maxSize);
 
     overScreen.style.display = 'flex';
-}
-
-async function bootSequence() {
-    try {
-        const userInfo = await NetworkManager.init();
-        if (userInfo && userInfo.name && userInfo.name !== 'あなた') {
-            player.name = userInfo.name;
-        }
-        UIController.refreshLobbyGreeting();
-        hookLobbyNetworkEvents();
-
-        if (window.AgentSDK && window.AgentSDK.room && typeof window.AgentSDK.room.getRoomId === 'function') {
-            const res = await window.AgentSDK.room.getRoomId();
-            const targetRoomId = (res && typeof res.room_id === 'string')
-                ? res.room_id
-                : (res && res.data && typeof res.data.room_id === 'string' ? res.data.room_id : '');
-
-            if (targetRoomId && targetRoomId !== '') {
-                const shortId = targetRoomId.length > 5 ? targetRoomId.slice(-5) : targetRoomId;
-                console.log(`[AutoJoin] DM招待リンク検知: Room #${targetRoomId} へ自動合流開始`);
-
-                EntryShield.show(`ROOM #${shortId}`, '招待ルームへ合流中...');
-                UIController.showWaitingRoom(targetRoomId);
-
-                const joinRes = await NetworkManager.joinRoom(targetRoomId);
-                EntryShield.hide();
-
-                if (joinRes.success) {
-                    if (gameState !== 'playing') {
-                        UIController.showWaitingRoom(targetRoomId);
-                    }
-                    return;
-                } else {
-                    console.warn('[AutoJoin] 自動入室に失敗しました。ロビーへ戻します。');
-                    Danmaku.push('エラー', joinRes.msg || '入室できませんでした', '#f43f5e', true);
-                    UIController.showLobby();
-                    return;
-                }
-            }
-        }
-    } catch (err) {
-        console.warn('[BootSequence] エラー:', err);
-        EntryShield.hide();
-    }
-    UIController.showLobby();
 }
 
 function gameLoop() {
@@ -892,4 +754,12 @@ function gameLoop() {
     }
 }
 
-bootSequence();
+// 独立モジュール化した起動シーケンスを実行
+runBootSequence({
+    NetworkManager,
+    player,
+    UIController,
+    EntryShield,
+    Danmaku,
+    getGameState: () => gameState
+});
