@@ -1,16 +1,14 @@
 // ==============================================================================
 // 『くねくねバトル オンライン』iOS WebKit & iPhone 干渉完全マスクスタイル (style.js)
-// v26.2.0 リセットボタンスタイル＆誤操作防止マージン・ランキング幅最適化版:
-// ・【リセットボタンスタイル新設】音量ボタンの上に並ぶ #btn-world-reset の透過ガラスモーフィズム定義
-// 　タップ時にSVG回転矢印が心地よく逆回転するアニメーション演出を配備
-// ・【誤操作防止物理マージン】音量ボタンとの間に +4px の追加マージン（計14pxの隙間）を確保し、
-// 　親指の肉による誤爆を物理的に遮断
-// ・【ランキングパネル幅適正化】#stats-box の min-width を 152px に拡張し、
-// 　スコアが10万〜100万点（k/M短縮時含む）になっても名前とスコアの間に十分な余白を常時確保
-// ・【弾幕自機被り根絶】コンテナ高さを 18vh（約150px）へ圧縮、画面中央の視界被さりを100%排除
-// ・【いいね誘導アンカー】95%完全遮光ディープネイビー ＋ blur(16px) ネオンフロスト維持
-// ・右側アクション群を 215px 引き上げ、公式「ルーム招待」ボタンとの物理的被りを根絶
-// ・走者リスト（.participants-list）のスクロールバー完全不可視化維持
+// v26.3.0 メニュードラッグ画面連動バウンス完全マスク版:
+// ・【メニュードラッグ完全マスク】#bottom-sheet に touch-action: none; および
+// 　overscroll-behavior: none; を適用。メニュー内ドラッグ時に画面全体が引っ張られ、
+// 　最下部に白いOS背景が露出するラバーバンド現象を物理的に完全遮断
+// ・【内部スクロール保護】走者一覧（.participants-list）は touch-action: pan-y; と
+// 　overscroll-behavior: contain; により独立した軽快な縦スクロールを100%維持
+// ・【カスタム顔スクロール保護】顔選択行（.custom-row）に touch-action: pan-x; を適用し、
+// 　横スクロール操作時の画面連動引っ張りを確実に防止
+// ・【既存機能完全維持】メニュー外タップによるクローズ処理や各種UIへの影響は一切なし
 // ==============================================================================
 
 export function injectStyles() {
@@ -65,7 +63,6 @@ export function injectStyles() {
 
         /* ==========================================================================
            左上：ランキング展開パネル
-           ★ min-width を 152px に適正化し、スコア10万〜100万時も名前との十分な余白を確保
            ========================================================================== */
         #stats-box {
             position: absolute;
@@ -122,7 +119,6 @@ export function injectStyles() {
             z-index: 50;
         }
 
-        /* 全丸型ボタン共通規格（44px・リアルタイム高透過・シアン枠） */
         .bottom-round-btn {
             width: 44px;
             height: 44px;
@@ -158,7 +154,6 @@ export function injectStyles() {
             filter: drop-shadow(0 0 6px rgba(0, 229, 255, 0.8));
         }
 
-        /* MENUボタン：44px丸型規格 */
         .btn-menu-round svg {
             fill: #00e5ff;
             width: 17px;
@@ -174,9 +169,8 @@ export function injectStyles() {
             text-shadow: 0 1px 2px rgba(0, 0, 0, 0.9);
         }
 
-        /* ★ 新設：ワールドリセットボタン固有スタイル（誤操作防止マージン＋回転エフェクト） */
         .btn-world-reset {
-            margin-bottom: 4px; /* 音量ボタンとの隙間を計14px（gap:10px + 4px）に広げ、誤タップを防止 */
+            margin-bottom: 4px;
             border-color: rgba(0, 229, 255, 0.35);
         }
         .btn-world-reset svg {
@@ -190,7 +184,6 @@ export function injectStyles() {
             fill: #00e5ff;
         }
 
-        /* ズーム限界到達時の無効化スタイル */
         .bottom-round-btn.disabled {
             opacity: 0.22;
             pointer-events: none;
@@ -202,7 +195,6 @@ export function injectStyles() {
 
         /* ==========================================================================
            右側ボタングループ：高頻度操作（ズーム＋/ー、ランキング、マップ）
-           ★ 下部基準位置を 215px 引き上げ（招待ボタン被り根絶）
            ========================================================================== */
         .right-action-group {
             position: absolute;
@@ -219,7 +211,6 @@ export function injectStyles() {
             fill: #00e5ff;
         }
 
-        /* BOOSTボタン：右手親指が最も自然に届く黄金位置 */
         #btn-boost {
             position: absolute;
             bottom: var(--safe-bottom);
@@ -284,7 +275,7 @@ export function injectStyles() {
         }
 
         /* ==========================================================================
-           弾幕チャット（高空セーフ通過帯）
+           弾幕チャット
            ========================================================================== */
         #danmaku-container {
             position: absolute;
@@ -391,7 +382,10 @@ export function injectStyles() {
             box-shadow: 0 10px 30px rgba(0, 0, 0, 0.85), 0 0 16px rgba(56, 189, 248, 0.35);
         }
 
-        /* --- ボトムシートメニュー --- */
+        /* ==========================================================================
+           ボトムシートメニュー
+           ★ touch-action: none; & overscroll-behavior: none; でドラッグによる画面引っ張りを物理遮断
+           ========================================================================== */
         #menu-overlay {
             display: none;
             position: absolute;
@@ -420,6 +414,8 @@ export function injectStyles() {
             padding: 12px 16px calc(var(--safe-bottom) + 12px);
             z-index: 160;
             pointer-events: auto;
+            touch-action: none;
+            overscroll-behavior: none;
         }
         #bottom-sheet.open {
             transform: translateY(0);
@@ -431,12 +427,14 @@ export function injectStyles() {
             background: rgba(255, 255, 255, 0.4);
             border-radius: 2px;
             margin: 0 auto 10px;
+            touch-action: none;
         }
         .sheet-header {
             display: flex;
             justify-content: space-between;
             align-items: center;
             margin-bottom: 12px;
+            touch-action: none;
         }
         .sheet-title {
             color: #ffffff;
@@ -466,6 +464,7 @@ export function injectStyles() {
             padding: 4px;
             border-radius: 10px;
             margin-bottom: 14px;
+            touch-action: none;
         }
         .sheet-tab-btn {
             background: transparent;
@@ -490,6 +489,7 @@ export function injectStyles() {
             grid-template-columns: 1fr 1fr;
             gap: 8px;
             margin-bottom: 14px;
+            touch-action: none;
         }
         .chat-chip {
             background: rgba(255, 255, 255, 0.12);
@@ -511,6 +511,7 @@ export function injectStyles() {
         .chat-input-bar {
             display: flex;
             gap: 8px;
+            touch-action: none;
         }
         .chat-input-box {
             flex: 1;
@@ -533,7 +534,7 @@ export function injectStyles() {
             cursor: pointer;
         }
 
-        /* 走者一覧タブ */
+        /* 走者一覧タブ：内部の縦スクロールのみ許可し、画面連動バウンスを contain */
         .participants-list {
             display: flex;
             flex-direction: column;
@@ -542,6 +543,7 @@ export function injectStyles() {
             overflow-y: auto;
             -webkit-overflow-scrolling: touch;
             touch-action: pan-y;
+            overscroll-behavior: contain;
             scrollbar-width: none;
             -ms-overflow-style: none;
             padding-right: 6px;
@@ -596,6 +598,7 @@ export function injectStyles() {
             display: flex;
             flex-direction: column;
             gap: 12px;
+            touch-action: none;
         }
         .custom-label {
             color: #ffffff;
@@ -608,6 +611,9 @@ export function injectStyles() {
             justify-content: space-around;
             gap: 6px;
             overflow-x: auto;
+            -webkit-overflow-scrolling: touch;
+            touch-action: pan-x;
+            overscroll-behavior: contain;
             padding-bottom: 4px;
         }
         .custom-face-btn {
@@ -638,6 +644,7 @@ export function injectStyles() {
             grid-template-columns: repeat(4, 1fr);
             gap: 10px;
             justify-items: center;
+            touch-action: none;
         }
         .custom-color-btn {
             width: 34px;
@@ -663,6 +670,7 @@ export function injectStyles() {
             line-height: 1.6;
             text-align: left;
             margin-bottom: 12px;
+            touch-action: none;
         }
         .creator-link-row {
             display: flex;
@@ -677,6 +685,7 @@ export function injectStyles() {
             font-size: 13px;
             font-weight: 700;
             cursor: pointer;
+            touch-action: none;
         }
         .creator-link-row:active {
             background: rgba(255, 255, 255, 0.2);
