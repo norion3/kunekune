@@ -1,16 +1,17 @@
 // ==============================================================================
 // 『くねくねバトル オンライン』スネークエンティティクラス (snake.js)
-// v29.1.0 オリジナル生体ビジュアル完全復元＆超巨大ボス機動性強化版:
+// v29.2.0 胴体履歴シフトAPI配備＆生体チューブ描画完全整合版:
+// ・【胴体履歴シフトAPI新設】net_handlers.js や main.js における大距離ワープ補正時、
+// 　リングバッファ内の全履歴座標を安全に一括平行移動させる `shiftHistory(dx, dy)` を配備。
+// 　カプセル化により外部直接操作による undefined 参照や形状崩壊を完全根絶
 // ・【不格好なお団子・数珠つなぎの完全根絶】無理な間引き(step)による隙間を全廃。
-// 　オリジナル版の密接な体節重ね合わせと一括パス fill() を融合し、一切の隙間がない滑らかな大蛇を描画
-// ・【オリジナル美しい生体テーパー復元】Math.pow(progress, 3.0) * 0.6 を採用し、
-// 　首回りを力強く太く保ち、尾先に向けて鋭くしなやかに細くなる大蛇シルエットを完全復元
+// 　密接な体節重ね合わせと一括パス fill() を融合し、一切の隙間がない滑らかな大蛇を描画
+// ・【オリジナル美しい生体テーパー完全維持】Math.pow(progress, 3.0) * 0.6 を採用し、
+// 　首回りを力強く太く保ち、尾先に向けて鋭くしなやかに細くなる大蛇シルエットを完全保持
 // ・【半透明ネオンチューブ光彩(alpha: 0.65)】オリジナル版の透明度0.65を適用。
 // 　節同士が滑らかに光を溶け合わせ、艶やかで美しい生体質感を表現
 // ・【超巨大ボスの突進力・威圧感強化】大型化（size > 22）した際に速度が落ちすぎて
-// 　サンドバッグ化する問題を解消。ベース巡航速度の下限（dynamicBaseSpeed >= 3.6）を担保し、
-// 　巨大なトグロで獲物を締め上げる真の怪獣ボスとしての恐怖と迫力を確立
-// ・【頭部と首の自然な一体化】頭部サイズ成長曲線(pow 0.46 * 0.40)を適正化
+// 　サンドバッグ化する問題を解消。ベース巡航速度の下限（dynamicBaseSpeed >= 3.6）を担保
 // ・【緊急離脱ブーストの無敵保護】リスポーン後の3.0秒無敵自然減衰を完全維持
 // ・【タイポ完全解消】drawOverheadBadge 内の currentFloorScore 参照を完全修正
 // ==============================================================================
@@ -107,7 +108,25 @@ export class Snake {
     }
 
     /**
-     * ★ オリジナル比率を強化したサイズ＆体長計算
+     * ★ ワープ補正用：胴体履歴の一括平行移動API
+     * 通信ラグ復旧や大距離テレポート時、体長を消去せずに形状を維持したまま座標を追従させる
+     * @param {number} dx X軸移動差分
+     * @param {number} dy Y軸移動差分
+     */
+    shiftHistory(dx, dy) {
+        const histLen = this.historyLength || 0;
+        for (let i = 0; i < histLen; i++) {
+            const idx = (this.headIdx + i) % MAX_HISTORY;
+            const pt = this.history[idx];
+            if (pt) {
+                pt.x += dx;
+                pt.y += dy;
+            }
+        }
+    }
+
+    /**
+     * サイズ＆体長計算
      * スコア上昇時に頭部と首回りの太さがしっかりと成長し、巨大化の快感をダイレクトに伝える
      */
     recalculateSize() {
@@ -151,14 +170,14 @@ export class Snake {
 
         const timeScale = Math.max(0.1, Math.min(3.0, dtSec * 60));
 
-        // ★ 無敵時間の安全な自然減衰（緊急離脱ブーストでも無敵が維持される）
+        // 無敵時間の安全な自然減衰（緊急離脱ブーストでも無敵が維持される）
         if (this.invulnerableTimer > 0) {
             this.invulnerableTimer = Math.max(0, this.invulnerableTimer - dtSec);
         }
 
         const newBoostingState = boostActive && this.score > 60;
 
-        // 自機の場合：ブースト状態が変化した瞬間に即座にネットワーク同期をトリガー（ラグ根絶）
+        // 自機の場合：ブースト状態が変化した瞬間に即座にネットワーク同期をトリガー
         if (this.isPlayer && this._prevBoostingState !== newBoostingState) {
             this._prevBoostingState = newBoostingState;
             if (typeof window !== 'undefined' && window.NetworkManager && typeof window.NetworkManager.forceImmediateSync === 'function') {
@@ -168,7 +187,7 @@ export class Snake {
 
         this.isBoosting = newBoostingState;
         
-        // ★ 超巨大ボスの機動性保証：大型化しても速度が落ちすぎず、重量感ある突進力を維持（下限3.6）
+        // 超巨大ボスの機動性保証：大型化しても速度が落ちすぎず、重量感ある突進力を維持（下限3.6）
         const dynamicBaseSpeed = Math.max(3.6, 3.4 + (12.0 / Math.max(10, this.size)));
         const currentSpeed = this.isBoosting ? dynamicBaseSpeed * BOOST_SPEED_MULT : dynamicBaseSpeed;
         this.speed = currentSpeed;
@@ -203,8 +222,7 @@ export class Snake {
             }
         }
 
-        // ★ オリジナル版準拠の関節間隔（stepDist = this.size * 0.58）
-        // 円同士がしっかりと重なり合い、お団子状のくびれ・隙間を完全に埋める黄金比
+        // 関節間隔（stepDist = this.size * 0.58）
         this.distCounter += this.speed * timeScale;
         const stepDist = this.size * 0.58;
         if (this.distCounter >= stepDist) {
@@ -228,14 +246,13 @@ export class Snake {
     }
 
     /**
-     * ★ オリジナル生体ビジュアル復元描画
-     * お団子状の間引きを完全撤廃し、半透明(0.65)の密接な円パス一括 fill() により、
-     * 一切の隙間がない滑らかなネオンチューブ生体ボディを描画する
+     * 生体ビジュアル描画
+     * 半透明(0.65)の密接な円パス一括 fill() により、一本の滑らかな生体チューブを形成
      */
     draw(ctx, frameCount, cameraScale = 1.0) {
         if (this.isDead || !this.isVisible) return;
 
-        // ズームアウト時の小型獲物強調パルスリング（オリジナル継承）
+        // ズームアウト時の小型獲物強調パルスリング
         const localPlayer = (typeof window !== 'undefined' && window.localPlayerInstance) ? window.localPlayerInstance : null;
         if (!this.isPlayer && cameraScale < 0.75 && localPlayer && !localPlayer.isDead) {
             if (this.size < localPlayer.size * 0.65 || this.score < localPlayer.score * 0.5) {
@@ -265,9 +282,7 @@ export class Snake {
             : 1.0;
 
         // =========================================================================
-        // 1. 胴体メインボディ描画（オリジナル完全復元）
-        // globalAlpha: 0.65 により円同士が重なって艶やかなグラデーションとなり、
-        // ベタ塗りの「丸の連なり」感を完全消去して滑らかな一本の生体チューブを形成
+        // 1. 胴体メインボディ描画
         // =========================================================================
         ctx.globalAlpha = 0.65 * invulnAlpha;
         ctx.fillStyle = this.color;
@@ -279,10 +294,8 @@ export class Snake {
             if (!pt) continue;
 
             const progress = i / histLen;
-            // ★ オリジナルのテーパー計算式：首元が太く、尾先だけが鋭く細くなる美しいシルエット
             const segmentRadius = this.size * (1 - Math.pow(progress, 3.0) * 0.60);
 
-            // オリジナルの波打ちオフセット（うねり）
             const waveAmplitude = this.size * 0.22;
             const waveOffset = Math.sin(frameCount * 0.15 - i * 0.38) * waveAmplitude;
             const normAngle = (pt.angle || 0) + Math.PI / 2;
@@ -295,8 +308,7 @@ export class Snake {
         ctx.fill();
 
         // =========================================================================
-        // 2. 胴体光彩・生体ウロコシャドウ（オリジナル完全復元）
-        // 背骨に沿って流れる有機的な陰影効果
+        // 2. 胴体光彩・生体ウロコシャドウ
         // =========================================================================
         ctx.beginPath();
         for (let i = histLen - 1; i >= 0; i--) {
@@ -379,7 +391,6 @@ export class Snake {
         ctx.translate(this.x, badgeY);
 
         const currentFloorScore = Math.floor(this.score);
-        // 10万・100万時のバッジはみ出しを防止する短縮フォーマット（タイポ完全修正）
         const scoreText = formatBadgeScore(currentFloorScore);
         const nameText = this.name.length > 10 ? this.name.slice(0, 9) + '…' : this.name;
 

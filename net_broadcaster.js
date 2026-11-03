@@ -1,12 +1,15 @@
 // ==============================================================================
 // 『くねくねバトル オンライン』マルチプレイ送信ループ＆アクションキュー管理 (net_broadcaster.js)
-// v27.1.0 段階的フォールバック・ゴースト餌完全根絶版:
-// ・【餌同期の絶対座標化】queueFoodPick のシグネチャを (x, y) へ変更し、インデックス依存のバグを完全排除
-// ・【データ蒸発完全根絶】25ms レートリミッターに接触して送信をスキップした際、パケットに同封されていた未送信データをキュー先頭へ安全に差し戻し（unshift）
+// v27.2.0 餌同期最優先保護＆段階的スリム化完全適応版:
+// ・【餌同期データ最優先保護】パケットサイズが1KB（1010バイト）に近づいた際、
+// 　同期破綻・ゴースト餌の主原因となる「餌取得データ(pk)」を最後まで死守。
+// 　優先度の低い順（ランキング lb → チャット ch → 肉片クラスタ dc → 肉片単体 dp）
+// 　から段階的に削り、キューへ安全に差し戻す（unshift）堅牢なフォールバックを確立
+// ・【餌同期の絶対座標化】queueFoodPick のシグネチャを (x, y) で完全運用
+// ・【データ蒸発完全根絶】25ms レートリミッター接触時も全未送信データを安全に先頭へ差し戻し
 // ・【AgentSDK防衛レートリミッター】同一フレーム内多重送信によるパケットサイレント破棄を防ぐ25msスロットリング
-// ・【即時送信対応】ブースト開始・終了などの状態変化を100ms周期を待たずに即時送信する forceImmediateSync を配備しラグを根絶
-// ・【1KB防衛：段階的フォールバック】パケットサイズが限界に達した場合、一律パージによるスタベーション（ゴースト餌化）を防ぐため、優先度の低いデータから段階的に削る仕組みを導入
-// ・【キュー保護】差し戻し時に length 制限を適用し、古い未同期データのロストを防止
+// ・【即時送信対応】ブースト変化時の即時送信 forceImmediateSync 完備
+// ・【キュー保護】差し戻し時に各配列の上限を適用し、古いデータの肥大化を完全防止
 // ==============================================================================
 
 import {
@@ -36,7 +39,7 @@ export const NetBroadcaster = {
         this._latestLeaderboard = lbData;
     },
 
-    // ★ 餌取得のキューイングを絶対座標 (x, y) に変更
+    // 餌取得のキューイング（絶対座標 x, y）
     queueFoodPick(x, y) {
         this._pendingPicks.push(packFoodPickTuple(x, y));
         if (this._pendingPicks.length > 64) this._pendingPicks.length = 64;
@@ -221,14 +224,17 @@ export const NetBroadcaster = {
             let rawString = JSON.stringify(msgObj);
             let byteLength = getUtf8ByteLength(rawString);
 
-            // ★ 1KB防衛：段階的フォールバック
-            // 一律削除によるスタベーション（ゴースト餌の温床）を防ぐため、優先度の低いデータから段階的に削る
+            // =========================================================================
+            // 1KB防衛：段階的フォールバック（餌取得データ pk を最優先死守）
+            // =========================================================================
             if (byteLength >= 1010) {
+                // 1. リーダーボード情報（lb）の削除（次回送信時に再送可能）
                 if (msgObj.lb) {
                     delete msgObj.lb;
                     rawString = JSON.stringify(msgObj);
                     byteLength = getUtf8ByteLength(rawString);
                 }
+                // 2. チャット（ch）の差し戻し
                 if (byteLength >= 1010 && msgObj.ch) {
                     this._pendingChats.unshift(...msgObj.ch);
                     if (this._pendingChats.length > 10) this._pendingChats.length = 10;
@@ -236,6 +242,7 @@ export const NetBroadcaster = {
                     rawString = JSON.stringify(msgObj);
                     byteLength = getUtf8ByteLength(rawString);
                 }
+                // 3. 肉片クラスタ（dc）の差し戻し
                 if (byteLength >= 1010 && msgObj.dc) {
                     this._pendingClusters.unshift(...msgObj.dc);
                     if (this._pendingClusters.length > 12) this._pendingClusters.length = 12;
@@ -243,6 +250,7 @@ export const NetBroadcaster = {
                     rawString = JSON.stringify(msgObj);
                     byteLength = getUtf8ByteLength(rawString);
                 }
+                // 4. 肉片単体（dp）の差し戻し
                 if (byteLength >= 1010 && msgObj.dp) {
                     this._pendingDrops.unshift(...msgObj.dp);
                     if (this._pendingDrops.length > 48) this._pendingDrops.length = 48;
@@ -250,15 +258,14 @@ export const NetBroadcaster = {
                     rawString = JSON.stringify(msgObj);
                     byteLength = getUtf8ByteLength(rawString);
                 }
-                if (byteLength >= 1010 && msgObj.pk) {
-                    // pk (餌取得) は同期破綻を防ぐため最後まで粘るが、それでも超える場合は削る
-                    this._pendingPicks.unshift(...msgObj.pk);
+                // 5. 餌取得（pk）は同期破綻を防ぐため最後まで保持。万一それでも超える場合のみ半分退避
+                if (byteLength >= 1010 && Array.isArray(msgObj.pk) && msgObj.pk.length > 2) {
+                    const keepCount = Math.floor(msgObj.pk.length / 2);
+                    const overflow = msgObj.pk.splice(keepCount);
+                    this._pendingPicks.unshift(...overflow);
                     if (this._pendingPicks.length > 64) this._pendingPicks.length = 64;
-                    delete msgObj.pk;
                     rawString = JSON.stringify(msgObj);
                 }
-                
-                console.warn(`[NetBroadcaster] パケットサイズ1KB超過のため段階的スリム化を実行しました。`);
             }
 
             window.AgentSDK.room.sendMessage({ msg_data: rawString, message: rawString });

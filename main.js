@@ -1,17 +1,17 @@
 // ==============================================================================
 // 『くねくねバトル オンライン』Phase 7 マスター統合オーケストレーター (main.js)
-// v28.4.0 空き枠AIダミーID適正化・進行性不整合完全根絶版:
-// ・【空き枠AIダミーID適正化】initGame および onHostPromoted 内で、空き枠AIスロットに
-// 　割り当てるIDの計算式が `i - MAX_PLAYERS + 1` となっており、i < 5 の時にマイナス値（-5など）
-// 　が割り当てられてデータ不整合や同期参照事故を起こしていた致命的バグを完全解消。
-// 　既存AI（1〜94）と絶対に衝突しない正の専用ID空間 `MAX_AIS + i + 1`（95〜100）へ統一適正化
+// v28.5.0 デッドレコニング補正適正化＆胴体消失完全根絶版:
+// ・【デッドレコニング補正閾値緩和】remoteSnakes のワープ判定閾値を旧 400px (distSq > 160000)
+// 　から 1000px (distSq > 1000000) へ緩和し、net_handlers.js と完全同期。
+// 　さらに超大距離ワープ時でも胴体履歴(history)を平行移動させて形状を維持し、
+// 　通常ラグによる敵スネークの胴体瞬間消失・頭だけ化・カクつきを完全根絶
+// ・【空き枠AIダミーID適正化維持】initGame および onHostPromoted 内で、
+// 　既存AI（1〜94）と衝突しない正の専用ID空間 `MAX_AIS + i + 1`（95〜100）へ統一維持
 // ・【リセットボタン動的表示連動】updateResetButtonVisibility により、
 // 　ソロプレイ対戦中のみ #btn-world-reset を表示し、マルチプレイ時は安全に非表示維持
 // ・【CPUキルログ完全排除】プレイヤー（自機）または人間の参加者が関与した撃破のみ通知表示
 // ・【スコア単位短縮フォーマッター】formatScore 配備（10k / 1M 短縮表示）
-// ・【ランキング文字被り解消】スコア幅適正化とレイアウト最適化
 // ・【ゴースト完全パージ】切断スロット残留エンティティの即時消去
-// ・【デッドレコニング旋回ジッター解消】相殺ベクトルに targetAngle を使用
 // ・【餌同期の絶対座標化】checkFoodConsumption のコールバックを絶対座標 (x, y) に適応
 // ==============================================================================
 
@@ -301,7 +301,7 @@ export function initGame(isRespawn = false) {
                 if (i === NetworkManager.mySlot) continue;
                 const slotData = NetworkManager.slots[i];
                 if (slotData && slotData.isAI) {
-                    // ★ 修正：既存AI(1〜94)と重複せず、かつ負数にならない一意な正のID空間（95〜100）へ割り当て
+                    // 既存AI(1〜94)と重複せず、かつ負数にならない一意な正のID空間（95〜100）へ割り当て
                     const dummyId = MAX_AIS + i + 1;
                     const aiSnake = new Snake(false, dummyId, slotData.name || `CPU ${i + 1}`, slotData.color, 'normal');
                     const angle = Math.random() * Math.PI * 2;
@@ -423,7 +423,7 @@ NetworkManager.setCallbacks({
             if (i === NetworkManager.mySlot) continue;
             const slotData = NetworkManager.slots[i];
             if (slotData && slotData.isAI) {
-                // ★ 修正：ホスト昇格時も一意な正のID空間（95〜100）へ割り当て
+                // ホスト昇格時も一意な正のID空間（95〜100）へ割り当て
                 const dummyId = MAX_AIS + i + 1;
                 const aiSnake = new Snake(false, dummyId, slotData.name || `CPU ${i + 1}`, slotData.color, 'normal');
                 const angle = Math.random() * Math.PI * 2;
@@ -618,7 +618,9 @@ function gameLoop() {
                 return;
             }
 
-            // デッドレコニング＆二重加算防止
+            // =========================================================================
+            // デッドレコニング＆二重加算防止（補正閾値 1000px 緩和＆胴体維持補正）
+            // =========================================================================
             if (remote.targetNetX !== undefined && remote.targetNetY !== undefined) {
                 const timeScale = Math.max(0.1, Math.min(3.0, dtSec * 60));
                 
@@ -626,7 +628,22 @@ function gameLoop() {
                 remote.targetNetY += Math.sin(remote.targetAngle) * (remote.speed * timeScale);
 
                 const distSq = (remote.targetNetX - remote.x) ** 2 + (remote.targetNetY - remote.y) ** 2;
-                if (distSq > 160000) {
+                
+                // ★ 400px (160000) から 1000px (1000000) に緩和し、通常ラグでの不要な瞬間移動を排除
+                if (distSq > 1000000) {
+                    const shiftX = remote.targetNetX - remote.x;
+                    const shiftY = remote.targetNetY - remote.y;
+                    
+                    // 胴体履歴を平行移動させて形状を維持
+                    const histLen = remote.historyLength || 0;
+                    for (let i = 0; i < histLen; i++) {
+                        const idx = (remote.headIdx + i) % 2048;
+                        const pt = remote.history[idx];
+                        if (pt) {
+                            pt.x += shiftX;
+                            pt.y += shiftY;
+                        }
+                    }
                     remote.x = remote.targetNetX;
                     remote.y = remote.targetNetY;
                 } else {

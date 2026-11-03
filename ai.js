@@ -1,15 +1,16 @@
 // ==============================================================================
 // 『くねくねバトル オンライン』スネーク.io型 自律生態系AIマネージャー (ai.js)
-// v29.2.0 開幕適正バランス＆成長型生態系ピラミッド調律版:
-// ・【開幕理不尽インフレの完全撤廃】スタート直後に15kなどの巨大ボスが徘徊して即死する
-// 　バランス崩壊を解消。開幕時は最大でも800〜1,200pt（体長25節前後の程よい強敵）に抑え、
-// 　プレイヤーが小さな敵を狩って成長するRPG的サバイバルの楽しさと達成感を復元
-// ・【自然な成長型ピラミッド配分】開幕スコアを 小型85%(50〜150pt)、中堅12%(200〜500pt)、
-// 　エリアボス3%(800〜1,200pt) へ調律。超巨大ボスは時間経過やキルで自然に誕生する健全設計へ移行
-// ・【リスポーン密度の適正化】リスポーン時の獲得スコアも開幕分布と整合させ、理不尽な急激沸きを防止
+// v29.3.0 画面外AI成長キャップ＆サバイバル適正化版:
+// ・【画面外AI成長キャップ新設】長時間プレイ時にマップ外で数万ptの超巨大モンスターが
+// 　無制限に量産され、リスポーンしたプレイヤーが理不尽に轢き殺される詰み現象を解消。
+// 　画面外仮想成長に健全な上限キャップ（MAX_VIRTUAL_AI_SCORE = 3,000pt / 体長約45節）を設け、
+// 　プレイヤーがいつでも逆転を狙える健全な生態系バランスを維持
+// ・【開幕ピラミッド配分完全維持】小型85%(50〜150pt)、中堅12%(200〜500pt)、
+// 　エリアボス3%(800〜1,200pt) によるRPG的サバイバルの楽しさを完全継承
+// ・【リスポーン密度の適正化】リスポーン時の獲得スコアも開幕分布と整合
 // ・【全機能完全継承】カミカゼ暗殺(AMBUSH)、包囲コイリング(HUNTER)、3種ちょっかい(HARASS)、
 // 　ハイエナ肉片争奪(SCAVENGER)、ビビり逃走(PANIC)、大回遊(CRUISING)、完全DeltaTime、
-// 　動的循環スポーン、画面外仮想成長の全ルーチンを一切省略せず100%完全保持
+// 　動的循環スポーン、O(1)リングバッファ衝突回避を一切省略せず100%完全保持
 // ==============================================================================
 
 import { MAP_SIZE, SNAKE_COLORS } from './constants.js';
@@ -25,6 +26,9 @@ const AI_STATE = {
     PANIC: 5,      // ビビり逃走（特定臆病個体のみ限定発動）
     AMBUSH: 6      // カミカゼ特攻（巨大スネークの首元へ捨て身の突進）
 };
+
+// 画面外AIの仮想成長上限スコア（過度なインフレ・理不尽リスポーン即死を防止）
+const MAX_VIRTUAL_AI_SCORE = 3000;
 
 export class AIManager {
     constructor() {
@@ -77,12 +81,10 @@ export class AIManager {
             const sy = Math.max(400, Math.min(MAP_SIZE - 400, playerY + Math.sin(angle) * dist));
             ai.reset(sx, sy);
 
-            // ★ 開幕の健全な生態系ピラミッド配分（理不尽超巨大ボスの開幕排除）
-            // スタート直後は誰もが狩れる・挑める程よい強さに抑え、時間経過とともに大物に育つバランスへ
+            // 開幕の健全な生態系ピラミッド配分（理不尽超巨大ボスの開幕排除）
             const scoreRand = Math.random();
             if (scoreRand < 0.03) {
                 // 3%: 開幕時点でのエリアボス・強敵（800〜1,200pt / 体長20〜25節）
-                // 画面外からいきなり理不尽に轢き殺されることなく、狙えば下克上できる絶妙な目標
                 ai.addScore(Math.floor(800 + Math.random() * 400));
                 this.aiMeta[i - 1].persona = Math.random() < 0.5 ? 'cruiser' : 'hunter';
             } else if (scoreRand < 0.15) {
@@ -98,7 +100,7 @@ export class AIManager {
     }
 
     /**
-     * AIシミュレーション更新（動的循環スポーン＆仮想成長対応）
+     * AIシミュレーション更新（動的循環スポーン＆仮想成長上限対応）
      * @param {Object} player 
      * @param {Array} allSnakes 
      * @param {number} frameCount 
@@ -111,7 +113,7 @@ export class AIManager {
         const safeDt = (typeof dtSec === 'number' && dtSec > 0) ? Math.min(dtSec, 0.1) : (1 / 60);
         const timeScale = Math.max(0.1, Math.min(3.0, safeDt * 60));
 
-        // 1. 【画面外AIの仮想バックグラウンド成長】（ランキング静止バグ防止＆自然な巨大化）
+        // 1. 【画面外AIの仮想バックグラウンド成長】（上限キャップ付き健全成長）
         this._virtualGrowthTimer += safeDt;
         if (this._virtualGrowthTimer >= 0.5) {
             const growthInterval = this._virtualGrowthTimer;
@@ -124,18 +126,20 @@ export class AIManager {
                 const meta = this.aiMeta[i];
                 if (!meta) continue;
 
-                // 成長レートを適正化（毎秒 6〜12pt 程度にマイルド化）
-                let gainRate = 6;
-                if (meta.persona === 'hunter' || meta.persona === 'cruiser') gainRate = 12;
-                if (meta.persona === 'forager') gainRate = 8;
+                // ★ 上限キャップ判定：3,000pt を超えたAIは画面外での自動成長をストップし過剰インフレを防止
+                if (ai.score < MAX_VIRTUAL_AI_SCORE) {
+                    let gainRate = 6;
+                    if (meta.persona === 'hunter' || meta.persona === 'cruiser') gainRate = 12;
+                    if (meta.persona === 'forager') gainRate = 8;
 
-                ai.addScore(gainRate * growthInterval);
+                    ai.addScore(gainRate * growthInterval);
 
-                // 仮想キル発生頻度と獲得量（時間をかけて徐々に大物が誕生する）
-                if (Math.random() < 0.005) {
-                    const killBonus = Math.floor(120 + Math.random() * 380);
-                    ai.addScore(killBonus);
-                    ai.kills = (ai.kills || 0) + 1;
+                    // 仮想キル発生頻度と獲得量
+                    if (Math.random() < 0.005) {
+                        const killBonus = Math.floor(120 + Math.random() * 380);
+                        ai.addScore(killBonus);
+                        ai.kills = (ai.kills || 0) + 1;
+                    }
                 }
             }
         }
@@ -175,7 +179,7 @@ export class AIManager {
                     const ry = Math.max(400, Math.min(MAP_SIZE - 400, pY + Math.sin(ang) * d));
                     ai.reset(rx, ry);
 
-                    // 復活時のスコア調律（大半は初期サイズ、稀に中堅で再開）
+                    // 復活時のスコア調律
                     const respawnRand = Math.random();
                     if (respawnRand < 0.02) {
                         ai.addScore(Math.floor(500 + Math.random() * 500)); // 2%: やや強敵
@@ -289,7 +293,6 @@ export class AIManager {
         if (threatFound) return;
 
         // 3. 【カミカゼ暗殺特攻（AMBUSH）】
-        // 小型個体が巨大スネークの首元へブースト割り込みを仕掛け、一発逆転を狙うsnake.ioの本質的スリル
         if ((meta.persona === 'ambusher' || (meta.persona === 'harasser' && Math.random() < 0.4)) && ai.score > 60) {
             let giantTarget = null;
             let minGiantDistSq = 1400 * 1400;
@@ -324,7 +327,7 @@ export class AIManager {
             }
         }
 
-        // 4. 【ビビり逃走の限定化】（臆病型のみ至近距離で発動し、敵が全員逃げる過疎化を防止）
+        // 4. 【ビビり逃走の限定化】
         if (meta.persona === 'timid' && meta.panicCooldown <= 0 && meta.state !== AI_STATE.PANIC && ai.score > 60) {
             let giantThreat = null;
             const panicDistSq = 350 * 350;

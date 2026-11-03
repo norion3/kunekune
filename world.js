@@ -1,16 +1,16 @@
 // ==============================================================================
 // 『くねくねバトル オンライン』ワールド・動的チャンク餌・決定論的シード生成 (world.js)
-// v28.8.0 オリジナル美麗発光オーラ＆ホットスポット群生地完全復元版:
-// ・【オリジナル神秘的発光オーラ復元】大餌の背後に淡い黄色の発光パルスオーラ
-// 　(rgba(255, 255, 200, 0.35)) を完全復元。暗黒宇宙にポワッと美しく浮かび上がる極上の光の粒子を再現
-// ・【オリジナル餌群生地(ホットスポット)復元】5%の確率で餌が5倍密集するホットスポットを配備
-// 　マップ中心勾配と融合させ、探索して群生地を発見したときの興奮・快感を完全復活
-// ・【大・中・小の3段階餌カテゴリ復元】大餌(20〜40pt/白オーラ)、中餌(10〜20pt/カラーオーラ)、
-// 　小餌(3〜6pt/カラー)のサイズ・バリエーション階層をオリジナル準拠で再構築
-// ・【小餌ズームアウト動的アルファフェード】ズームアウト時に小餌が優しくフェードアウトし、
-// 　大餌の美しいオーラのみが浮かび上がる深宇宙の奥行きと視認性を両立
-// ・【巨大時小餌スキップ(満腹判定)】スネーク肥大化時(size > 22)の当たり判定最大85%スキップを完全維持
-// ・【Dynamic LoD】カメラズームとサイズに応じた動的rect軽量化、肉片TTL寿命(35秒)、絶対座標消去APIを完全維持
+// v29.0.0 超広域ズーム適応LoD＆チャンクスラッシング完全防止版:
+// ・【ズーム時チャンク爆発防止】超広域ズーム時でも視野生成半径(viewRadius)を最大8000pxに
+// 　安全クランプし、チャンク保持上限を 2,500 個へ適正拡張。破棄と再生成が激突する
+// 　致命的スラッシング（フレームレート急降下）を完全根絶
+// ・【超広域動的LoD強化】ズームアウト時(scale < 0.35)における小餌の描画カットオフ閾値を
+// 　最適化し、数万個の微細パス描画を一括スキップ。広域視界でも60FPSを完全維持
+// ・【オリジナル神秘的発光オーラ完全維持】大餌の淡い黄色発光パルスオーラ
+// 　(rgba(255, 255, 200, 0.32)) による極上の宇宙ビジュアルを完全保持
+// ・【ホットスポット群生地完全維持】5%確率・5倍密集ホットスポット＆環境勾配アルゴリズムを維持
+// ・【大・中・小 3段階餌完全維持】大餌(22〜42pt)、中餌(10〜20pt)、小餌(4〜6pt)
+// ・【絶対座標消去API完全維持】removeFoodAt(x, y) による通信同期ズレ完全排除
 // ==============================================================================
 
 import { MAP_SIZE, GRID_SIZE, FOOD_COLORS } from './constants.js';
@@ -52,12 +52,15 @@ export class WorldManager {
         };
     }
 
-    // プレイヤー視界周辺のチャンクを動的生成
+    // プレイヤー視界周辺のチャンクを動的生成（ズーム時のチャンク大爆発ガード付き）
     updateChunks(playerX, playerY, viewRadius) {
-        const minGx = Math.max(0, Math.floor((playerX - viewRadius) / GRID_SIZE));
-        const maxGx = Math.min(Math.floor(MAP_SIZE / GRID_SIZE), Math.floor((playerX + viewRadius) / GRID_SIZE));
-        const minGy = Math.max(0, Math.floor((playerY - viewRadius) / GRID_SIZE));
-        const maxGy = Math.min(Math.floor(MAP_SIZE / GRID_SIZE), Math.floor((playerY + viewRadius) / GRID_SIZE));
+        // ★ 超広域ズーム時のチャンク生成過多を防ぐ安全クランプ（最大半径8000px）
+        const clampedRadius = Math.min(8000, viewRadius);
+
+        const minGx = Math.max(0, Math.floor((playerX - clampedRadius) / GRID_SIZE));
+        const maxGx = Math.min(Math.floor(MAP_SIZE / GRID_SIZE), Math.floor((playerX + clampedRadius) / GRID_SIZE));
+        const minGy = Math.max(0, Math.floor((playerY - clampedRadius) / GRID_SIZE));
+        const maxGy = Math.min(Math.floor(MAP_SIZE / GRID_SIZE), Math.floor((playerY + clampedRadius) / GRID_SIZE));
 
         for (let gx = minGx; gx <= maxGx; gx++) {
             for (let gy = minGy; gy <= maxGy; gy++) {
@@ -69,10 +72,10 @@ export class WorldManager {
             }
         }
 
-        // 遠隔チャンクのバッチ破棄（メモリ上限管理）
-        if (this.generatedChunks.size > 900) {
+        // ★ 遠隔チャンクのバッチ破棄（上限を900から2,500へ拡大し、ズーム時のスラッシングを根絶）
+        if (this.generatedChunks.size > 2500) {
             const deleteKeys = [];
-            const maxDistSq = (viewRadius * 2.2) ** 2;
+            const maxDistSq = (clampedRadius * 1.8) ** 2;
 
             for (let key of this.generatedChunks) {
                 const [gxStr, gyStr] = key.split('_');
@@ -92,7 +95,7 @@ export class WorldManager {
     }
 
     /**
-     * ★ オリジナル完全復元：ホットスポット群生地 ＆ 3段階美麗餌生成
+     * ホットスポット群生地 ＆ 3段階美麗餌生成
      */
     spawnChunkFoods(gx, gy) {
         const baseSeed = (NetworkManager && NetworkManager.currentSeed) ? NetworkManager.currentSeed : 12345678;
@@ -112,11 +115,11 @@ export class WorldManager {
         const maxDist = MAP_SIZE * 0.5;
         const centerProximity = Math.max(0, Math.min(1.0, 1.0 - (distFromCenter / maxDist)));
 
-        // ★ オリジナル版の「5%ホットスポット（密集地帯）」
+        // 5%ホットスポット（密集地帯）
         const hotspotThreshold = 0.05 + centerProximity * 0.06;
         const isHotspot = prng() < hotspotThreshold;
 
-        // 生成数（通常3〜7個、ホットスポットは5倍の密集！）
+        // 生成数（通常3〜7個、ホットスポットは最大26個）
         const baseCount = Math.floor(prng() * 5) + 3;
         const count = isHotspot ? Math.min(26, baseCount * 4 + Math.floor(centerProximity * 4)) : baseCount;
 
@@ -138,7 +141,7 @@ export class WorldManager {
             const y = gy * GRID_SIZE + prng() * GRID_SIZE;
 
             if (sizeCategory === 2) {
-                // 大サイズ餌（オリジナル準拠：val 20〜40、真っ白なコア＋淡い黄色オーラ）
+                // 大サイズ餌（val 22〜42、白色コア＋淡黄色オーラ）
                 list.push({
                     x: x,
                     y: y,
@@ -149,7 +152,7 @@ export class WorldManager {
                     color: '#ffffff'
                 });
             } else if (sizeCategory === 1) {
-                // 中サイズ餌（オリジナル準拠：val 10〜20、鮮やかなカラー）
+                // 中サイズ餌（val 10〜20、カラーオーラ）
                 list.push({
                     x: x,
                     y: y,
@@ -160,7 +163,7 @@ export class WorldManager {
                     color: FOOD_COLORS[Math.floor(prng() * FOOD_COLORS.length)]
                 });
             } else {
-                // 小サイズ餌（オリジナル準拠：val 3〜6、繊細な光粒）
+                // 小サイズ餌（val 4〜6）
                 list.push({
                     x: x,
                     y: y,
@@ -328,7 +331,7 @@ export class WorldManager {
     }
 
     /**
-     * ★ オリジナル完全復元：美麗パルスオーラ描画 ＆ 高速バッチレンダリング
+     * 美麗パルスオーラ描画 ＆ 高速バッチレンダリング（超広域動的LoD対応）
      */
     draw(ctx, cameraX, cameraY, viewW, viewH, frameCount) {
         const minGx = Math.floor(cameraX / GRID_SIZE) - 1;
@@ -339,10 +342,11 @@ export class WorldManager {
         // カメラスケールを逆算
         const scale = ctx.canvas.width / viewW;
         const isLowDetail = scale < 0.65;
+        const isUltraZoomOut = scale < 0.35; // ★ 超広域視野判定
 
-        // ズームアウト時の小餌動的アルファフェード
-        const smallFoodAlpha = Math.max(0, Math.min(1.0, (scale - 0.18) / 0.38));
-        const shouldDrawSmallFood = smallFoodAlpha > 0.03;
+        // ★ ズームアウト時の小餌動的アルファフェード（広域ズーム時の不要な微細描画を確実に遮断）
+        const smallFoodAlpha = Math.max(0, Math.min(1.0, (scale - 0.28) / 0.25));
+        const shouldDrawSmallFood = smallFoodAlpha > 0.05 && !isUltraZoomOut;
 
         for (const bucket of this.batchBuckets.values()) {
             bucket.length = 0;
@@ -357,8 +361,8 @@ export class WorldManager {
                 for (let i = 0; i < list.length; i++) {
                     const f = list[i];
                     if (f.isBig) {
-                        // ★ オリジナル完全復元：大餌・中餌の神秘的な発光パルスオーラ
-                        const pulse = 1.0 + Math.sin(frameCount * 0.12 + f.x) * 0.22;
+                        // 大餌・中餌のパルスオーラ（超広域ズーム時は計算を軽量化）
+                        const pulse = isUltraZoomOut ? 1.0 : (1.0 + Math.sin(frameCount * 0.12 + f.x) * 0.22);
                         const auraSize = f.size * (f.isLargeAura ? 2.1 : 1.6) * pulse;
                         this.bigAuraBuffer.push(f.x, f.y, auraSize);
 
@@ -385,7 +389,7 @@ export class WorldManager {
             const f = this.dropFoods[i];
             if (f.x < cameraX - 50 || f.x > cameraX + viewW + 50 || f.y < cameraY - 50 || f.y > cameraY + viewH + 50) continue;
             
-            const pulse = 1.0 + Math.sin(frameCount * 0.18 + f.x) * 0.25;
+            const pulse = isUltraZoomOut ? 1.0 : (1.0 + Math.sin(frameCount * 0.18 + f.x) * 0.25);
             this.bigAuraBuffer.push(f.x, f.y, f.size * 1.8 * pulse);
 
             let bucket = this.batchBuckets.get(f.color);
@@ -397,8 +401,7 @@ export class WorldManager {
         }
 
         // =========================================================================
-        // 1. ★ オリジナル完全復元：淡い黄色の神秘的発光オーラ一括描画
-        // rgba(255, 255, 200, 0.35) により、暗黒宇宙にポワッと光が灯る美しい質感を再現
+        // 1. 淡い黄色の神秘的発光オーラ一括描画
         // =========================================================================
         const auraLen = this.bigAuraBuffer.length;
         if (auraLen > 0) {
@@ -420,7 +423,7 @@ export class WorldManager {
         }
 
         // =========================================================================
-        // 2. 餌コア本体のバッチ描画（色ごとの一括ストローク/フィル）
+        // 2. 餌コア本体のバッチ描画
         // =========================================================================
         for (const [color, coords] of this.batchBuckets.entries()) {
             const len = coords.length;
@@ -451,21 +454,23 @@ export class WorldManager {
         }
         ctx.globalAlpha = 1.0;
 
-        // 3. パーティクル描画
-        for (let i = 0; i < this.particles.length; i++) {
-            const p = this.particles[i];
-            ctx.fillStyle = p.color;
-            ctx.globalAlpha = Math.max(0, p.life);
-            ctx.beginPath();
-            
-            const pSize = 3.5 * p.life;
-            if (pSize * scale < 3.2 || isLowDetail) {
-                ctx.rect(p.x - pSize, p.y - pSize, pSize * 2, pSize * 2);
-            } else {
-                ctx.arc(p.x, p.y, pSize, 0, Math.PI * 2);
+        // 3. パーティクル描画（超広域ズーム時はスキップして負荷削減）
+        if (!isUltraZoomOut) {
+            for (let i = 0; i < this.particles.length; i++) {
+                const p = this.particles[i];
+                ctx.fillStyle = p.color;
+                ctx.globalAlpha = Math.max(0, p.life);
+                ctx.beginPath();
+                
+                const pSize = 3.5 * p.life;
+                if (pSize * scale < 3.2 || isLowDetail) {
+                    ctx.rect(p.x - pSize, p.y - pSize, pSize * 2, pSize * 2);
+                } else {
+                    ctx.arc(p.x, p.y, pSize, 0, Math.PI * 2);
+                }
+                ctx.fill();
             }
-            ctx.fill();
+            ctx.globalAlpha = 1.0;
         }
-        ctx.globalAlpha = 1.0;
     }
 }

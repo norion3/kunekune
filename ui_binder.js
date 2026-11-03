@@ -1,14 +1,14 @@
 // ==============================================================================
 // 『くねくねバトル オンライン』UIイベントバインダーモジュール (ui_binder.js)
-// v27.5.0 ワールドリセットボタンバインド＆ソロ専用世界再生成版:
-// ・【ワールドリセットボタンバインド】#btn-world-reset へ高速タップリスナー（bindFastTap）を配備
-// 　ソロプレイ時限定で initGame(false) を呼び出し、巨大化したAI・餌・プレイヤーを新品のピラミッド生態系へ即座に再初期化
-// ・マルチプレイ中は誤操作・同期破綻を防ぐためリセット要求を完全ガード
-// ・【ズーム下限解放】対数ズーム刷新に伴い、手動縮小リミットを 0.45 から 0.20 まで大幅解放
-// ・【ボタン状態適正化】updateZoomButtonsState の判定閾値を新レンジ（0.20 〜 1.50）へ同期
-// ・【タッチ貫通根絶】bindFastTap に touchstart の stopPropagation() を配備し、MENU・音量・リセットボタンタップ時のジョイスティック誤爆を完全解消
-// ・【待機室開始デバウンス】btnWaitingStart に 1000ms のタップデバウンスを配備し、ホスト連打による二重 initGame 実行を完全防止
-// ・リトライ時に待機室へ幽閉されるデッドロックを根絶し、マルチ/ソロ問わず即座に戦場へ直接リスポーン再戦
+// v27.6.0 ズーム最適化＆安全操作レンジ完全同期版:
+// ・【ズーム閾値適正化】world.js のチャンク安全クランプと完全に調和するよう、
+// 　手動縮小リミット（0.20）と updateZoomButtonsState の無効化判定（<= 0.21）の
+// 　判定閾値を完全同期。下限到達時に確実にボタンが無効化され、連打による計算誤差を防止
+// ・【ワールドリセットボタンバインド維持】ソロ専用 initGame(false) による新品生態系再初期化
+// ・【タッチ貫通根絶維持】bindFastTap による touchstart の stopPropagation() で
+// 　MENU・音量・リセット・ズーム各ボタンタップ時の背面ジョイスティック誤爆を完全遮断
+// ・【待機室開始デバウンス維持】btnWaitingStart の 1000ms 連打ガード配備
+// ・【直接リスポーン再戦維持】リトライボタン押下時に待機室へ幽閉されず即座に戦場へ直接復帰
 // ==============================================================================
 
 import { Menu } from './menu.js';
@@ -24,8 +24,8 @@ export function updateZoomButtonsState(zoomMultiplier) {
         btnIn.classList.toggle('disabled', zoomMultiplier >= 1.48);
     }
     if (btnOut) {
-        // 下限を 0.46 から 0.22 へ引き下げ、超広大な視野角への手動切り替えを許可
-        btnOut.classList.toggle('disabled', zoomMultiplier <= 0.22);
+        // 下限0.20に対して0.21以下で確実にdisabledスタイルを付与
+        btnOut.classList.toggle('disabled', zoomMultiplier <= 0.21);
     }
 }
 
@@ -38,7 +38,7 @@ function bindFastTap(element, handler) {
     if (!element) return;
     let lastTapTime = 0;
 
-    // ★ touchstart 発生時に即座に親・背面Canvasへの伝播を遮断（ジョイスティック暴発根絶）
+    // touchstart 発生時に即座に親・背面Canvasへの伝播を遮断（ジョイスティック暴発根絶）
     element.addEventListener('touchstart', (e) => {
         if (e) {
             e.stopPropagation();
@@ -83,7 +83,7 @@ export function initUIBindings(ctx) {
     if (btnZoomIn && !btnZoomIn._hasZoomInBound) {
         btnZoomIn._hasZoomInBound = true;
         bindFastTap(btnZoomIn, () => {
-            input.zoomMultiplier = Math.min(1.50, input.zoomMultiplier + 0.12);
+            input.zoomMultiplier = Math.min(1.50, Math.round((input.zoomMultiplier + 0.12) * 100) / 100);
             updateZoomButtonsState(input.zoomMultiplier);
         });
     }
@@ -91,8 +91,8 @@ export function initUIBindings(ctx) {
     if (btnZoomOut && !btnZoomOut._hasZoomOutBound) {
         btnZoomOut._hasZoomOutBound = true;
         bindFastTap(btnZoomOut, () => {
-            // 下限を 0.45 から 0.20 へ解放
-            input.zoomMultiplier = Math.max(0.20, input.zoomMultiplier - 0.12);
+            // 下限 0.20 まで安全に解放（浮動小数点丸めガード付き）
+            input.zoomMultiplier = Math.max(0.20, Math.round((input.zoomMultiplier - 0.12) * 100) / 100);
             updateZoomButtonsState(input.zoomMultiplier);
         });
     }
@@ -129,7 +129,7 @@ export function initUIBindings(ctx) {
         });
     }
 
-    // ★ 4. ワールドリセットボタン（ソロ専用・高速タップ対応＆貫通防止）
+    // 4. ワールドリセットボタン（ソロ専用・高速タップ対応＆貫通防止）
     const btnWorldReset = document.getElementById('btn-world-reset');
     if (btnWorldReset && !btnWorldReset._hasResetBound) {
         btnWorldReset._hasResetBound = true;

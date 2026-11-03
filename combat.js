@@ -1,28 +1,21 @@
 /**
  * ==============================================================================
  * 『くねくねバトル オンライン』ゼロアロケーション空間ハッシュ衝突判定エンジン (combat.js)
- * v27.3.0 メモリプール上限適正化・GCスパイク完全根絶版:
- * ・【GCスパイク完全根絶】旧MAX_POOL_CAPACITY(4096)が100体スネーク成長時の必要ノード数
- * 　(6,000〜12,000個)を下回り、毎フレーム数千個の破棄＆新規newがループして発生していた
- * 　致命的なGCカクつきを完全解決。プール上限を 24,576 まで適正拡大し、真のゼロアロケーションを達成
- * ・【セル配列プール適正化】cellPoolの上限も 1024 から 4096 へ拡張し、高密度交戦時のヒープ再確保を抑制
- * ・【ハメ状態根絶】無敵時のノックバックベクトルを計算する際、対象が壁際にいる場合は
- * 　壁への押し込み力を「壁に沿う接線方向」へ逃がし（スライディング）、振動フリーズを完全回避
- * ・【正面衝突判定新設】頭部同士の激突（distSq < (rA + rB)^2）を検知し、配列ループ順による一方的理不尽即死を根絶
- * ・大型優先判定：スコア差が顕著な場合は大スネークが勝利、スコア拮抗時または無敵時は双方安全弾き飛ばし（すり抜け）
- * ・加害者（killer）・被害者（victim）のいずれかが無敵時間中なら双方が死亡せずノックバック弾き飛ばし
- * ・無敵中のスネークの胴体に敵が当たっても敵を一方的に即死させない対戦公平性の確立
- * ・キル時 150pt 加算の重複を解消（main.js 側の相手スコア吸収＋撃破点へ一本化）
- * ・空間グリッド cell 配列の再利用プール化により毎秒数万個のヒープ生成＆GCカクつきを根絶
- * ・ノードプール最大長ガード＆循環参照カットによるメモリリーク完全防止
- * ・リングバッファ O(1) 配列アクセス対応
+ * v27.4.0 正面衝突・壁際スライディング安定化＆ハメ完全根絶版:
+ * ・【壁際スライディング接線ベクトル強化】壁際でのノックバック時、壁の外へ押し出そうとする力を
+ * 　完全接線方向（壁沿い）へ流し、角（コーナー）に追い詰められた際の振動フリーズや突き抜けを完全根絶
+ * ・【正面衝突・完全同座標例外ガード】頭部同士が完全に同座標(dx=0, dy=0)で重なった場合の
+ * 　ゼロ除算・NaNエラーを防止し、ランダム拡散ベクトルで安全に弾き飛ばすフォールバックを新設
+ * ・【GCスパイク完全根絶維持】MAX_POOL_CAPACITY(24,576) ＆ MAX_CELL_POOL_CAPACITY(4,096)
+ * 　により、100体交戦時でも毎フレームのヒープ確保・GCカクつきを完全排除
+ * ・【対戦公平性維持】スコア比率（1.25倍 / 0.8倍）による大型優先判定、拮抗時双方跳ね返り、
+ * 　無敵中スネーク胴体接触時のノックバック退避を完全維持
  * ==============================================================================
  */
 
 import { GRID_SIZE, MAP_SIZE } from './constants.js';
 
 // 100体のスネーク（平均体長40〜100節）の登録に十分耐えうる適正プール上限値
-// （4096だと巨大化時に毎フレーム数千個のオブジェクトが切り捨て＆再生成されてGCスパイクの原因になっていた）
 const MAX_POOL_CAPACITY = 24576;
 const MAX_CELL_POOL_CAPACITY = 4096;
 
@@ -120,23 +113,28 @@ export class SpatialCollisionEngine {
 
     /**
      * ノックバックベクトルを壁際で接線方向に逃がす（スライディング・エスケープ）ヘルパー
+     * 角（コーナー）に追い込まれた場合でも安全にクランプし振動フリーズを防止
      */
     _applySafeKnockback(target, pushX, pushY) {
         const margin = Math.max(target.size, 50);
+        const minX = margin;
+        const maxX = MAP_SIZE - margin;
+        const minY = margin;
+        const maxY = MAP_SIZE - margin;
         
-        // X軸が壁に阻まれる場合、Xの押し込み力をYへ変換して滑らせる
-        if ((target.x < margin && pushX < 0) || (target.x > MAP_SIZE - margin && pushX > 0)) {
-            pushY += Math.sign(pushY || 1) * Math.abs(pushX);
+        // X軸が壁に衝突する場合、押し込み力をY軸の接線方向へ逃がす
+        if ((target.x <= minX && pushX < 0) || (target.x >= maxX && pushX > 0)) {
+            pushY += (pushY !== 0 ? Math.sign(pushY) : (Math.random() < 0.5 ? 1 : -1)) * Math.abs(pushX);
             pushX = 0;
         }
-        // Y軸が壁に阻まれる場合、Yの押し込み力をXへ変換して滑らせる
-        if ((target.y < margin && pushY < 0) || (target.y > MAP_SIZE - margin && pushY > 0)) {
-            pushX += Math.sign(pushX || 1) * Math.abs(pushY);
+        // Y軸が壁に衝突する場合、押し込み力をX軸の接線方向へ逃がす
+        if ((target.y <= minY && pushY < 0) || (target.y >= maxY && pushY > 0)) {
+            pushX += (pushX !== 0 ? Math.sign(pushX) : (Math.random() < 0.5 ? 1 : -1)) * Math.abs(pushY);
             pushY = 0;
         }
 
-        target.x += pushX;
-        target.y += pushY;
+        target.x = Math.max(minX, Math.min(maxX, target.x + pushX));
+        target.y = Math.max(minY, Math.min(maxY, target.y + pushY));
     }
 
     /**
@@ -146,8 +144,7 @@ export class SpatialCollisionEngine {
         const total = snakes.length;
 
         // =========================================================================
-        // 1. ★ 頭部同士の正面衝突（Head-on Collision）判定
-        // 二重ループの配列順序による理不尽な一方的爆死を根絶
+        // 1. 頭部同士の正面衝突（Head-on Collision）判定
         // =========================================================================
         for (let i = 0; i < total; i++) {
             const sA = snakes[i];
@@ -157,19 +154,26 @@ export class SpatialCollisionEngine {
                 const sB = snakes[j];
                 if (sB.isDead || !sB.isVisible) continue;
 
-                const dx = sA.x - sB.x;
-                const dy = sA.y - sB.y;
+                let dx = sA.x - sB.x;
+                let dy = sA.y - sB.y;
                 const minHeadDist = sA.size + sB.size;
 
                 if (dx * dx + dy * dy < minHeadDist * minHeadDist) {
                     const isAInvuln = Boolean(sA.invulnerableTimer && sA.invulnerableTimer > 0);
                     const isBInvuln = Boolean(sB.invulnerableTimer && sB.invulnerableTimer > 0);
 
+                    // 完全に同座標に重なった場合のゼロ除算ガード
+                    let dist = Math.sqrt(dx * dx + dy * dy);
+                    if (dist < 0.001) {
+                        const randomAngle = Math.random() * Math.PI * 2;
+                        dx = Math.cos(randomAngle);
+                        dy = Math.sin(randomAngle);
+                        dist = 1.0;
+                    }
+
                     // どちらかが無敵なら双方ノックバックで弾き飛ばし
                     if (isAInvuln || isBInvuln) {
-                        const dist = Math.sqrt(dx * dx + dy * dy) || 1;
                         const push = (minHeadDist - dist) * 0.5 + 2.0;
-                        
                         this._applySafeKnockback(sA, (dx / dist) * push, (dy / dist) * push);
                         this._applySafeKnockback(sB, -(dx / dist) * push, -(dy / dist) * push);
                         continue;
@@ -189,9 +193,7 @@ export class SpatialCollisionEngine {
                         if (onKill) onKill(sB, sA);
                     } else {
                         // 拮抗時：双方が安全に跳ね返る（相打ち爆死防止）
-                        const dist = Math.sqrt(dx * dx + dy * dy) || 1;
                         const push = (minHeadDist - dist) * 0.6 + 3.0;
-                        
                         this._applySafeKnockback(sA, (dx / dist) * push, (dy / dist) * push);
                         this._applySafeKnockback(sB, -(dx / dist) * push, -(dy / dist) * push);
                     }
@@ -228,8 +230,8 @@ export class SpatialCollisionEngine {
                         
                         if (!killer || killer === victim || killer.isDead) continue; 
 
-                        const dx = hx - bodyNode.x;
-                        const dy = hy - bodyNode.y;
+                        let dx = hx - bodyNode.x;
+                        let dy = hy - bodyNode.y;
                         const minDist = hRadius + bodyNode.radius * 0.75;
 
                         // 接触判定
@@ -237,17 +239,24 @@ export class SpatialCollisionEngine {
                             const isVictimInvuln = Boolean(victim.invulnerableTimer && victim.invulnerableTimer > 0);
                             const isKillerInvuln = Boolean(killer.invulnerableTimer && killer.invulnerableTimer > 0);
 
-                            // ★ 無敵特攻キルの完全根絶：
+                            // 無敵特攻キルの完全根絶＆連続ハメ防止
                             if (isVictimInvuln || isKillerInvuln) {
-                                if (isVictimInvuln && victim.invulnerableTimer < 0.2) {
-                                    victim.invulnerableTimer = 0.4;
+                                if (isVictimInvuln && victim.invulnerableTimer < 0.25) {
+                                    victim.invulnerableTimer = 0.45;
                                 }
-                                if (isKillerInvuln && killer.invulnerableTimer < 0.2) {
-                                    killer.invulnerableTimer = 0.4;
+                                if (isKillerInvuln && killer.invulnerableTimer < 0.25) {
+                                    killer.invulnerableTimer = 0.45;
                                 }
 
-                                const dist = Math.sqrt(dx * dx + dy * dy) || 1;
-                                const pushForce = (minDist - dist) * 0.18 + 1.2;
+                                let dist = Math.sqrt(dx * dx + dy * dy);
+                                if (dist < 0.001) {
+                                    const randomAngle = Math.random() * Math.PI * 2;
+                                    dx = Math.cos(randomAngle);
+                                    dy = Math.sin(randomAngle);
+                                    dist = 1.0;
+                                }
+
+                                const pushForce = (minDist - dist) * 0.22 + 1.5;
                                 
                                 // 壁際での振動ハメ状態を防ぐスライディングエスケープ処理
                                 this._applySafeKnockback(victim, (dx / dist) * pushForce, (dy / dist) * pushForce);

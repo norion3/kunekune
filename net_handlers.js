@@ -1,15 +1,21 @@
 // ==============================================================================
 // 『くねくねバトル オンライン』リモートパケット受信反映ハンドラ (net_handlers.js)
-// v27.0.0 究極同期・絶対座標管理＆ランキング完全同期版:
-// ・【餌消去の絶対座標化】onFoodPicked で world.removeFoodAt(pick.x, pick.y) を実行し、通信ラグによるインデックスズレ・誤消去を完全根絶
-// ・【ランキング再ソート】ゲスト端末自己補正後に topList.sort((a, b) => b.score - a.score) を実行し、順位表示とリスト表示順の矛盾を100%解消
-// ・【スコア・名前即時反映】受信時に remote.score と recalculateSize() を確実に実行し、NetworkManager.slots の正規ネームで上書き
-// ・【途中参加チラつき根絶】onGameStart で direct または immediate 合図を受信した際、isRespawn = true 扱いで初期化し他走者(remoteSnakes)クリアによる消滅・点滅を完全防止
-// ・【無敵対称化】リモート無敵フラグ代入時の下限を 0.5秒 から 3.0秒 へ適正化し、ゲストがホスト判定で即爆死させられる非対称即死を完全根絶
-// ・【無敵同期順序適正化】remote.reset() の直後に data.isInvulnerable を反映し、意図せぬ上書きを完全解消
-// ・【ワープ直線根絶】回線瞬断やリスポーン時の大距離テレポート検知（distSq > 160000）でバッファを即時リセット
-// ・ホスト確定の全スロット順位マップ（lbData.ranks）から自機順位を直接取得し9位固定を根絶維持
-// ・餌捕食イベント (pk) ＆ 撃破肉片クラスタ散布 (dc) の世界反映
+// v28.0.0 胴体消滅・点滅完全根絶＆広域ラグ補正適正化版:
+// ・【胴体消滅・点滅の完全根絶】旧来の 400px (distSq > 160000) という過敏なワープ閾値を
+// 　1000px (distSq > 1000000: 約2.5秒のラグ耐性) へ適正緩和。
+// 　さらに通常ラグ時の座標補正で `remote.reset()`（体長全消去）を呼ぶのを廃止し、
+// 　胴体履歴を保持したまま安全に位置を追従させて「頭だけになる」「点滅する」バグを完全解消
+// ・【餌消去の絶対座標化】onFoodPicked で world.removeFoodAt(pick.x, pick.y) を実行し、
+// 　通信ラグによるインデックスズレ・誤消去を完全根絶
+// ・【ランキング再ソート】ゲスト端末自己補正後に topList.sort((a, b) => b.score - a.score) を実行し、
+// 　順位表示とリスト表示順の矛盾を100%解消
+// ・【スコア・名前即時反映】受信時に remote.score と recalculateSize() を確実に実行し、
+// 　NetworkManager.slots の正規ネームで上書き
+// ・【途中参加チラつき根絶】onGameStart で direct または immediate 合図を受信した際、
+// 　isRespawn = true 扱いで初期化し他走者(remoteSnakes)クリアによる消滅・点滅を完全防止
+// ・【無敵対称化】リモート無敵フラグ代入時の下限を 3.0秒 へ適正化し、
+// 　ゲストがホスト判定で即爆死させられる非対称即死を完全根絶
+// ・【無敵同期順序適正化】remote.reset() の直後に data.isInvulnerable を反映し意図せぬ上書きを解消
 // ==============================================================================
 
 import { Snake } from './snake.js';
@@ -82,15 +88,32 @@ export function setupNetworkHandlers(ctx) {
                 remote.name = curSlot.name;
             }
 
-            // ★ 1. テレポート検知＆ワープ直線根絶（生存したまま回線瞬断・再合流した時のゴム線防止）
+            // =========================================================================
+            // 1. ★ 胴体消滅・点滅の完全根絶（テレポート判定緩和＆胴体維持補正）
+            // 旧来の 400px (160,000) だと1秒程度のモバイル通信ラグで即座に reset() され、
+            // 胴体が消えて頭だけになるバグが頻発していた。
+            // 閾値を 1,000px (1,000,000) に緩和し、かつ reset() ではなく履歴差分シフトで追従
+            // =========================================================================
             const dx = data.x - remote.x;
             const dy = data.y - remote.y;
             const distSq = dx * dx + dy * dy;
-            if (distSq > 160000) {
-                remote.reset(data.x, data.y);
+
+            if (distSq > 1000000) {
+                // 超大距離ワープ時（回線復旧や長距離リスポーン）：胴体履歴を平行移動させて形を維持
+                const histLen = remote.historyLength || 0;
+                for (let i = 0; i < histLen; i++) {
+                    const idx = (remote.headIdx + i) % 2048;
+                    const pt = remote.history[idx];
+                    if (pt) {
+                        pt.x += dx;
+                        pt.y += dy;
+                    }
+                }
+                remote.x = data.x;
+                remote.y = data.y;
             }
 
-            // ★ 2. ホスト確定フラグに基づくリモート死亡＆リスポーン復帰処理
+            // 2. ホスト確定フラグに基づくリモート死亡＆リスポーン復帰処理
             if (data.isDead && !remote.isDead) {
                 remote.die();
             } else if (!data.isDead && remote.isDead) {
@@ -98,7 +121,7 @@ export function setupNetworkHandlers(ctx) {
                 remote.reset(data.x, data.y);
             }
 
-            // ★ 3. リモート無敵フラグの完全代入（reset() の直後に実行し、ゲスト本来の3.0秒無敵と完全同期）
+            // 3. リモート無敵フラグの完全代入（reset() の直後に実行し、ゲスト本来の3.0秒無敵と完全同期）
             if (data.isInvulnerable) {
                 remote.invulnerableTimer = Math.max(remote.invulnerableTimer || 0, 3.0);
             } else if (!data.isInvulnerable && remote.invulnerableTimer > 0) {
@@ -111,7 +134,7 @@ export function setupNetworkHandlers(ctx) {
             remote.speed = data.speed;
             remote.targetLength = data.length;
 
-            // ★ スコア確実同期：スコア更新と体長・サイズ再計算を同時に実施
+            // スコア確実同期：スコア更新と体長・サイズ再計算を同時に実施
             remote.score = data.score;
             remote.recalculateSize();
 
@@ -121,7 +144,7 @@ export function setupNetworkHandlers(ctx) {
         },
 
         /**
-         * ★ ホストから受信した全体リーダーボード情報をゲスト端末へ同期
+         * ホストから受信した全体リーダーボード情報をゲスト端末へ同期
          * 自機実スコア・自機名による即時補正＆再ソートを完備
          */
         onLeaderboardSync(lbData) {
@@ -132,7 +155,7 @@ export function setupNetworkHandlers(ctx) {
             const rawTopList = lbData.top || [];
             const totalAlive = lbData.totalAlive || TOTAL_SNAKES;
 
-            // ★ ゲスト端末側での自己情報補正：ホスト集計リスト内の自機スコア・名前を最新の実データに更新
+            // ゲスト端末側での自己情報補正：ホスト集計リスト内の自機スコア・名前を最新の実データに更新
             let hasMeInTop = false;
             const topList = rawTopList.map(item => {
                 if (item.slot === NetworkManager.mySlot) {
@@ -146,7 +169,7 @@ export function setupNetworkHandlers(ctx) {
                 return item;
             });
 
-            // ★ スコア補正後に再度スコア降順で並び替え（順位と表示位置のズレを解消）
+            // スコア補正後に再度スコア降順で並び替え（順位と表示位置のズレを解消）
             topList.sort((a, b) => b.score - a.score);
 
             // ホストから全スロット確定順位マップが届いている場合は最優先
@@ -188,8 +211,7 @@ export function setupNetworkHandlers(ctx) {
         },
 
         /**
-         * ★ 餌取得イベント（絶対座標による安全消去）
-         * 通信ラグによるインデックス不整合を根絶
+         * 餌取得イベント（絶対座標による安全消去）
          */
         onFoodPicked(pick) {
             if (!world || typeof world.removeFoodAt !== 'function' || !pick) return;

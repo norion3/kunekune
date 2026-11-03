@@ -1,10 +1,11 @@
 // ==============================================================================
 // 『くねくねバトル オンライン』AgentSDK公式マルチプレイ通信マネージャー (network.js)
-// v27.4.0 ホスト昇格後Slot0再利用・定員割れ完全解消版:
-// ・【ホスト昇格後Slot0再利用の修正】ホスト切断・昇格後にSlot 0がAI枠（空き枠）へ解放された際、
-// 　新参加者の探索ループが i=1 から始まっていたためSlot 0が永久にスキップされ最大定員が減る
-// 　致命的な定員割れバグを完全解決。i=0 からの全枠探索（ホスト自身スロット保護付）へ適正化
-// ・【餌同期の絶対座標化】queueFoodPick のシグネチャを (x, y) へ刷新
+// v27.5.0 ホスト昇格時生態系安定化＆再入室整合性完全保証版:
+// ・【ホスト昇格後Slot0再利用の修正維持】ホスト切断・昇格後にSlot 0がAI枠（空き枠）へ解放された際、
+// 　i=0 からの全枠探索（ホスト自身スロット保護付）により最大定員割れを完全防止
+// ・【自律ホスト昇格時の同期強化】promoteToHost において、昇格直後に新ホストとしてのスロット構成・
+// 　ワールドシードを即座に ROOM_MEMBERS_SYNC で一斉同報し、ゲスト側のAIスナップショット保持と完全連携
+// ・【餌同期の絶対座標化】queueFoodPick のシグネチャを (x, y) で完全運用
 // ・【スプリットブレイン自律サレンダー】通信瞬断等による「2人のホスト」衝突検知時、
 // 　スロット優先度で自発的にゲストへサレンダーし onSurrenderedAsHost コールバックを発火
 // ・【切断ゴースト完全防止】退出時の残留状態クリアおよび非同期競合ガードの強化
@@ -94,7 +95,7 @@ export const NetworkManager = {
         onLeaderboardSync: null,
         onHostPromoted: null,
         onUserExited: null,
-        onSurrenderedAsHost: null // ★ スプリットブレイン降格時のAIパージ用コールバック
+        onSurrenderedAsHost: null // スプリットブレイン降格時のAIパージ用コールバック
     },
 
     setCallbacks(cb) {
@@ -102,7 +103,7 @@ export const NetworkManager = {
     },
 
     // --- キューイングAPI ---
-    // ★ 餌取得同期を絶対座標 (x, y) に変更
+    // 餌取得同期（絶対座標 x, y）
     queueFoodPick(x, y) {
         if (!this.isMultiplayerActive) return;
         NetBroadcaster.queueFoodPick(x, y);
@@ -454,8 +455,7 @@ export const NetworkManager = {
         const guestPortrait = data.portrait || data.portait || data.avatar || '';
         let targetSlot = this.slots.findIndex(s => s.userId && String(s.userId) === userId);
 
-        // ★ 修正：Slot 0 を含む全枠から空きAIスロットを探索（ホスト自身のスロットは保護）
-        // 旧コードの i=1 からの走査では、ホスト昇格後に解放されたSlot 0が永遠に再利用されず定員割れを起こしていた
+        // Slot 0 を含む全枠から空きAIスロットを探索（ホスト自身のスロットは保護）
         if (targetSlot === -1) {
             for (let i = 0; i < this.slots.length; i++) {
                 if (i === this.mySlot) continue;
