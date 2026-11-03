@@ -1,13 +1,14 @@
 // ==============================================================================
 // 『くねくねバトル オンライン』リモートパケット受信反映ハンドラ (net_handlers.js)
-// v30.0.0 リーダーボード頭出し整列＆高解像度スコア・名前省略同期版:
-// ・【ランキング順位番号と名前の完全頭出し整列】順位番号を独立した固定幅ブロック
-// 　（width: 18px / tnum）へ分離配置し、直後の「CPU」やプレイヤー名の開始位置を美しく一直線に整列
-// ・【スコア省略フォーマッター刷新】6桁（999,999 pt）まではカンマ区切りのフル表示。
-// 　7桁（1,000,000 pt）到達時から (s / 1000000).toFixed(3) + 'M'（例: 1.234M）の
-// 　小数3桁固定表示を採用し、ゲスト端末でも1,000pt単位の加点がリアルタイムに連動
-// ・【長いGRAVITYユーザー名の安全な省略保証】min-width: 0 と text-overflow: ellipsis の
-// 　組み合わせにより、長大なニックネームでもレイアウト崩壊せず末尾「…」で確実に自動短縮
+// v31.0.0 他ユーザーカラーリアルタイム同期＆レーダー完全連動版:
+// ・【他ユーザーカラーリアルタイム即時同期】相手がメニューで色を変更した際、
+// 　パケット内の data.colorIdx を毎フレーム受信検知し、即時に remote.color
+// 　および NetworkManager.slots[data.slot].color を上書き更新。
+// 　スネーク本体はもちろん、ミニマップ外周の方向ポインター（▲）や二重パルスリング
+// 　の色が相手の変更と寸分違わずリアルタイムに完全連動
+// ・【ランキング順位番号と名前の完全頭出し整列維持】順位番号の独立固定幅ブロック（width: 18px）
+// ・【スコア省略フォーマッター刷新維持】6桁フル表示、7桁目小数3桁固定（X.XXXM）
+// ・【長いGRAVITYユーザー名の安全な省略保証維持】min-width: 0 と ellipsis の完全連動
 // ・【AI表情・デザインの完全同期維持】通常AI(Slot 6〜99)の5種表情・カラー復元維持
 // ・【空き枠ダミーAI整合性保証維持】偽装ダミーAIと人間プレイヤーの区別維持
 // ・【リモート死亡時肉片還元＆胴体シフトAPI維持】食物連鎖保護＆shiftHistory完全統合
@@ -76,7 +77,9 @@ export function setupNetworkHandlers(ctx) {
                 if (isPlayerSlot) {
                     // スロット 0〜5: 人間プレイヤーまたは空き枠ダミーAI
                     const slotData = NetworkManager.slots[data.slot];
-                    color = (slotData && slotData.color) ? slotData.color : SNAKE_COLORS[data.slot % SNAKE_COLORS.length];
+                    color = (data.colorIdx !== undefined)
+                        ? SNAKE_COLORS[data.colorIdx % SNAKE_COLORS.length]
+                        : ((slotData && slotData.color) ? slotData.color : SNAKE_COLORS[data.slot % SNAKE_COLORS.length]);
                     resolvedName = (slotData && slotData.name)
                         ? slotData.name 
                         : (data.isAI ? `CPU ${data.slot + 1}` : `P${data.slot + 1}`);
@@ -84,7 +87,9 @@ export function setupNetworkHandlers(ctx) {
                 } else {
                     // スロット 6〜99: ホストがシミュレートしている通常AI
                     const originalAiId = data.slot - MAX_PLAYERS + 1;
-                    color = SNAKE_COLORS[originalAiId % SNAKE_COLORS.length];
+                    color = (data.colorIdx !== undefined)
+                        ? SNAKE_COLORS[data.colorIdx % SNAKE_COLORS.length]
+                        : SNAKE_COLORS[originalAiId % SNAKE_COLORS.length];
                     resolvedName = `CPU ${originalAiId}`;
                     // ★ ホスト側の ai.js と全く同じ計算式で表情を完全復元
                     face = AI_FACES[originalAiId % AI_FACES.length];
@@ -104,12 +109,26 @@ export function setupNetworkHandlers(ctx) {
                 }
             }
 
+            // =========================================================================
+            // ★ 【他ユーザーカラーリアルタイム同期】
+            // 相手がメニューで色を変更した際、毎フレーム届く colorIdx を即座に反映！
+            // スネーク本体・HUDの方向ポインター（▲）・レーダー二重リングの色が完全連動
+            // =========================================================================
+            if (data.colorIdx !== undefined) {
+                const newColor = SNAKE_COLORS[data.colorIdx % SNAKE_COLORS.length];
+                if (remote.color !== newColor) {
+                    remote.color = newColor;
+                }
+                if (data.slot < MAX_PLAYERS && NetworkManager.slots[data.slot]) {
+                    NetworkManager.slots[data.slot].color = newColor;
+                }
+            }
+
             // ★ 名前同期保証：スロット情報に人間プレイヤー名が存在する場合、CPU名から即時上書き
             if (data.slot < MAX_PLAYERS) {
                 const curSlot = NetworkManager.slots[data.slot];
                 if (curSlot && curSlot.name && !curSlot.isAI && remote.name !== curSlot.name) {
                     remote.name = curSlot.name;
-                    if (curSlot.color) remote.color = curSlot.color;
                 }
             }
 

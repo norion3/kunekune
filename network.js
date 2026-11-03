@@ -1,19 +1,16 @@
 // ==============================================================================
 // 『くねくねバトル オンライン』AgentSDK公式マルチプレイ通信マネージャー (network.js)
-// v27.6.0 再入室時ゴースト完全パージ＆生態系整合性保証版:
-// ・【再入室時ゴースト完全パージ】onWorldPurged コールバックを新設。
-// 　ルーム作成・入室・再入室(createRoom / joinRoom / exitRoom)時に呼ばれる
-// 　purgeLocalWorldState() から確実にメインループ側の remoteSnakes や
-// 　旧セッションの自機残骸を完全消去し、自機ゴースト化・多重描画を根本から根絶
-// ・【ホスト昇格後Slot0再利用の修正維持】ホスト切断・昇格後にSlot 0がAI枠（空き枠）へ解放された際、
-// 　i=0 からの全枠探索（ホスト自身スロット保護付）により最大定員割れを完全防止
-// ・【自律ホスト昇格時の同期強化】promoteToHost において、昇格直後に新ホストとしてのスロット構成・
-// 　ワールドシードを即座に ROOM_MEMBERS_SYNC で一斉同報し、ゲスト側のAIスナップショット保持と完全連携
-// ・【餌同期の絶対座標化】queueFoodPick のシグネチャを (x, y) で完全運用
-// ・【スプリットブレイン自律サレンダー】通信瞬断等による「2人のホスト」衝突検知時、
-// 　スロット優先度で自発的にゲストへサレンダーし onSurrenderedAsHost コールバックを発火
-// ・【切断ゴースト完全防止】退出時の残留状態クリアおよび非同期競合ガードの強化
-// ・【絵文字文字化け修正】queueChat の文字切り詰めを Array.from に変更し、サロゲートペア分断を完全防止
+// v28.0.0 ゲスト側ホストスロット整合性保証＆レーダー追従完全復旧版:
+// ・【ゲスト入室時ホスト枠(Slot 0)整合性保証】joinRoom 時に slots[0] が誤って isAI: true
+// 　（AI扱い）で一括初期化されていた不具合を完全解消。ホスト枠を isAI: false（人間枠）
+// 　として初期化することで、ゲスト端末側でもホストが最初から人間プレイヤーとして正しく
+// 　認識され、ミニマップの画面外方向ポインター（▲）が100%点灯
+// ・【再入室時ゴースト完全パージ維持】onWorldPurged コールバックによる残留走者完全消去
+// ・【ホスト昇格後Slot0再利用維持】ホスト切断・昇格後のスロット整合性保証
+// ・【自律ホスト昇格時の同期強化維持】promoteToHost 一斉同報
+// ・【餌同期の絶対座標化維持】queueFoodPick (x, y) 運用
+// ・【スプリットブレイン自律サレンダー維持】通信瞬断時の衝突調停
+// ・【絵文字文字化け修正維持】queueChat のサロゲートペア分断防止
 // ==============================================================================
 
 import {
@@ -100,7 +97,7 @@ export const NetworkManager = {
         onHostPromoted: null,
         onUserExited: null,
         onSurrenderedAsHost: null, // スプリットブレイン降格時のAIパージ用コールバック
-        onWorldPurged: null        // ★ 新設: 再入室・ルーム遷移時のローカルゴースト走者完全消去コールバック
+        onWorldPurged: null        // 再入室・ルーム遷移時のローカルゴースト走者完全消去コールバック
     },
 
     setCallbacks(cb) {
@@ -382,6 +379,8 @@ export const NetworkManager = {
                 ? window.GRAVITY_USER_NAME
                 : this.myUser.name;
 
+            // ★ スロット 0 は部屋のオーナー（ホスト）であるため、isAI: false（人間枠）として初期化！
+            // これによりゲスト端末でもホストが最初から人間走者として正しく判定され、方向ポインターが点灯する
             for (let i = 0; i < MAX_PLAYERS; i++) {
                 this.slots[i] = {
                     slot: i,
@@ -390,7 +389,7 @@ export const NetworkManager = {
                     name: i === 0 ? 'ホスト' : `プレイヤー ${i + 1}`,
                     color: SNAKE_COLORS[i % SNAKE_COLORS.length],
                     portrait: '',
-                    isAI: true,
+                    isAI: (i !== 0), // 0番スロット（ホスト）は false、その他未アサイン枠は true
                     joinTime: 0
                 };
             }
@@ -809,7 +808,7 @@ export const NetworkManager = {
         this._hasReceivedFirstHostPacket = false;
         this._isPromoting = false;
 
-        // ★ 新設: 再入室時・ルーム遷移時にメインループ側の残留走者を完全パージ
+        // 再入室時・ルーム遷移時にメインループ側の残留走者を完全パージ
         if (this.callbacks.onWorldPurged) {
             try {
                 this.callbacks.onWorldPurged();

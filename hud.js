@@ -1,17 +1,17 @@
 /**
  * ==============================================================================
  * 『くねくねバトル オンライン』一体型HUD ＆ 自機中心相対追従レーダー (hud.js)
- * v26.0.0 他ユーザー画面外方向インジケーター（相手カラー連動▲）新設版:
- * ・【画面外他ユーザー方向インジケーター新設】
- * 　ルーム内にいる他人間プレイヤーがミニマップ索敵範囲外（遠方）にいる場合、
- * 　自機からの方角をリアルタイム計算し、レーダー最外周（フチから6px）に
- * 　相手の設定色（s.color）を反映した「さりげない方向ポインター（▲）」を点灯。
- * 　その方角へ進みマップ内に入ってきた瞬間、方向マーカーは自然に消え、
- * 　いつもの「ユーザー専用二重パルスリングアイコン」へシームレスに切り替え。
- * ・【自機カスタムカラー完全連動維持】レーダー中央の自機マークに player.color を反映
- * ・【AI人間誤判定根絶維持】マルチ有効かつ slots[s.id] が人間（!isAI）である場合のみ適用
- * ・【自機ゴールド進行方向ポインター維持】高輝度ゴールド矢印（#fde047）
- * ・カメラ視野枠の極薄ハイライト＋四隅フォーカス枠（[ ]）維持
+ * v27.0.0 相手カラー完全連動＆呼吸パルス明滅・発光オーラ方向ポインター版:
+ * ・【他ユーザー方向ポインターの呼吸パルス明滅＆発光オーラ】
+ * 　他人間プレイヤーがレーダー枠外にいる際の外周方向ポインター（▲）に、
+ * 　Math.sin による柔らかい呼吸パルス明滅（スケール1.0〜1.35倍）とネオン発光オーラを実装。
+ * 　AIの赤ドット群と完全に差別化し、「あそこに人間がいる！」と一目で直感できる高視認性を確立
+ * ・【他ユーザーカラーリアルタイム完全連動】
+ * 　相手がメニューで色を変更した際、s.color をそのまま方向ポインターの塗り色＆グロー色へ即時反映
+ * ・【ゲスト端末でのホスト方向ポインター消失バグ解消】
+ * 　マルチプレイ中、Slot 0（ホスト）または !isAI のスロットを無条件で人間判定（isHuman）
+ * 　するように強化し、ゲスト端末でも遠くのホストの方向ポインターが100%点灯
+ * ・自機カスタムカラー完全連動、ゴールド進行方向コンパス、カメラ視野枠ハイライト維持
  * ・描画負荷軽減：2フレームに1回（30FPS）描画スロットリング ＆ Offscreen キャッシュ維持
  * ==============================================================================
  */
@@ -84,7 +84,6 @@ export class HUDManager {
 
     /**
      * 自機中心の相対追従レーダーをメインCanvasに直接描画
-     * 自機カラー連動・人間厳格識別・画面外方向インジケーター・ゴールド方向ポインター・カメラ視野ハイライト版
      */
     drawRadar(ctx, canvasWidth, safeTop, player, otherEntities, cameraScale) {
         if (!this.showMap || !player) return;
@@ -152,13 +151,14 @@ export class HUDManager {
                     const s = otherEntities[i];
                     if (s === player || s.isDead) continue;
 
-                    // 人間プレイヤー厳格判定
+                    // ★ 人間プレイヤー厳格判定（ゲスト側でのホスト検知保証）
                     let isHuman = false;
                     if (s.isPlayer) {
                         isHuman = true;
                     } else if (isMultiActive && s.id !== undefined && s.id >= 0 && s.id < MAX_PLAYERS) {
+                        // ホスト自身（Slot 0）または AIフラグが false のスロットを確実に人間走者と判定
                         const slotData = netSlots ? netSlots[s.id] : null;
-                        if (slotData && !slotData.isAI) {
+                        if (s.id === 0 || (slotData && !slotData.isAI)) {
                             isHuman = true;
                         }
                     }
@@ -169,6 +169,7 @@ export class HUDManager {
                     const drawY = radarCenter + dy * radarRatio;
 
                     if (isHuman) {
+                        // ★ 相手の最新設定カラーをダイレクトに反映
                         const humanColor = s.color || '#ff3366';
                         const inBounds = (drawX >= 7 && drawX <= this.radarSize - 7 && drawY >= 7 && drawY <= this.radarSize - 7);
 
@@ -195,11 +196,11 @@ export class HUDManager {
                             rCtx.arc(drawX, drawY, 1.2, 0, Math.PI * 2);
                             rCtx.fill();
                         } else {
-                            // ★ レーダー外：最外周フチにさりげなく方向ポインター（▲）を点灯
+                            // ★ レーダー外：最外周フチに【呼吸パルス明滅＆ネオン発光オーラ】付き方向ポインター（▲）を点灯
                             const angle = Math.atan2(dy, dx);
                             const cos = Math.cos(angle);
                             const sin = Math.sin(angle);
-                            const halfSize = radarCenter - 6; // レーダー外枠から6px内側
+                            const halfSize = radarCenter - 6.5; // レーダー外枠から6.5px内側
 
                             const t = Math.min(
                                 Math.abs(halfSize / (cos || 0.0001)),
@@ -208,27 +209,48 @@ export class HUDManager {
                             const edgeX = radarCenter + cos * t;
                             const edgeY = radarCenter + sin * t;
 
-                            // 相手の方角を指す先端三角ポインター
-                            const baseLen = 6.0;
-                            const baseWidth = 3.5;
+                            // ★ 呼吸パルス（明滅スケール 1.0〜1.35倍）
+                            const breath = 1.0 + Math.sin(this.radarFrameCount * 0.16 + (s.id || 0)) * 0.22;
+                            const baseLen = 7.5 * breath;
+                            const baseWidth = 4.4 * breath;
+
                             const baseCenterX = edgeX - cos * baseLen;
                             const baseCenterY = edgeY - sin * baseLen;
                             const perpX = -sin * baseWidth;
                             const perpY = cos * baseWidth;
 
                             rCtx.save();
+
+                            // 1. 背後の半透明ネオングローオーラ
+                            rCtx.beginPath();
+                            rCtx.moveTo(edgeX + cos * 1.5, edgeY + sin * 1.5);
+                            rCtx.lineTo(baseCenterX + perpX * 1.4, baseCenterY + perpY * 1.4);
+                            rCtx.lineTo(baseCenterX - perpX * 1.4, baseCenterY - perpY * 1.4);
+                            rCtx.closePath();
+                            rCtx.fillStyle = humanColor;
+                            rCtx.globalAlpha = 0.45 + Math.sin(this.radarFrameCount * 0.16) * 0.25;
+                            rCtx.fill();
+
+                            // 2. 本体の高輝度三角ポインター
+                            rCtx.globalAlpha = 1.0;
                             rCtx.beginPath();
                             rCtx.moveTo(edgeX, edgeY);
                             rCtx.lineTo(baseCenterX + perpX, baseCenterY + perpY);
                             rCtx.lineTo(baseCenterX - perpX, baseCenterY - perpY);
                             rCtx.closePath();
-
                             rCtx.fillStyle = humanColor;
                             rCtx.fill();
-                            rCtx.strokeStyle = 'rgba(0, 0, 0, 0.85)';
-                            rCtx.lineWidth = 1.0;
+
+                            // 3. 黒＋白のダブル輪郭線で格上AI赤ドット群と完全に差別化
+                            rCtx.strokeStyle = 'rgba(0, 0, 0, 0.95)';
+                            rCtx.lineWidth = 1.8;
                             rCtx.lineJoin = 'round';
                             rCtx.stroke();
+
+                            rCtx.strokeStyle = 'rgba(255, 255, 255, 0.85)';
+                            rCtx.lineWidth = 0.8;
+                            rCtx.stroke();
+
                             rCtx.restore();
                         }
                     } else {
