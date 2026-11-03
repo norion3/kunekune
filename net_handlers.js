@@ -1,6 +1,9 @@
 // ==============================================================================
 // 『くねくねバトル オンライン』リモートパケット受信反映ハンドラ (net_handlers.js)
-// v28.1.0 胴体シフトAPI完全統合＆デッドレコニング二重補正解消版:
+// v28.2.0 リモート死亡時肉片還元＆食物連鎖完全同期版:
+// ・【リモート死亡時肉片還元】ゲストが自己判定で死亡（data.isDead && !remote.isDead）した際、
+// 　ホストが即座に肉片クラスタ（queueDropCluster）を発行し、巨大スネーク撃破時の
+// 　大量肉片が宇宙の塵として消滅するバグを完全解消。食物連鎖の下克上ループを確立
 // ・【胴体シフトAPI完全統合】snake.js の公式カプセル化メソッド `shiftHistory(dx, dy)` を
 // 　大距離ワープ補正時に直接採用。外部からの直接配列書き換えを根絶し、形状完全維持
 // ・【ワープ閾値1000px適正化】400pxから1000px(distSq > 1000000)へ緩和し、通常ラグによる
@@ -102,8 +105,25 @@ export function setupNetworkHandlers(ctx) {
                 remote.y = data.y;
             }
 
-            // 2. ホスト確定フラグに基づくリモート死亡＆リスポーン復帰処理
+            // =========================================================================
+            // 2. ★ リモート死亡時の肉片ドロップ還元＆リスポーン復帰処理
+            // ゲストが自己判定で死亡した際、ホストが肉片クラスタを発行して食物連鎖を維持
+            // =========================================================================
             if (data.isDead && !remote.isDead) {
+                if (NetworkManager.isHost && NetworkManager.isMultiplayerActive) {
+                    const colorIdx = SNAKE_COLORS.indexOf(remote.color);
+                    const safeColorIdx = colorIdx >= 0 ? colorIdx : 0;
+                    const dropCount = Math.min(30, Math.max(10, Math.floor((remote.historyLength || 16) / 2)));
+                    const totalVal = Math.min(2500, Math.max(100, Math.floor(remote.score * 0.25)));
+
+                    NetworkManager.queueDropCluster(
+                        remote.x,
+                        remote.y,
+                        totalVal,
+                        dropCount,
+                        safeColorIdx
+                    );
+                }
                 remote.die();
             } else if (!data.isDead && remote.isDead) {
                 remote.isDead = false;
