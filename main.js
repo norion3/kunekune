@@ -1,8 +1,11 @@
 // ==============================================================================
 // 『くねくねバトル オンライン』Phase 7 マスター統合オーケストレーター (main.js)
-// v28.6.0 ホスト昇格時ダミーAI完全継承＆デッドレコニングshiftHistory統合版:
+// v28.7.0 ゲスト退出時ダミーAI即時補充＆生態系完全保護版:
+// ・【ゲスト退出時ダミーAI即時補充】onUserExited 内で、人間ゲストが退出した際に
+// 　空き枠となったスロットへ即座にダミーAI（ID: MAX_AIS + slotIdx + 1）を生成・配備。
+// 　入退室の繰り返しによるスネーク数減少（過疎化・定員割れ）を完全根絶し100体を死守
 // ・【ホスト昇格時ダミーAI完全継承】onHostPromoted において、空き枠AI（ID: 95〜100）の
-// 　スナップショット保持・引き継ぎロジックを新設。ホスト切断・昇格時でも空き枠AIが
+// 　スナップショット保持・引き継ぎロジックを配備。ホスト切断・昇格時でも空き枠AIが
 // 　初期スコア50ptでリセット（記憶喪失）されず、育ったスコア・位置を完全維持
 // ・【デッドレコニング shiftHistory 公式統合】ゲームループ内の大距離ワープ補正時、
 // 　snake.js の公式カプセル化API `remote.shiftHistory(shiftX, shiftY)` を統一適用。
@@ -422,7 +425,7 @@ NetworkManager.setCallbacks({
             }
         }
 
-        // ★ 空き枠ダミーAI（ID: 95〜100）のスナップショット完全引継ぎ
+        // 空き枠ダミーAI（ID: 95〜100）のスナップショット完全引継ぎ
         for (let i = 0; i < MAX_PLAYERS; i++) {
             if (i === NetworkManager.mySlot) continue;
             const slotData = NetworkManager.slots[i];
@@ -441,7 +444,7 @@ NetworkManager.setCallbacks({
                     aiSnake.color = existingRemote.color || aiSnake.color;
                     aiSnake.face = existingRemote.face || aiSnake.face;
                     aiSnake.recalculateSize();
-                    remoteSnakes.delete(i); // ローカルAIに昇格するためリモートからは削除
+                    remoteSnakes.delete(i);
                 } else {
                     const angle = Math.random() * Math.PI * 2;
                     const dist = 1500 + Math.random() * 22000;
@@ -494,6 +497,44 @@ NetworkManager.setCallbacks({
             if (aIdx !== -1) allSnakes.splice(aIdx, 1);
             const sIdx = sortedSnakes.indexOf(remote);
             if (sIdx !== -1) sortedSnakes.splice(sIdx, 1);
+        }
+
+        // ★ 修正：ホスト時、退出した人間スロットへ即座にダミーAI（ID: MAX_AIS + slotIdx + 1）を補充
+        // これによりゲストの入退室によるスネーク数減少（過疎化・定員割れ）を完全根絶し100体を死守
+        if (NetworkManager.isHost && NetworkManager.isMultiplayerActive && slotIdx < MAX_PLAYERS && slotIdx !== NetworkManager.mySlot) {
+            const dummyId = MAX_AIS + slotIdx + 1;
+            const existingFake = allSnakes.find(s => !s.isPlayer && s.id === dummyId);
+            if (!existingFake) {
+                const slotData = NetworkManager.slots[slotIdx];
+                const aiColor = (slotData && slotData.color) ? slotData.color : SNAKE_COLORS[slotIdx % SNAKE_COLORS.length];
+                const aiName = (slotData && slotData.name) ? slotData.name : `CPU ${slotIdx + 1}`;
+                
+                const newDummyAI = new Snake(false, dummyId, aiName, aiColor, 'normal');
+                const angle = Math.random() * Math.PI * 2;
+                const dist = 2500 + Math.random() * 15000;
+                const sx = Math.max(400, Math.min(MAP_SIZE - 400, player.x + Math.cos(angle) * dist));
+                const sy = Math.max(400, Math.min(MAP_SIZE - 400, player.y + Math.sin(angle) * dist));
+                newDummyAI.reset(sx, sy);
+
+                aiManager.ais.push(newDummyAI);
+                aiManager.aiMeta.push({
+                    state: 0,
+                    persona: 'forager',
+                    targetFoodPos: null,
+                    stateTimer: 40 + Math.floor(Math.random() * 60),
+                    scavengeTarget: null,
+                    cruiseDirection: Math.random() < 0.5 ? 1 : -1,
+                    harassSubtype: 0,
+                    harassCooldown: Math.floor(Math.random() * 60),
+                    deadTimer: 0
+                });
+
+                if (!allSnakes.includes(newDummyAI)) {
+                    allSnakes.push(newDummyAI);
+                }
+                sortedSnakes = [...allSnakes];
+                window.allAISnakesInstance = aiManager.ais;
+            }
         }
     }
 });
