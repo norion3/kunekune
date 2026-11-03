@@ -1,10 +1,10 @@
 // ==============================================================================
 // 『くねくねバトル オンライン』自律DOMマウントモジュール (dom.js)
-// v28.9.0 サングラス撤廃＆オリジナル愛され笑顔・デフォルト選択完全同期版:
-// ・【サングラス顔SVGアイコン完全撤廃】CUSTOMタブの4番目にあった四角いサングラス(cool)を
-// 　完全撤廃し、添付画像(image_6.png)のパッチリ目＋微笑む口元のキュートな笑顔(smile)SVGへ刷新
-// ・【デフォルト顔プレビュー最適化】1番目のノーマルおよび4番目の笑顔ボタンのSVGパスに
-// 　先端で可愛らしく微笑むスマイル口元ラインを美しく反映
+// v29.0.0 4番目アイコン「舌ペロスマイル」SVG完全同期＆表情差別化版:
+// ・【4番目アイコンの舌ペロ化】CUSTOMタブの4番目ボタンSVGに、ちょこんと出た
+// 　ピンクの舌（#ff6b8b）とスマイル口元ラインを新設。1番目（上品な微笑み）との
+// 　重複を完全解消し、メニュー一覧でも一目で可愛らしく差別化
+// ・【頭部描画との100%同期】snake_face.js のベクター座標・配色・太さと完全一致
 // ・【ワールドリセットボタン】音量ボタンの上に透過ガラスモーフィズム仕様(#btn-world-reset)完備
 // ・【クリーンレイアウト】MENU、音量、リセットの左下縦並び ＆ 右側アクション群の引き上げ維持
 // ・【公式DM招待UI】待機室最大6名完全収容、GRAVITYマイアイコン顔選択ボタン完備
@@ -225,7 +225,7 @@ export function mountDOM() {
                 <div class="custom-panel">
                     <div class="custom-label">顔タイプ</div>
                     <div class="custom-row">
-                        <!-- 1. ノーマル（画像準拠のパッチリ瞳＋微笑み口元） -->
+                        <!-- 1. ノーマル（画像準拠のパッチリ瞳＋上品な微笑み口元・デフォルト） -->
                         <button class="custom-face-btn selected" data-face="normal" aria-label="ノーマル">
                             <svg viewBox="0 0 40 40">
                                 <circle cx="14" cy="20" r="5.5" fill="#ffffff"/>
@@ -259,7 +259,7 @@ export function mountDOM() {
                                 <path d="M 17 26 A 3 3 0 0 0 23 26" fill="none" stroke="#111827" stroke-width="2.0" stroke-linecap="round"/>
                             </svg>
                         </button>
-                        <!-- 4. ★ 新設スマイル（サングラス撤廃：画像image_6.png準拠の愛らしい笑顔） -->
+                        <!-- 4. ★ 舌ペロスマイル（1番目と差別化：ピンクの舌を出した最高に可愛い笑顔） -->
                         <button class="custom-face-btn" data-face="smile" aria-label="スマイル">
                             <svg viewBox="0 0 40 40">
                                 <circle cx="14" cy="20" r="6.0" fill="#ffffff"/>
@@ -268,7 +268,10 @@ export function mountDOM() {
                                 <circle cx="25" cy="18.8" r="2.8" fill="#111827"/>
                                 <circle cx="14.2" cy="17.8" r="1.0" fill="#ffffff"/>
                                 <circle cx="24.2" cy="17.8" r="1.0" fill="#ffffff"/>
-                                <path d="M 16 27.5 A 4 4 0 0 0 24 27.5" fill="none" stroke="#111827" stroke-width="2.3" stroke-linecap="round"/>
+                                <!-- ちょこんと出たピンクの舌 -->
+                                <path d="M 18.2 27.2 C 18.2 31.5, 21.8 31.5, 21.8 27.2 Z" fill="#ff6b8b" stroke="#111827" stroke-width="1.2"/>
+                                <!-- スマイル口元ライン -->
+                                <path d="M 15.5 27 A 4.5 4.5 0 0 0 24.5 27" fill="none" stroke="#111827" stroke-width="2.2" stroke-linecap="round"/>
                             </svg>
                         </button>
                         <!-- 5. キュート -->
