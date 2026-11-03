@@ -1,14 +1,15 @@
 // ==============================================================================
 // 『くねくねバトル オンライン』スネーク.io型 自律生態系AIマネージャー (ai.js)
-// v29.3.0 画面外AI成長キャップ＆サバイバル適正化版:
-// ・【画面外AI成長キャップ新設】長時間プレイ時にマップ外で数万ptの超巨大モンスターが
-// 　無制限に量産され、リスポーンしたプレイヤーが理不尽に轢き殺される詰み現象を解消。
-// 　画面外仮想成長に健全な上限キャップ（MAX_VIRTUAL_AI_SCORE = 3,000pt / 体長約45節）を設け、
-// 　プレイヤーがいつでも逆転を狙える健全な生態系バランスを維持
+// v30.0.0 行動タイマー完全実時間同期＆サバイバル適正化版:
+// ・【AI行動タイマー実時間同期（思考分散バグ解消）】4分割バッチ思考（sliceIndex）に伴い
+// 　think 内部でタイマー減算されていたため、行動持続時間やクールダウンが想定の4倍に
+// 　間延びしていた不具合を完全解消。毎フレームの更新ループ（update）側で実時間（timeScale）
+// 　に基づき一括減算することで、ちょっかい・カミカゼ特攻・逃走のテンポを完全実時間に同期
+// ・【画面外AI成長キャップ完全維持】長時間プレイ時の過剰インフレを防ぐ健全な上限キャップ
+// 　（MAX_VIRTUAL_AI_SCORE = 3,000pt / 体長約45節）を完全保持
 // ・【開幕ピラミッド配分完全維持】小型85%(50〜150pt)、中堅12%(200〜500pt)、
 // 　エリアボス3%(800〜1,200pt) によるRPG的サバイバルの楽しさを完全継承
-// ・【リスポーン密度の適正化】リスポーン時の獲得スコアも開幕分布と整合
-// ・【全機能完全継承】カミカゼ暗殺(AMBUSH)、包囲コイリング(HUNTER)、3種ちょっかい(HARASS)、
+// ・【全行動ステート完全保持】カミカゼ暗殺(AMBUSH)、包囲コイリング(HUNTER)、3種ちょっかい(HARASS)、
 // 　ハイエナ肉片争奪(SCAVENGER)、ビビり逃走(PANIC)、大回遊(CRUISING)、完全DeltaTime、
 // 　動的循環スポーン、O(1)リングバッファ衝突回避を一切省略せず100%完全保持
 // ==============================================================================
@@ -100,7 +101,7 @@ export class AIManager {
     }
 
     /**
-     * AIシミュレーション更新（動的循環スポーン＆仮想成長上限対応）
+     * AIシミュレーション更新（実時間タイマー同期＆動的循環スポーン＆仮想成長上限対応）
      * @param {Object} player 
      * @param {Array} allSnakes 
      * @param {number} frameCount 
@@ -126,7 +127,7 @@ export class AIManager {
                 const meta = this.aiMeta[i];
                 if (!meta) continue;
 
-                // ★ 上限キャップ判定：3,000pt を超えたAIは画面外での自動成長をストップし過剰インフレを防止
+                // 上限キャップ判定：3,000pt を超えたAIは画面外での自動成長をストップし過剰インフレを防止
                 if (ai.score < MAX_VIRTUAL_AI_SCORE) {
                     let gainRate = 6;
                     if (meta.persona === 'hunter' || meta.persona === 'cruiser') gainRate = 12;
@@ -195,6 +196,16 @@ export class AIManager {
                 continue;
             }
 
+            // ★ 【タイマー完全実時間同期】
+            // 思考分散バッチの実行有無にかかわらず、毎フレーム実経過時間（timeScale）で確実に減算
+            meta.stateTimer -= timeScale;
+            if (meta.harassCooldown > 0) {
+                meta.harassCooldown = Math.max(0, meta.harassCooldown - timeScale);
+            }
+            if (meta.panicCooldown > 0) {
+                meta.panicCooldown = Math.max(0, meta.panicCooldown - timeScale);
+            }
+
             // 【動的循環スポーン（過疎化防止 ＆ 絶妙な交戦密度ループ）】
             if (isPlayerAlive && !ai.isVisible && (frameCount + i) % 60 === 0) {
                 const distToPlayerSq = (ai.x - pX) ** 2 + (ai.y - pY) ** 2;
@@ -219,7 +230,7 @@ export class AIManager {
 
             const shouldThink = (i >= startIndex && i < startIndex + batchSize);
             if (shouldThink) {
-                this.think(ai, meta, player, allSnakes, activeDrops, timeScale);
+                this.think(ai, meta, player, allSnakes, activeDrops);
             }
 
             ai.updatePhysics(safeDt, null, ai.isBoosting);
@@ -229,15 +240,7 @@ export class AIManager {
     /**
      * AI思考ルーチン（カミカゼ特攻・包囲狩猟・過度な逃走抑制・O(1)リングバッファ）
      */
-    think(ai, meta, player, allSnakes, activeDrops, timeScale = 1.0) {
-        meta.stateTimer -= timeScale;
-        if (meta.harassCooldown > 0) {
-            meta.harassCooldown = Math.max(0, meta.harassCooldown - timeScale);
-        }
-        if (meta.panicCooldown > 0) {
-            meta.panicCooldown = Math.max(0, meta.panicCooldown - timeScale);
-        }
-
+    think(ai, meta, player, allSnakes, activeDrops) {
         // 1. 【最優先】外壁激突回避
         const wallMargin = 400 + ai.size * 2;
         if (ai.x < wallMargin || ai.x > MAP_SIZE - wallMargin || ai.y < wallMargin || ai.y > MAP_SIZE - wallMargin) {

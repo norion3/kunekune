@@ -1,6 +1,10 @@
 // ==============================================================================
 // 『くねくねバトル オンライン』AgentSDK公式マルチプレイ通信マネージャー (network.js)
-// v27.5.0 ホスト昇格時生態系安定化＆再入室整合性完全保証版:
+// v27.6.0 再入室時ゴースト完全パージ＆生態系整合性保証版:
+// ・【再入室時ゴースト完全パージ】onWorldPurged コールバックを新設。
+// 　ルーム作成・入室・再入室(createRoom / joinRoom / exitRoom)時に呼ばれる
+// 　purgeLocalWorldState() から確実にメインループ側の remoteSnakes や
+// 　旧セッションの自機残骸を完全消去し、自機ゴースト化・多重描画を根本から根絶
 // ・【ホスト昇格後Slot0再利用の修正維持】ホスト切断・昇格後にSlot 0がAI枠（空き枠）へ解放された際、
 // 　i=0 からの全枠探索（ホスト自身スロット保護付）により最大定員割れを完全防止
 // ・【自律ホスト昇格時の同期強化】promoteToHost において、昇格直後に新ホストとしてのスロット構成・
@@ -95,7 +99,8 @@ export const NetworkManager = {
         onLeaderboardSync: null,
         onHostPromoted: null,
         onUserExited: null,
-        onSurrenderedAsHost: null // スプリットブレイン降格時のAIパージ用コールバック
+        onSurrenderedAsHost: null, // スプリットブレイン降格時のAIパージ用コールバック
+        onWorldPurged: null        // ★ 新設: 再入室・ルーム遷移時のローカルゴースト走者完全消去コールバック
     },
 
     setCallbacks(cb) {
@@ -803,6 +808,15 @@ export const NetworkManager = {
         this._lastHostPacketTime = 0;
         this._hasReceivedFirstHostPacket = false;
         this._isPromoting = false;
+
+        // ★ 新設: 再入室時・ルーム遷移時にメインループ側の残留走者を完全パージ
+        if (this.callbacks.onWorldPurged) {
+            try {
+                this.callbacks.onWorldPurged();
+            } catch (err) {
+                console.warn('[NetworkManager] onWorldPurged error:', err);
+            }
+        }
     },
 
     async exitRoom() {
