@@ -306,7 +306,6 @@ export function initGame(isRespawn = false) {
                 if (i === NetworkManager.mySlot) continue;
                 const slotData = NetworkManager.slots[i];
                 if (slotData && slotData.isAI) {
-                    // 既存AI(1〜94)と重複せず、かつ負数にならない一意な正のID空間（95〜100）へ割り当て
                     const dummyId = MAX_AIS + i + 1;
                     const aiSnake = new Snake(false, dummyId, slotData.name || `CPU ${i + 1}`, slotData.color, 'normal');
                     const angle = Math.random() * Math.PI * 2;
@@ -386,7 +385,6 @@ NetworkManager.setCallbacks({
             if (sIdx !== -1) sortedSnakes.splice(sIdx, 1);
         }
 
-        // 既存のAIスナップショット保持（通常AI + 空き枠ダミーAI）
         const oldAiSnapshots = new Map();
         for (const [slot, remote] of remoteSnakes.entries()) {
             if (slot >= MAX_PLAYERS && remote && !remote.isDead) {
@@ -425,7 +423,6 @@ NetworkManager.setCallbacks({
             }
         }
 
-        // 空き枠ダミーAI（ID: 95〜100）のスナップショット完全引継ぎ
         for (let i = 0; i < MAX_PLAYERS; i++) {
             if (i === NetworkManager.mySlot) continue;
             const slotData = NetworkManager.slots[i];
@@ -433,7 +430,6 @@ NetworkManager.setCallbacks({
                 const dummyId = MAX_AIS + i + 1;
                 const aiSnake = new Snake(false, dummyId, slotData.name || `CPU ${i + 1}`, slotData.color, 'normal');
                 
-                // ゲスト時代に受信していたリモート情報があれば座標・スコアを引き継ぐ
                 const existingRemote = remoteSnakes.get(i);
                 if (existingRemote && !existingRemote.isDead) {
                     aiSnake.x = existingRemote.x;
@@ -499,8 +495,6 @@ NetworkManager.setCallbacks({
             if (sIdx !== -1) sortedSnakes.splice(sIdx, 1);
         }
 
-        // ★ 修正：ホスト時、退出した人間スロットへ即座にダミーAI（ID: MAX_AIS + slotIdx + 1）を補充
-        // これによりゲストの入退室によるスネーク数減少（過疎化・定員割れ）を完全根絶し100体を死守
         if (NetworkManager.isHost && NetworkManager.isMultiplayerActive && slotIdx < MAX_PLAYERS && slotIdx !== NetworkManager.mySlot) {
             const dummyId = MAX_AIS + slotIdx + 1;
             const existingFake = allSnakes.find(s => !s.isPlayer && s.id === dummyId);
@@ -657,7 +651,6 @@ function gameLoop() {
         remoteSnakes.forEach((remote, slotIdx) => {
             if (remote.isDead) return;
 
-            // ゴースト検知＆完全パージ
             if (NetworkManager.isMultiplayerActive) {
                 const slotData = NetworkManager.slots[slotIdx];
                 if (!slotData || slotData.isAI) {
@@ -677,9 +670,6 @@ function gameLoop() {
                 return;
             }
 
-            // =========================================================================
-            // デッドレコニング＆二重加算防止（shiftHistory による安全平行移動補正）
-            // =========================================================================
             if (remote.targetNetX !== undefined && remote.targetNetY !== undefined) {
                 const timeScale = Math.max(0.1, Math.min(3.0, dtSec * 60));
                 
@@ -692,7 +682,6 @@ function gameLoop() {
                     const shiftX = remote.targetNetX - remote.x;
                     const shiftY = remote.targetNetY - remote.y;
                     
-                    // ★ snake.js の公式 shiftHistory API を適用し、形状を完全維持したまま平行移動
                     remote.shiftHistory(shiftX, shiftY);
                     remote.x = remote.targetNetX;
                     remote.y = remote.targetNetY;
@@ -797,7 +786,6 @@ function gameLoop() {
                 const absorbedScore = Math.max(120, Math.floor(victim.score * 0.18));
                 killer.addScore(absorbedScore);
 
-                // プレイヤー（自機）、または人間の参加者が関与した撃破のみ通知を表示
                 const isKillerHuman = killer.isPlayer || (NetworkManager.isMultiplayerActive && killer.id !== undefined && killer.id < MAX_PLAYERS && NetworkManager.slots[killer.id] && !NetworkManager.slots[killer.id].isAI);
                 const isVictimHuman = victim.isPlayer || (NetworkManager.isMultiplayerActive && victim.id !== undefined && victim.id < MAX_PLAYERS && NetworkManager.slots[victim.id] && !NetworkManager.slots[victim.id].isAI);
 
