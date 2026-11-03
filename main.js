@@ -1,18 +1,16 @@
 // ==============================================================================
 // 『くねくねバトル オンライン』Phase 7 マスター統合オーケストレーター (main.js)
-// v30.0.0 リーダーボードスロット同期＆再入室ゴーストパージ完全対応版:
-// ・【リーダーボードスロットIDの完全同期】ホストがリーダーボード情報を同報する際、
-// 　通常AI(6〜99)およびダミーAI(0〜5)のスロット番号を、Pパケットの仕様と寸分違わず
-// 　完全一致化。受信側（ゲスト）でのスロット・実体データの不整合を構造から根絶
-// ・【再入室ゴーストパージ連携】NetworkManager.callbacks.onWorldPurged を実装。
-// 　再入室やルーム切り替え時に remoteSnakes を即時消去し、自機ゴースト化・多重描画を根絶
-// ・【モジュール分割による軽量化維持】boot.js / host_migration.js との連携維持
-// ・【ゲスト退出時ダミーAI即時補充維持】MAX_AIS + slotIdx + 1 による定員100体死守
-// ・【デッドレコニング shiftHistory 公式統合維持】大距離ワープ時の安定追従
-// ・【リセットボタン動的表示連動】updateResetButtonVisibility によりソロ対戦中のみ表示
-// ・【CPUキルログ完全排除】プレイヤーまたは人間参加者が関与した撃破のみ通知表示
-// ・【スコア単位短縮フォーマッター】formatScore 配備（10k / 1M 短縮表示）
-// ・【餌同期の絶対座標化】checkFoodConsumption のコールバックを絶対座標 (x, y) に適応
+// v31.0.0 スコア表示小数3桁解像度化＆ランキング縦列美整列版:
+// ・【スコア省略フォーマッター刷新】6桁（999,999 pt）まではカンマ区切りのフル表示。
+// 　7桁（1,000,000 pt）到達時から (s / 1000000).toFixed(3) + 'M'（例: 1.234M）の
+// 　小数3桁固定表示を採用。超巨大化後も敵撃破や肉片吸収の加点(1,000pt単位)がリアルタイムに
+// 　数値の動きとして視認でき、爽快感を極大化
+// ・【ランキング順位番号と名前の完全頭出し整列】順位番号を独立した固定幅ブロック
+// 　（width: 18px / tnum）へ分離配置し、直後の「CPU」やプレイヤー名の開始位置を美しく一直線に整列
+// ・【長いGRAVITYユーザー名の安全な省略保証】min-width: 0 と text-overflow: ellipsis の
+// 　組み合わせにより、長大なニックネームでもレイアウト崩壊せず末尾「…」で確実に自動短縮
+// ・【リーダーボードスロットIDの完全同期維持】通常AI(6〜99)およびダミーAI(0〜5)の整合性維持
+// ・【再入室ゴーストパージ連携維持】NetworkManager.callbacks.onWorldPurged 実装維持
 // ==============================================================================
 
 import { injectStyles } from './style.js';
@@ -49,15 +47,14 @@ import { setupNetworkHandlers } from './net_handlers.js';
 import { handleHostMigration } from './host_migration.js';
 import { runBootSequence } from './boot.js';
 
-// --- スコア表示用単位短縮ヘルパー（10万・100万時のUIオーバーフロー防止） ---
+// --- スコア表示用単位短縮ヘルパー（6桁フル表示 ＆ 7桁目から小数3桁固定 X.XXXM） ---
 export function formatScore(val) {
     const s = Math.floor(val || 0);
     if (s >= 1000000) {
-        return (s / 1000000).toFixed(1).replace(/\.0$/, '') + 'M';
+        // 1,000pt単位の変化がリアルタイムに伝わる小数3桁固定表示（例: 1.000M, 1.234M）
+        return (s / 1000000).toFixed(3) + 'M';
     }
-    if (s >= 10000) {
-        return (s / 1000).toFixed(1).replace(/\.0$/, '') + 'k';
-    }
+    // 999,999 まではカンマ区切りでそのままフル表示
     return s.toLocaleString();
 }
 
@@ -437,7 +434,7 @@ NetworkManager.setCallbacks({
         }
     },
 
-    // ★ 再入室・ルーム遷移時のゴースト走者完全パージハンドラ
+    // 再入室・ルーム遷移時のゴースト走者完全パージハンドラ
     onWorldPurged() {
         remoteSnakes.clear();
         if (allSnakes && player) {
@@ -709,7 +706,6 @@ function gameLoop() {
                         ranks: slotRanks,
                         top: topList.map(s => {
                             let slotNum = s.id;
-                            // ★ リーダーボードスロットIDの完全同期
                             if (s === player) {
                                 slotNum = NetworkManager.mySlot;
                             } else if (!s.isPlayer && s.id !== undefined) {
@@ -730,10 +726,14 @@ function gameLoop() {
 
                 const listEl = document.getElementById('leaderboard-list');
                 if (listEl && listEl.parentElement && listEl.parentElement.style.display !== 'none') {
+                    // ★ 順位番号を独立ブロック（width: 18px）化し「CPU」の頭出しを一直線に整列。名前は ellipsis で安全短縮
                     listEl.innerHTML = topList.map((s, idx) => `
                         <div style="display:flex; justify-content:space-between; align-items:center; color:${s === player ? '#ffdd00' : '#ffffff'}; font-weight:${s === player ? 'bold' : 'normal'}; font-size:12px; gap:6px;">
-                            <span style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:88px;">${idx + 1}. ${s.name}</span>
-                            <span style="font-feature-settings:'tnum'; text-align:right; font-weight:700;">${formatScore(s.score)}</span>
+                            <div style="display:flex; align-items:center; min-width:0; flex:1; overflow:hidden;">
+                                <span style="display:inline-block; width:18px; flex-shrink:0; font-feature-settings:'tnum'; text-align:left;">${idx + 1}.</span>
+                                <span style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap; flex:1;">${s.name}</span>
+                            </div>
+                            <span style="font-feature-settings:'tnum'; text-align:right; font-weight:700; flex-shrink:0; margin-left:6px;">${formatScore(s.score)}</span>
                         </div>
                     `).join('');
                 }
