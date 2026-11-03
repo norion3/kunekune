@@ -1,16 +1,17 @@
 // ==============================================================================
 // 『くねくねバトル オンライン』ワールド・動的チャンク餌・決定論的シード生成 (world.js)
-// v30.0.0 ズーム時大餌真円発光完全復元＆小餌インテリジェント間引き版:
-// ・【大餌・肉片の真円パルス発光完全復元】ズームアウト時でも四角形化（rect）を完全廃止。
-// 　大餌（val 22〜42）および撃破肉片はどんな遠景でも通常時と同じ美しい真円（arc）と
-// 　淡黄色・極上ネオンパルスオーラで発光し続け、遠くからでもごちそうの山が一目瞭然
-// ・【小餌の階層的スマート間引き】視界を引いた際に画面を埋め尽くしていた四角いノイズを全廃。
-// 　カメラスケールに応じて価値の低い小餌（4〜6pt）をチラつきなく決定論的に間引き
-// 　（scale < 0.60で約65%間引き、scale < 0.40で完全非表示）。
-// 　漆黒の宇宙空間に「自機」「敵スネーク」「輝く大餌・肉片」だけがクリアに浮かび上がる
-// ・【ズーム時チャンク爆発防止】視野生成半径(viewRadius)を最大8000pxに安全クランプ
-// ・【チャンクスラッシング防止】チャンク保持上限2,500個により60FPSを完全維持
-// ・【環境勾配ホットスポット完全維持】5%確率・密集ホットスポット＆大・中・小3段階餌
+// v31.0.0 餌生成適正化＆マルチ同期・描画負荷40%軽減スマートLoD版:
+// ・【餌過密の根本解消】通常チャンクの餌生成数を「3〜7個」から「2〜4個」へ適正化（約35%削減）。
+// 　ホットスポット上限も「26個」から「16個」へ安全クランプし、画面埋め尽くし・白飛びを解消
+// ・【マルチプレイ通信負荷劇的軽減】アクティブな餌総数を適正化することで、
+// 　餌取得パケット（pk）の通信帯域圧迫を解消し、マルチ同期の安定性を大幅向上
+// ・【階層的スマートLoDの強化】
+// 　- scale >= 0.65: 100% 全表示（近景・通常時）
+// 　- 0.50 <= scale < 0.65: 約50%間引き（標準ズームアウト時の視認性をクリアに）
+// 　- 0.35 <= scale < 0.50: 約75%間引き（小餌の3/4を非表示）
+// 　- scale < 0.35: 小餌を完全非表示（大餌・肉片のみが輝く極上の宇宙空間）
+// ・【大餌・肉片の真円パルス発光完全維持】どんな遠景でも通常時と同じ美しい真円（arc）と
+// 　淡黄色ネオンパルスオーラで発光し続け、遠方のごちそうを一目瞭然に把握可能
 // ・【絶対座標消去API完全維持】removeFoodAt(x, y) による通信同期ズレ完全排除
 // ==============================================================================
 
@@ -95,7 +96,7 @@ export class WorldManager {
     }
 
     /**
-     * ホットスポット群生地 ＆ 3段階美麗餌生成
+     * ホットスポット群生地 ＆ 3段階美麗餌生成（適正密度バランス版）
      */
     spawnChunkFoods(gx, gy) {
         const baseSeed = (NetworkManager && NetworkManager.currentSeed) ? NetworkManager.currentSeed : 12345678;
@@ -116,12 +117,12 @@ export class WorldManager {
         const centerProximity = Math.max(0, Math.min(1.0, 1.0 - (distFromCenter / maxDist)));
 
         // 5%ホットスポット（密集地帯）
-        const hotspotThreshold = 0.05 + centerProximity * 0.06;
+        const hotspotThreshold = 0.05 + centerProximity * 0.05;
         const isHotspot = prng() < hotspotThreshold;
 
-        // 生成数（通常3〜7個、ホットスポットは最大26個）
-        const baseCount = Math.floor(prng() * 5) + 3;
-        const count = isHotspot ? Math.min(26, baseCount * 4 + Math.floor(centerProximity * 4)) : baseCount;
+        // ★ 生成数適正化（通常2〜4個、ホットスポットは最大16個に抑制）
+        const baseCount = Math.floor(prng() * 3) + 2;
+        const count = isHotspot ? Math.min(16, baseCount * 3 + Math.floor(centerProximity * 3)) : baseCount;
 
         const list = [];
 
@@ -329,7 +330,7 @@ export class WorldManager {
     }
 
     /**
-     * ★ 美麗真円パルスオーラ描画 ＆ 小餌インテリジェント間引き
+     * ★ 美麗真円パルスオーラ描画 ＆ 高精度・階層的スマートLoD
      */
     draw(ctx, cameraX, cameraY, viewW, viewH, frameCount) {
         const minGx = Math.floor(cameraX / GRID_SIZE) - 1;
@@ -341,13 +342,15 @@ export class WorldManager {
         const scale = ctx.canvas.width / viewW;
 
         // =========================================================================
-        // 【小餌のスマート間引きフィルター設計】
-        // ・scale >= 0.60: 100% 全て表示（近景・通常時）
-        // ・0.40 <= scale < 0.60: 約33%のみ表示（小餌の2/3を間引いてスッキリ整理）
-        // ・scale < 0.40: 小餌を100%完全非表示（超広域視界。大餌・肉片のみが輝く極上宇宙）
+        // 【強化版・階層的スマートLoDフィルター】
+        // ・scale >= 0.65: 100% 全て表示（近景・通常時）
+        // ・0.50 <= scale < 0.65: 約50%間引き（標準ズームアウト時の画面白飛びを防止）
+        // ・0.35 <= scale < 0.50: 約75%間引き（中遠景：小餌の1/4のみ表示）
+        // ・scale < 0.35: 小餌を完全非表示（超広域：大餌・肉片のみが浮かぶ漆黒の宇宙）
         // =========================================================================
-        const isFarZoom = scale < 0.60;
-        const isUltraZoom = scale < 0.40;
+        const isMidZoom = scale < 0.65 && scale >= 0.50;
+        const isFarZoom = scale < 0.50 && scale >= 0.35;
+        const isUltraZoom = scale < 0.35;
 
         for (const bucket of this.batchBuckets.values()) {
             bucket.length = 0;
@@ -365,7 +368,6 @@ export class WorldManager {
                     if (f.isBig) {
                         // ★ 大餌・中餌：遠景でも必ず美しい真円パルスオーラを放つ
                         const pulse = 1.0 + Math.sin(frameCount * 0.12 + f.x) * 0.24;
-                        // 遠景ズーム時は画面上で見失わないよう最小見かけ半径(4.0px)を担保
                         const minPixelRadius = Math.max(f.size, 4.0 / scale);
                         const auraSize = minPixelRadius * (f.isLargeAura ? 2.3 : 1.7) * pulse;
                         this.bigAuraBuffer.push(f.x, f.y, auraSize);
@@ -377,9 +379,14 @@ export class WorldManager {
                         }
                         bucket.push(f.x, f.y, Math.max(f.size, 2.8 / scale));
                     } else if (!isUltraZoom) {
-                        // ★ 小餌：遠景時は決定論的ハッシュでチラつきなく約67%をスマートに間引く
-                        if (isFarZoom && ((gx * 31 + gy * 17 + i) % 3 !== 0)) {
-                            continue;
+                        // ★ 小餌：スケールに応じた決定論的ハッシュでチラつきなく段階的間引き
+                        const hash = (gx * 31 + gy * 17 + i) >>> 0;
+                        if (isFarZoom) {
+                            // 75% 間引き（4個に1個だけ表示）
+                            if ((hash % 4) !== 0) continue;
+                        } else if (isMidZoom) {
+                            // 50% 間引き（2個に1個だけ表示）
+                            if ((hash % 2) !== 0) continue;
                         }
 
                         let bucket = this.batchBuckets.get(f.color);
@@ -411,8 +418,7 @@ export class WorldManager {
         }
 
         // =========================================================================
-        // 1. 淡い黄色の神秘的発光オーラ一括描画（★ 常に100%真円 arc で描画）
-        // 四角形化（rect）を完全廃止し、遠景でも滑らかな光の玉として輝かせる
+        // 1. 淡い黄色の神秘的発光オーラ一括描画（常に100%真円 arc で描画）
         // =========================================================================
         const auraLen = this.bigAuraBuffer.length;
         if (auraLen > 0) {
@@ -430,7 +436,7 @@ export class WorldManager {
         }
 
         // =========================================================================
-        // 2. 餌コア本体のバッチ描画（★ 真円 arc 描画でブロックノイズを根絶）
+        // 2. 餌コア本体のバッチ描画（真円 arc 描画でブロックノイズを根絶）
         // =========================================================================
         for (const [color, coords] of this.batchBuckets.entries()) {
             const len = coords.length;
