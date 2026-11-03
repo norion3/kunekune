@@ -1,13 +1,16 @@
 /**
  * ==============================================================================
  * 『くねくねバトル オンライン』一体型HUD ＆ 自機中心相対追従レーダー (hud.js)
- * v25.7.0 自機カスタムカラー完全連動＆高視認性ゴールド方向ポインター版:
- * ・【自機カスタムカラー完全連動】レーダー中央の自機マークコアに player.color（選択カラー）を反映
- * 　ピンク、ライム、紫など、CUSTOMメニューで選んだ本体色がミニマップ上でも直感的に一致
- * ・自機マークの外枠にクッキリとした白色リング（#ffffff）を配備し、暗い背景でも埋もれない高い視認性を両立
- * ・【AI人間誤判定根絶】マルチ有効かつ slots[s.id] が人間（!isAI）である場合のみ二重リング描画
- * ・ソロプレイ時や空き枠AI（ID: 1〜5）が誤って他ユーザー表示される不具合を100%排除
- * ・【方向マーカー】自機リングの外側へ突き出す高輝度ゴールド矢印（#fde047）＋黒輪郭線を完全維持
+ * v26.0.0 他ユーザー画面外方向インジケーター（相手カラー連動▲）新設版:
+ * ・【画面外他ユーザー方向インジケーター新設】
+ * 　ルーム内にいる他人間プレイヤーがミニマップ索敵範囲外（遠方）にいる場合、
+ * 　自機からの方角をリアルタイム計算し、レーダー最外周（フチから6px）に
+ * 　相手の設定色（s.color）を反映した「さりげない方向ポインター（▲）」を点灯。
+ * 　その方角へ進みマップ内に入ってきた瞬間、方向マーカーは自然に消え、
+ * 　いつもの「ユーザー専用二重パルスリングアイコン」へシームレスに切り替え。
+ * ・【自機カスタムカラー完全連動維持】レーダー中央の自機マークに player.color を反映
+ * ・【AI人間誤判定根絶維持】マルチ有効かつ slots[s.id] が人間（!isAI）である場合のみ適用
+ * ・【自機ゴールド進行方向ポインター維持】高輝度ゴールド矢印（#fde047）
  * ・カメラ視野枠の極薄ハイライト＋四隅フォーカス枠（[ ]）維持
  * ・描画負荷軽減：2フレームに1回（30FPS）描画スロットリング ＆ Offscreen キャッシュ維持
  * ==============================================================================
@@ -81,7 +84,7 @@ export class HUDManager {
 
     /**
      * 自機中心の相対追従レーダーをメインCanvasに直接描画
-     * 自機カラー連動・人間厳格識別・ゴールド方向ポインター・カメラ視野ハイライト版
+     * 自機カラー連動・人間厳格識別・画面外方向インジケーター・ゴールド方向ポインター・カメラ視野ハイライト版
      */
     drawRadar(ctx, canvasWidth, safeTop, player, otherEntities, cameraScale) {
         if (!this.showMap || !player) return;
@@ -160,38 +163,80 @@ export class HUDManager {
                         }
                     }
 
-                    const drawX = radarCenter + (s.x - cx) * radarRatio;
-                    const drawY = radarCenter + (s.y - cy) * radarRatio;
-
-                    // レーダー枠外クリッピング
-                    if (drawX < -8 || drawX > this.radarSize + 8 || drawY < -8 || drawY > this.radarSize + 8) {
-                        continue;
-                    }
+                    const dx = s.x - cx;
+                    const dy = s.y - cy;
+                    const drawX = radarCenter + dx * radarRatio;
+                    const drawY = radarCenter + dy * radarRatio;
 
                     if (isHuman) {
-                        // 人間プレイヤー描画：動的カスタムカラー ＋ 二重パルスリング
                         const humanColor = s.color || '#ff3366';
-                        const pulseScale = 1.0 + Math.sin(this.radarFrameCount * 0.18 + (s.id || 0)) * 0.22;
+                        const inBounds = (drawX >= 7 && drawX <= this.radarSize - 7 && drawY >= 7 && drawY <= this.radarSize - 7);
 
-                        // 外周ネオンパルスリング
-                        rCtx.strokeStyle = humanColor;
-                        rCtx.lineWidth = 1.4;
-                        rCtx.beginPath();
-                        rCtx.arc(drawX, drawY, 5.2 * pulseScale, 0, Math.PI * 2);
-                        rCtx.stroke();
+                        if (inBounds) {
+                            // ★ レーダー内：人間プレイヤー専用アイコン（二重パルスリング＋コア）
+                            const pulseScale = 1.0 + Math.sin(this.radarFrameCount * 0.18 + (s.id || 0)) * 0.22;
 
-                        // 中心コア（クッキリ本体色）
-                        rCtx.fillStyle = humanColor;
-                        rCtx.beginPath();
-                        rCtx.arc(drawX, drawY, 3.2, 0, Math.PI * 2);
-                        rCtx.fill();
+                            // 外周ネオンパルスリング
+                            rCtx.strokeStyle = humanColor;
+                            rCtx.lineWidth = 1.4;
+                            rCtx.beginPath();
+                            rCtx.arc(drawX, drawY, 5.2 * pulseScale, 0, Math.PI * 2);
+                            rCtx.stroke();
 
-                        // コア中心のホワイトハイライト
-                        rCtx.fillStyle = '#ffffff';
-                        rCtx.beginPath();
-                        rCtx.arc(drawX, drawY, 1.2, 0, Math.PI * 2);
-                        rCtx.fill();
+                            // 中心コア（クッキリ本体色）
+                            rCtx.fillStyle = humanColor;
+                            rCtx.beginPath();
+                            rCtx.arc(drawX, drawY, 3.2, 0, Math.PI * 2);
+                            rCtx.fill();
+
+                            // コア中心のホワイトハイライト
+                            rCtx.fillStyle = '#ffffff';
+                            rCtx.beginPath();
+                            rCtx.arc(drawX, drawY, 1.2, 0, Math.PI * 2);
+                            rCtx.fill();
+                        } else {
+                            // ★ レーダー外：最外周フチにさりげなく方向ポインター（▲）を点灯
+                            const angle = Math.atan2(dy, dx);
+                            const cos = Math.cos(angle);
+                            const sin = Math.sin(angle);
+                            const halfSize = radarCenter - 6; // レーダー外枠から6px内側
+
+                            const t = Math.min(
+                                Math.abs(halfSize / (cos || 0.0001)),
+                                Math.abs(halfSize / (sin || 0.0001))
+                            );
+                            const edgeX = radarCenter + cos * t;
+                            const edgeY = radarCenter + sin * t;
+
+                            // 相手の方角を指す先端三角ポインター
+                            const baseLen = 6.0;
+                            const baseWidth = 3.5;
+                            const baseCenterX = edgeX - cos * baseLen;
+                            const baseCenterY = edgeY - sin * baseLen;
+                            const perpX = -sin * baseWidth;
+                            const perpY = cos * baseWidth;
+
+                            rCtx.save();
+                            rCtx.beginPath();
+                            rCtx.moveTo(edgeX, edgeY);
+                            rCtx.lineTo(baseCenterX + perpX, baseCenterY + perpY);
+                            rCtx.lineTo(baseCenterX - perpX, baseCenterY - perpY);
+                            rCtx.closePath();
+
+                            rCtx.fillStyle = humanColor;
+                            rCtx.fill();
+                            rCtx.strokeStyle = 'rgba(0, 0, 0, 0.85)';
+                            rCtx.lineWidth = 1.0;
+                            rCtx.lineJoin = 'round';
+                            rCtx.stroke();
+                            rCtx.restore();
+                        }
                     } else {
+                        // AIスネーク描画：枠外はスキップ
+                        if (drawX < -8 || drawX > this.radarSize + 8 || drawY < -8 || drawY > this.radarSize + 8) {
+                            continue;
+                        }
+
                         // AIスネーク描画：格上（赤）／格下（控えめドット）
                         const isBigger = s.score > player.score;
                         let isTopEnemy = false;
@@ -285,7 +330,7 @@ export class HUDManager {
             rCtx.lineJoin = 'round';
             rCtx.stroke();
 
-            // ★ 自機マーク：選択されたカスタムカラー（player.color）と完全連動
+            // 自機マーク：選択されたカスタムカラー（player.color）と完全連動
             const myColor = player.color || '#00e5ff';
 
             // 外枠：白色の高コントラストリング（背景やカメラ枠との境界をクッキリ分離）

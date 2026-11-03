@@ -1,16 +1,16 @@
 // ==============================================================================
 // 『くねくねバトル オンライン』リモートパケット受信反映ハンドラ (net_handlers.js)
-// v29.0.0 AI表情・カラー完全同期＆スロット整合性完全保証版:
-// ・【AI表情・デザインの完全同期】ゲスト側でリモート通常AI（Slot 6〜99）を受信・生成する際、
-// 　スロットから元のID（slot - MAX_PLAYERS + 1）を逆算し、ホスト側と寸分違わず同じ
-// 　5種類の表情（normal, angry, happy, cool, cute）およびカラーパレットを完全復元。
-// 　ゲスト画面でAIが全員「ノーマル顔」になっていたデザイン非同期を完全根絶
-// ・【空き枠ダミーAI（Slot 0〜5）整合性保証】スロット0〜5のリモート走者は、NetworkManager.slots
-// 　の割り当て情報（名前・カラー・人間/CPU判定）を最優先で反映し、偽装ダミーAIと人間を区別
-// ・【リモート死亡時肉片還元】ゲストが自己判定で死亡した際、ホストが即座に肉片クラスタを発行
-// ・【胴体シフトAPI完全統合】snake.js の公式カプセル化メソッド shiftHistory(dx, dy) 適用
-// ・【餌消去の絶対座標化】onFoodPicked で world.removeFoodAt(pick.x, pick.y) を安全実行
-// ・【ランキング再ソート】ゲスト端末自己補正後に topList.sort((a, b) => b.score - a.score) 実行
+// v30.0.0 リーダーボード頭出し整列＆高解像度スコア・名前省略同期版:
+// ・【ランキング順位番号と名前の完全頭出し整列】順位番号を独立した固定幅ブロック
+// 　（width: 18px / tnum）へ分離配置し、直後の「CPU」やプレイヤー名の開始位置を美しく一直線に整列
+// ・【スコア省略フォーマッター刷新】6桁（999,999 pt）まではカンマ区切りのフル表示。
+// 　7桁（1,000,000 pt）到達時から (s / 1000000).toFixed(3) + 'M'（例: 1.234M）の
+// 　小数3桁固定表示を採用し、ゲスト端末でも1,000pt単位の加点がリアルタイムに連動
+// ・【長いGRAVITYユーザー名の安全な省略保証】min-width: 0 と text-overflow: ellipsis の
+// 　組み合わせにより、長大なニックネームでもレイアウト崩壊せず末尾「…」で確実に自動短縮
+// ・【AI表情・デザインの完全同期維持】通常AI(Slot 6〜99)の5種表情・カラー復元維持
+// ・【空き枠ダミーAI整合性保証維持】偽装ダミーAIと人間プレイヤーの区別維持
+// ・【リモート死亡時肉片還元＆胴体シフトAPI維持】食物連鎖保護＆shiftHistory完全統合
 // ==============================================================================
 
 import { Snake } from './snake.js';
@@ -22,6 +22,15 @@ const AI_FACES = ['normal', 'angry', 'happy', 'cool', 'cute'];
 
 // ランキングDOM書き換えチラつき防止用シグネチャキャッシュ
 let lastLeaderboardSignature = '';
+
+// スコア表示用単位短縮ヘルパー（6桁フル表示 ＆ 7桁目から小数3桁固定 X.XXXM）
+function formatScore(val) {
+    const s = Math.floor(val || 0);
+    if (s >= 1000000) {
+        return (s / 1000000).toFixed(3) + 'M';
+    }
+    return s.toLocaleString();
+}
 
 /**
  * ネットワーク受信コールバックのセットアップ
@@ -220,12 +229,16 @@ export function setupNetworkHandlers(ctx) {
 
             const listEl = document.getElementById('leaderboard-list');
             if (listEl && listEl.parentElement && listEl.parentElement.style.display !== 'none') {
+                // ★ 順位番号を独立ブロック（width: 18px）化し「CPU」の頭出しを一直線に整列。名前は ellipsis で安全短縮
                 listEl.innerHTML = topList.slice(0, 8).map((item, idx) => {
                     const isMe = item.slot === NetworkManager.mySlot;
                     return `
-                        <div style="display:flex; justify-content:space-between; color:${isMe ? '#ffdd00' : '#ffffff'}; font-weight:${isMe ? 'bold' : 'normal'}; font-size:12px;">
-                            <span style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:85px;">${idx + 1}. ${item.name}</span>
-                            <span>${Math.floor(item.score)}</span>
+                        <div style="display:flex; justify-content:space-between; align-items:center; color:${isMe ? '#ffdd00' : '#ffffff'}; font-weight:${isMe ? 'bold' : 'normal'}; font-size:12px; gap:6px;">
+                            <div style="display:flex; align-items:center; min-width:0; flex:1; overflow:hidden;">
+                                <span style="display:inline-block; width:18px; flex-shrink:0; font-feature-settings:'tnum'; text-align:left;">${idx + 1}.</span>
+                                <span style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap; flex:1;">${item.name}</span>
+                            </div>
+                            <span style="font-feature-settings:'tnum'; text-align:right; font-weight:700; flex-shrink:0; margin-left:6px;">${formatScore(item.score)}</span>
                         </div>
                     `;
                 }).join('');

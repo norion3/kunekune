@@ -76,7 +76,7 @@ export function injectStyles() {
             color: #ffffff;
             font-size: 12px;
             box-shadow: 0 4px 14px rgba(0, 0, 0, 0.25);
-            min-width: 152px;
+            min-width: 178px;
             pointer-events: auto;
             z-index: 30;
             animation: stats-appear 0.18s ease-out;
