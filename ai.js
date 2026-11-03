@@ -1,11 +1,12 @@
 // ==============================================================================
 // 『くねくねバトル オンライン』スネーク.io型 自律生態系AIマネージャー (ai.js)
-// v28.5.0 真の超巨大ボス覚醒＆生態系ピラミッド最適化版:
-// ・【真の超巨大ボス新設(8,000〜18,000pt)】マップに2%の確率で君臨する超巨大怪獣(size:32〜40, 体長80〜125節)を配備
-// 　従来死に機能だった「コイリング包囲知能(size > 28)」が100%発動し、小型スネークを巨大な円で囲い込む緊迫の狩猟を実現
-// 　カミカゼ特攻(AMBUSH)によるジャイアントキリング成功時の爆発的スコア獲得リターンを確立
-// ・【生態系ピラミッド4層化】小型70%(50〜150pt)、中堅22%(300〜1200pt)、大型6%(2500〜5000pt)、超巨大ボス2%(8000〜18000pt)
-// ・【大型AI機動性調律】大型個体(size > 22)は旋回を少し重厚にする代わりに巡航の重圧感を強化
+// v29.2.0 開幕適正バランス＆成長型生態系ピラミッド調律版:
+// ・【開幕理不尽インフレの完全撤廃】スタート直後に15kなどの巨大ボスが徘徊して即死する
+// 　バランス崩壊を解消。開幕時は最大でも800〜1,200pt（体長25節前後の程よい強敵）に抑え、
+// 　プレイヤーが小さな敵を狩って成長するRPG的サバイバルの楽しさと達成感を復元
+// ・【自然な成長型ピラミッド配分】開幕スコアを 小型85%(50〜150pt)、中堅12%(200〜500pt)、
+// 　エリアボス3%(800〜1,200pt) へ調律。超巨大ボスは時間経過やキルで自然に誕生する健全設計へ移行
+// ・【リスポーン密度の適正化】リスポーン時の獲得スコアも開幕分布と整合させ、理不尽な急激沸きを防止
 // ・【全機能完全継承】カミカゼ暗殺(AMBUSH)、包囲コイリング(HUNTER)、3種ちょっかい(HARASS)、
 // 　ハイエナ肉片争奪(SCAVENGER)、ビビり逃走(PANIC)、大回遊(CRUISING)、完全DeltaTime、
 // 　動的循環スポーン、画面外仮想成長の全ルーチンを一切省略せず100%完全保持
@@ -69,29 +70,26 @@ export class AIManager {
                 ambushTarget: null
             });
 
-            // 初期配置の広域分散化
+            // 初期配置の広域分散化（開幕直後の過密・敵だらけ状態を完全防止）
             const angle = Math.random() * Math.PI * 2;
-            const dist = 2000 + Math.random() * 16000;
+            const dist = 2500 + Math.random() * 16000;
             const sx = Math.max(400, Math.min(MAP_SIZE - 400, playerX + Math.cos(angle) * dist));
             const sy = Math.max(400, Math.min(MAP_SIZE - 400, playerY + Math.sin(angle) * dist));
             ai.reset(sx, sy);
 
-            // ★ 生態系ピラミッド4層化（真の超巨大ボス覚醒）
+            // ★ 開幕の健全な生態系ピラミッド配分（理不尽超巨大ボスの開幕排除）
+            // スタート直後は誰もが狩れる・挑める程よい強さに抑え、時間経過とともに大物に育つバランスへ
             const scoreRand = Math.random();
-            if (scoreRand < 0.02) {
-                // 2%: マップに君臨する超巨大怪獣ボス（8,000〜18,000pt / size 32〜40 / 80〜125節）
-                // コイリング包囲知能(size > 28)が確実に発動し、撃破で超大量の肉片を散布
-                ai.addScore(Math.floor(8000 + Math.random() * 10000));
-                // ボス格は回遊または狩猟に特化
-                this.aiMeta[i - 1].persona = Math.random() < 0.6 ? 'cruiser' : 'hunter';
-            } else if (scoreRand < 0.08) {
-                // 6%: 大型上位個体（2,500〜5,000pt / size 24〜28 / 40〜57節）
-                ai.addScore(Math.floor(2500 + Math.random() * 2500));
-            } else if (scoreRand < 0.30) {
-                // 22%: 中堅一般個体（300〜1,200pt / size 16.5〜20 / 20〜29節）
-                ai.addScore(Math.floor(300 + Math.random() * 900));
+            if (scoreRand < 0.03) {
+                // 3%: 開幕時点でのエリアボス・強敵（800〜1,200pt / 体長20〜25節）
+                // 画面外からいきなり理不尽に轢き殺されることなく、狙えば下克上できる絶妙な目標
+                ai.addScore(Math.floor(800 + Math.random() * 400));
+                this.aiMeta[i - 1].persona = Math.random() < 0.5 ? 'cruiser' : 'hunter';
+            } else if (scoreRand < 0.15) {
+                // 12%: 中堅一般個体（200〜500pt / 体長16〜19節）
+                ai.addScore(Math.floor(200 + Math.random() * 300));
             } else {
-                // 70%: 基本となる小型・ザコ個体（初期50pt + ゆらぎ 0〜100pt）
+                // 85%: 基本となる小型・序盤の狩り対象（初期50pt + ゆらぎ 0〜100pt / 体長12〜16節）
                 ai.addScore(Math.floor(Math.random() * 100));
             }
 
@@ -113,7 +111,7 @@ export class AIManager {
         const safeDt = (typeof dtSec === 'number' && dtSec > 0) ? Math.min(dtSec, 0.1) : (1 / 60);
         const timeScale = Math.max(0.1, Math.min(3.0, safeDt * 60));
 
-        // 1. 【画面外AIの仮想バックグラウンド成長】（ランキング静止バグ防止）
+        // 1. 【画面外AIの仮想バックグラウンド成長】（ランキング静止バグ防止＆自然な巨大化）
         this._virtualGrowthTimer += safeDt;
         if (this._virtualGrowthTimer >= 0.5) {
             const growthInterval = this._virtualGrowthTimer;
@@ -126,16 +124,16 @@ export class AIManager {
                 const meta = this.aiMeta[i];
                 if (!meta) continue;
 
-                // 成長レートを適正化（毎秒 6〜14pt 程度に抑制）
+                // 成長レートを適正化（毎秒 6〜12pt 程度にマイルド化）
                 let gainRate = 6;
-                if (meta.persona === 'hunter' || meta.persona === 'cruiser') gainRate = 14;
-                if (meta.persona === 'forager') gainRate = 9;
+                if (meta.persona === 'hunter' || meta.persona === 'cruiser') gainRate = 12;
+                if (meta.persona === 'forager') gainRate = 8;
 
                 ai.addScore(gainRate * growthInterval);
 
-                // 仮想キル発生頻度と獲得量
-                if (Math.random() < 0.006) {
-                    const killBonus = Math.floor(150 + Math.random() * 500);
+                // 仮想キル発生頻度と獲得量（時間をかけて徐々に大物が誕生する）
+                if (Math.random() < 0.005) {
+                    const killBonus = Math.floor(120 + Math.random() * 380);
                     ai.addScore(killBonus);
                     ai.kills = (ai.kills || 0) + 1;
                 }
@@ -170,19 +168,19 @@ export class AIManager {
                 if (meta.deadTimer >= 1.25) {
                     meta.deadTimer = 0;
 
-                    // リスポーン位置を広域に分散
+                    // リスポーン位置をプレイヤー視界外の安全な遠隔域へ分散
                     const ang = Math.random() * Math.PI * 2;
-                    const d = 4000 + Math.random() * 8000;
+                    const d = 4500 + Math.random() * 8000;
                     const rx = Math.max(400, Math.min(MAP_SIZE - 400, pX + Math.cos(ang) * d));
                     const ry = Math.max(400, Math.min(MAP_SIZE - 400, pY + Math.sin(ang) * d));
                     ai.reset(rx, ry);
 
-                    // 復活時の中型〜大型確率の適正調律
+                    // 復活時のスコア調律（大半は初期サイズ、稀に中堅で再開）
                     const respawnRand = Math.random();
-                    if (respawnRand < 0.015) {
-                        ai.addScore(Math.floor(4000 + Math.random() * 6000)); // 稀にボス格復活
+                    if (respawnRand < 0.02) {
+                        ai.addScore(Math.floor(500 + Math.random() * 500)); // 2%: やや強敵
                     } else if (respawnRand < 0.12) {
-                        ai.addScore(Math.floor(300 + Math.random() * 700));
+                        ai.addScore(Math.floor(150 + Math.random() * 250)); // 10%: 中堅
                     }
 
                     meta.state = AI_STATE.FORAGING;
@@ -198,7 +196,7 @@ export class AIManager {
                 const distToPlayerSq = (ai.x - pX) ** 2 + (ai.y - pY) ** 2;
                 if (distToPlayerSq > recycleDistSq) {
                     const forwardBiasAngle = pAngle + (Math.random() - 0.5) * Math.PI * 1.5;
-                    const spawnDist = 4200 + Math.random() * 4800;
+                    const spawnDist = 4500 + Math.random() * 4500;
                     const nx = Math.max(400, Math.min(MAP_SIZE - 400, pX + Math.cos(forwardBiasAngle) * spawnDist));
                     const ny = Math.max(400, Math.min(MAP_SIZE - 400, pY + Math.sin(forwardBiasAngle) * spawnDist));
 
@@ -301,7 +299,7 @@ export class AIManager {
                 if (other === ai || other.isDead || !other.isVisible) continue;
                 if (other.invulnerableTimer && other.invulnerableTimer > 0) continue;
 
-                if (other.score >= ai.score * 1.8 || other.size >= 26) {
+                if (other.score >= ai.score * 1.8 || other.size >= 24) {
                     const gdx = other.x - ai.x;
                     const gdy = other.y - ai.y;
                     const distSq = gdx * gdx + gdy * gdy;
@@ -414,7 +412,7 @@ export class AIManager {
                 meta.state = AI_STATE.FORAGING;
                 meta.stateTimer = 70 + Math.floor(Math.random() * 60);
                 ai.isBoosting = false;
-            } else if (meta.persona === 'cruiser' && ai.size > 22) {
+            } else if (meta.persona === 'cruiser' && ai.size > 20) {
                 meta.state = AI_STATE.CRUISING;
                 meta.stateTimer = 90 + Math.floor(Math.random() * 120);
             } else if (meta.persona === 'hunter') {
@@ -491,9 +489,8 @@ export class AIManager {
                 }
 
                 if (huntTarget) {
-                    // ★ 包囲コイリング狩猟知能：巨大AIが獲物の周囲を円を描くように回り込み、囲い込む
-                    // 超巨大ボス（size > 28）の出現により、このトグロ包囲が確実に発動！
-                    if (ai.size > huntTarget.size * 1.4 && ai.size > 26) {
+                    // 包囲コイリング狩猟知能：獲物が小型で自身が十分大きい場合に発動
+                    if (ai.size > huntTarget.size * 1.35 && ai.size > 22) {
                         const toTargetAngle = Math.atan2(huntTarget.y - ai.y, huntTarget.x - ai.x);
                         ai.targetAngle = toTargetAngle + Math.PI / 2.3;
                         ai.isBoosting = ai.score > 120 && Math.random() < 0.40;
