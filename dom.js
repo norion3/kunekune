@@ -1,14 +1,13 @@
 // ==============================================================================
 // 『くねくねバトル オンライン』自律DOMマウントモジュール (dom.js)
-// v25.1.0 ワールドリセットボタン新設＆左下クリーンレイアウト版:
-// ・【ワールドリセットボタン新設】音量ボタンの上に透過ガラスモーフィズム仕様のリセットボタン（#btn-world-reset）を配備
-// 　絵文字を使わず既存ボタンと調和するSVG回転リフレッシュ矢印を採用（マルチ時は完全非表示）
-// ・手動の部屋IDコピーや手動入力欄を排除し、GRAVITY公式DM招待にフォーカスしたシンプルUI
-// ・左下ボタングループ：MENU、音量、リセットを縦並び配置
-// ・右側ボタングループ：ズーム・ランキング・マップを上方へ引き上げ集約
-// ・待機室リスト枠の拡張（max-height: 320px）：最大6名全員をスクロールなしで綺麗に収容
-// ・CUSTOMタブ：GRAVITYユーザーアイコンを顔にできる「マイアイコン」選択ボタン完備
-// ・ランキングパネル（#stats-box）：総数100体表示（/ 100）へ整合
+// v28.9.0 サングラス撤廃＆オリジナル愛され笑顔・デフォルト選択完全同期版:
+// ・【サングラス顔SVGアイコン完全撤廃】CUSTOMタブの4番目にあった四角いサングラス(cool)を
+// 　完全撤廃し、添付画像(image_6.png)のパッチリ目＋微笑む口元のキュートな笑顔(smile)SVGへ刷新
+// ・【デフォルト顔プレビュー最適化】1番目のノーマルおよび4番目の笑顔ボタンのSVGパスに
+// 　先端で可愛らしく微笑むスマイル口元ラインを美しく反映
+// ・【ワールドリセットボタン】音量ボタンの上に透過ガラスモーフィズム仕様(#btn-world-reset)完備
+// ・【クリーンレイアウト】MENU、音量、リセットの左下縦並び ＆ 右側アクション群の引き上げ維持
+// ・【公式DM招待UI】待機室最大6名完全収容、GRAVITYマイアイコン顔選択ボタン完備
 // ==============================================================================
 
 import { SNAKE_COLORS, TOTAL_SNAKES } from './constants.js';
@@ -226,13 +225,16 @@ export function mountDOM() {
                 <div class="custom-panel">
                     <div class="custom-label">顔タイプ</div>
                     <div class="custom-row">
-                        <!-- 1. ノーマル -->
+                        <!-- 1. ノーマル（画像準拠のパッチリ瞳＋微笑み口元） -->
                         <button class="custom-face-btn selected" data-face="normal" aria-label="ノーマル">
                             <svg viewBox="0 0 40 40">
-                                <circle cx="15" cy="20" r="6" fill="#ffffff"/>
-                                <circle cx="25" cy="20" r="6" fill="#ffffff"/>
-                                <circle cx="16.5" cy="20" r="2.8" fill="#111827"/>
-                                <circle cx="26.5" cy="20" r="2.8" fill="#111827"/>
+                                <circle cx="14" cy="20" r="5.5" fill="#ffffff"/>
+                                <circle cx="26" cy="20" r="5.5" fill="#ffffff"/>
+                                <circle cx="15" cy="19" r="2.6" fill="#111827"/>
+                                <circle cx="25" cy="19" r="2.6" fill="#111827"/>
+                                <circle cx="14.2" cy="18.2" r="0.9" fill="#ffffff"/>
+                                <circle cx="24.2" cy="18.2" r="0.9" fill="#ffffff"/>
+                                <path d="M 16.5 28 A 3.5 3.5 0 0 0 23.5 28" fill="none" stroke="#111827" stroke-width="2.0" stroke-linecap="round"/>
                             </svg>
                         </button>
                         <!-- 2. いかり -->
@@ -244,25 +246,29 @@ export function mountDOM() {
                                 <circle cx="27.5" cy="21" r="2.6" fill="#111827"/>
                                 <line x1="9" y1="13" x2="19" y2="18" stroke="#111827" stroke-width="2.2" stroke-linecap="round"/>
                                 <line x1="31" y1="13" x2="21" y2="18" stroke="#111827" stroke-width="2.2" stroke-linecap="round"/>
+                                <path d="M 17 28 A 3 3 0 0 1 23 28" fill="none" stroke="#111827" stroke-width="1.8" stroke-linecap="round"/>
                             </svg>
                         </button>
                         <!-- 3. にこにこ -->
                         <button class="custom-face-btn" data-face="happy" aria-label="にこにこ">
                             <svg viewBox="0 0 40 40">
-                                <path d="M 10 22 A 5 5 0 0 1 18 22" fill="none" stroke="#111827" stroke-width="2.5" stroke-linecap="round"/>
-                                <path d="M 22 22 A 5 5 0 0 1 30 22" fill="none" stroke="#111827" stroke-width="2.5" stroke-linecap="round"/>
-                                <circle cx="9" cy="26" r="3.2" fill="rgba(255, 99, 132, 0.75)"/>
-                                <circle cx="31" cy="26" r="3.2" fill="rgba(255, 99, 132, 0.75)"/>
+                                <path d="M 10 21 A 4.5 4.5 0 0 1 18 21" fill="none" stroke="#111827" stroke-width="2.5" stroke-linecap="round"/>
+                                <path d="M 22 21 A 4.5 4.5 0 0 1 30 21" fill="none" stroke="#111827" stroke-width="2.5" stroke-linecap="round"/>
+                                <circle cx="9" cy="25" r="3.0" fill="rgba(255, 99, 132, 0.75)"/>
+                                <circle cx="31" cy="25" r="3.0" fill="rgba(255, 99, 132, 0.75)"/>
+                                <path d="M 17 26 A 3 3 0 0 0 23 26" fill="none" stroke="#111827" stroke-width="2.0" stroke-linecap="round"/>
                             </svg>
                         </button>
-                        <!-- 4. クール -->
-                        <button class="custom-face-btn" data-face="cool" aria-label="クール">
+                        <!-- 4. ★ 新設スマイル（サングラス撤廃：画像image_6.png準拠の愛らしい笑顔） -->
+                        <button class="custom-face-btn" data-face="smile" aria-label="スマイル">
                             <svg viewBox="0 0 40 40">
-                                <rect x="8" y="15" width="10" height="9" rx="2" fill="#0f172a"/>
-                                <rect x="22" y="15" width="10" height="9" rx="2" fill="#0f172a"/>
-                                <line x1="18" y1="18" x2="22" y2="18" stroke="#38bdf8" stroke-width="2"/>
-                                <line x1="10" y1="17" x2="16" y2="17" stroke="rgba(255,255,255,0.4)" stroke-width="1.2"/>
-                                <line x1="24" y1="17" x2="30" y2="17" stroke="rgba(255,255,255,0.4)" stroke-width="1.2"/>
+                                <circle cx="14" cy="20" r="6.0" fill="#ffffff"/>
+                                <circle cx="26" cy="20" r="6.0" fill="#ffffff"/>
+                                <circle cx="15" cy="18.8" r="2.8" fill="#111827"/>
+                                <circle cx="25" cy="18.8" r="2.8" fill="#111827"/>
+                                <circle cx="14.2" cy="17.8" r="1.0" fill="#ffffff"/>
+                                <circle cx="24.2" cy="17.8" r="1.0" fill="#ffffff"/>
+                                <path d="M 16 27.5 A 4 4 0 0 0 24 27.5" fill="none" stroke="#111827" stroke-width="2.3" stroke-linecap="round"/>
                             </svg>
                         </button>
                         <!-- 5. キュート -->
@@ -274,6 +280,7 @@ export function mountDOM() {
                                 <circle cx="27" cy="20" r="3.5" fill="#0f172a"/>
                                 <circle cx="16.5" cy="18.5" r="1.3" fill="#ffffff"/>
                                 <circle cx="28.5" cy="18.5" r="1.3" fill="#ffffff"/>
+                                <path d="M 17.5 28 A 2.5 2.5 0 0 0 22.5 28" fill="none" stroke="#111827" stroke-width="1.8" stroke-linecap="round"/>
                             </svg>
                         </button>
                         <!-- 6. GRAVITYマイアイコン顔 -->
