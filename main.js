@@ -1,15 +1,15 @@
 // ==============================================================================
 // 『くねくねバトル オンライン』Phase 7 マスター統合オーケストレーター (main.js)
-// v31.0.0 スコア表示小数3桁解像度化＆ランキング縦列美整列版:
-// ・【スコア省略フォーマッター刷新】6桁（999,999 pt）まではカンマ区切りのフル表示。
-// 　7桁（1,000,000 pt）到達時から (s / 1000000).toFixed(3) + 'M'（例: 1.234M）の
-// 　小数3桁固定表示を採用。超巨大化後も敵撃破や肉片吸収の加点(1,000pt単位)がリアルタイムに
-// 　数値の動きとして視認でき、爽快感を極大化
-// ・【ランキング順位番号と名前の完全頭出し整列】順位番号を独立した固定幅ブロック
-// 　（width: 18px / tnum）へ分離配置し、直後の「CPU」やプレイヤー名の開始位置を美しく一直線に整列
-// ・【長いGRAVITYユーザー名の安全な省略保証】min-width: 0 と text-overflow: ellipsis の
-// 　組み合わせにより、長大なニックネームでもレイアウト崩壊せず末尾「…」で確実に自動短縮
-// ・【リーダーボードスロットIDの完全同期維持】通常AI(6〜99)およびダミーAI(0〜5)の整合性維持
+// v33.0.0 ホスト枠(Slot 0)ゴーストパージ保護ガード＆ゲスト側追従完全復旧版:
+// ・【ホスト枠(Slot 0)ゴーストパージ保護ガード】
+// 　ゲスト端末の gameLoop において、ホスト枠（slotIdx === 0）が通信ラグや初期化ズレ
+// 　によって slots[0].isAI と判定されても、誤って remoteSnakes から削除されないよう
+// 　例外保護ガードを追加。ゲスト画面上でもホストのスネーク実体が100%保持され、
+// 　レーダー外周の方向ポインター（▲）および二重パルスリングが確実に点灯！
+// ・【スコア省略フォーマッター維持】6桁フル表示、7桁目小数3桁固定（X.XXXM）
+// ・【ランキング順位番号と名前の完全頭出し整列維持】順位番号の独立固定幅ブロック
+// ・【長いGRAVITYユーザー名の安全な省略保証維持】min-width: 0 と ellipsis
+// ・【リーダーボードスロットID完全同期維持】通常AI(6〜99)およびダミーAI(0〜5)の整合性維持
 // ・【再入室ゴーストパージ連携維持】NetworkManager.callbacks.onWorldPurged 実装維持
 // ==============================================================================
 
@@ -518,8 +518,12 @@ function gameLoop() {
             if (remote.isDead) return;
 
             if (NetworkManager.isMultiplayerActive) {
+                // ★ ホスト枠（slotIdx === 0）はゲスト端末で絶対にパージしない保護ガード！
+                // 通信ラグでスロット情報が同期途上であっても、ホストの実体を確実に生かしておく
+                const isHostSlot = (slotIdx === 0);
                 const slotData = NetworkManager.slots[slotIdx];
-                if (!slotData || slotData.isAI) {
+                
+                if (!isHostSlot && (!slotData || slotData.isAI)) {
                     console.warn(`[Sync] ゴースト検知: 切断されたスロット ${slotIdx} の残留エンティティを完全パージします。`);
                     remoteSnakes.delete(slotIdx);
                     const aIdx = allSnakes.indexOf(remote);
@@ -726,7 +730,6 @@ function gameLoop() {
 
                 const listEl = document.getElementById('leaderboard-list');
                 if (listEl && listEl.parentElement && listEl.parentElement.style.display !== 'none') {
-                    // ★ 順位番号を独立ブロック（width: 18px）化し「CPU」の頭出しを一直線に整列。名前は ellipsis で安全短縮
                     listEl.innerHTML = topList.map((s, idx) => `
                         <div style="display:flex; justify-content:space-between; align-items:center; color:${s === player ? '#ffdd00' : '#ffffff'}; font-weight:${s === player ? 'bold' : 'normal'}; font-size:12px; gap:6px;">
                             <div style="display:flex; align-items:center; min-width:0; flex:1; overflow:hidden;">

@@ -1,14 +1,14 @@
 // ==============================================================================
 // 『くねくねバトル オンライン』リモートパケット受信反映ハンドラ (net_handlers.js)
-// v31.0.0 他ユーザーカラーリアルタイム同期＆レーダー完全連動版:
-// ・【他ユーザーカラーリアルタイム即時同期】相手がメニューで色を変更した際、
-// 　パケット内の data.colorIdx を毎フレーム受信検知し、即時に remote.color
-// 　および NetworkManager.slots[data.slot].color を上書き更新。
-// 　スネーク本体はもちろん、ミニマップ外周の方向ポインター（▲）や二重パルスリング
-// 　の色が相手の変更と寸分違わずリアルタイムに完全連動
-// ・【ランキング順位番号と名前の完全頭出し整列維持】順位番号の独立固定幅ブロック（width: 18px）
-// ・【スコア省略フォーマッター刷新維持】6桁フル表示、7桁目小数3桁固定（X.XXXM）
-// ・【長いGRAVITYユーザー名の安全な省略保証維持】min-width: 0 と ellipsis の完全連動
+// v32.0.0 人間走者厳格フラグ(isHumanPlayer)刻印＆AI混同物理遮断版:
+// ・【人間走者厳格フラグ(isHumanPlayer)刻印】
+// 　ホスト側で CPU 1 (AI ID: 1) と ゲスト (Slot 1) のIDが重複してAIにも矢印が
+// 　出てしまう問題を根絶するため、受信生成時に remote.isHumanPlayer = true/false を明示。
+// 　スロット情報（!isAI）およびホスト枠（Slot 0）を厳密に照合し、人間のみにフラグを付与
+// ・【他ユーザーカラーリアルタイム即時同期維持】相手の色変更を毎フレーム即座に反映
+// ・【ランキング順位番号と名前の完全頭出し整列維持】順位番号の独立固定幅ブロック
+// ・【スコア省略フォーマッター維持】6桁フル表示、7桁目小数3桁固定（X.XXXM）
+// ・【長いGRAVITYユーザー名の安全な省略保証維持】min-width: 0 と ellipsis
 // ・【AI表情・デザインの完全同期維持】通常AI(Slot 6〜99)の5種表情・カラー復元維持
 // ・【空き枠ダミーAI整合性保証維持】偽装ダミーAIと人間プレイヤーの区別維持
 // ・【リモート死亡時肉片還元＆胴体シフトAPI維持】食物連鎖保護＆shiftHistory完全統合
@@ -73,6 +73,7 @@ export function setupNetworkHandlers(ctx) {
                 let color;
                 let resolvedName;
                 let face = 'normal';
+                let isRealHuman = false;
 
                 if (isPlayerSlot) {
                     // スロット 0〜5: 人間プレイヤーまたは空き枠ダミーAI
@@ -84,6 +85,11 @@ export function setupNetworkHandlers(ctx) {
                         ? slotData.name 
                         : (data.isAI ? `CPU ${data.slot + 1}` : `P${data.slot + 1}`);
                     face = 'normal';
+                    
+                    // ホスト枠（Slot 0）または AIフラグが立っていない枠を人間走者と判定
+                    if (data.slot === 0 || (slotData && !slotData.isAI)) {
+                        isRealHuman = true;
+                    }
                 } else {
                     // スロット 6〜99: ホストがシミュレートしている通常AI
                     const originalAiId = data.slot - MAX_PLAYERS + 1;
@@ -93,9 +99,13 @@ export function setupNetworkHandlers(ctx) {
                     resolvedName = `CPU ${originalAiId}`;
                     // ★ ホスト側の ai.js と全く同じ計算式で表情を完全復元
                     face = AI_FACES[originalAiId % AI_FACES.length];
+                    isRealHuman = false;
                 }
 
                 remote = new Snake(false, data.slot, resolvedName, color, face);
+                // ★ 人間走者フラグをスネーク自身に直接刻印（AIとの混同・矢印重複を物理排除）
+                remote.isHumanPlayer = isRealHuman;
+
                 remote.reset(data.x, data.y);
                 remoteSnakes.set(data.slot, remote);
 
@@ -124,11 +134,16 @@ export function setupNetworkHandlers(ctx) {
                 }
             }
 
-            // ★ 名前同期保証：スロット情報に人間プレイヤー名が存在する場合、CPU名から即時上書き
+            // ★ 名前同期保証 ＆ 人間フラグの追従確定
             if (data.slot < MAX_PLAYERS) {
                 const curSlot = NetworkManager.slots[data.slot];
-                if (curSlot && curSlot.name && !curSlot.isAI && remote.name !== curSlot.name) {
-                    remote.name = curSlot.name;
+                if (curSlot) {
+                    if (data.slot === 0 || !curSlot.isAI) {
+                        remote.isHumanPlayer = true;
+                    }
+                    if (curSlot.name && !curSlot.isAI && remote.name !== curSlot.name) {
+                        remote.name = curSlot.name;
+                    }
                 }
             }
 
