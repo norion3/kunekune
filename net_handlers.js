@@ -1,29 +1,24 @@
 // ==============================================================================
 // 『くねくねバトル オンライン』リモートパケット受信反映ハンドラ (net_handlers.js)
-// v28.2.0 リモート死亡時肉片還元＆食物連鎖完全同期版:
-// ・【リモート死亡時肉片還元】ゲストが自己判定で死亡（data.isDead && !remote.isDead）した際、
-// 　ホストが即座に肉片クラスタ（queueDropCluster）を発行し、巨大スネーク撃破時の
-// 　大量肉片が宇宙の塵として消滅するバグを完全解消。食物連鎖の下克上ループを確立
-// ・【胴体シフトAPI完全統合】snake.js の公式カプセル化メソッド `shiftHistory(dx, dy)` を
-// 　大距離ワープ補正時に直接採用。外部からの直接配列書き換えを根絶し、形状完全維持
-// ・【ワープ閾値1000px適正化】400pxから1000px(distSq > 1000000)へ緩和し、通常ラグによる
-// 　不要な瞬間移動や胴体消滅（点滅）を完全に解消
-// ・【餌消去の絶対座標化】onFoodPicked で world.removeFoodAt(pick.x, pick.y) を実行し、
-// 　通信ラグによるインデックスズレ・誤消去を完全根絶
-// ・【ランキング再ソート】ゲスト端末自己補正後に topList.sort((a, b) => b.score - a.score) を実行し、
-// 　順位表示とリスト表示順の矛盾を100%解消
-// ・【スコア・名前即時反映】受信時に remote.score と recalculateSize() を確実に実行し、
-// 　NetworkManager.slots の正規ネームで上書き
-// ・【途中参加チラつき根絶】onGameStart で direct または immediate 合図を受信した際、
-// 　isRespawn = true 扱いで初期化し他走者(remoteSnakes)クリアによる消滅・点滅を完全防止
-// ・【無敵対称化】リモート無敵フラグ代入時の下限を 3.0秒 へ適正化し、
-// 　ゲストがホスト判定で即爆死させられる非対称即死を完全根絶
-// ・【無敵同期順序適正化】remote.reset() の直後に data.isInvulnerable を反映し意図せぬ上書きを解消
+// v29.0.0 AI表情・カラー完全同期＆スロット整合性完全保証版:
+// ・【AI表情・デザインの完全同期】ゲスト側でリモート通常AI（Slot 6〜99）を受信・生成する際、
+// 　スロットから元のID（slot - MAX_PLAYERS + 1）を逆算し、ホスト側と寸分違わず同じ
+// 　5種類の表情（normal, angry, happy, cool, cute）およびカラーパレットを完全復元。
+// 　ゲスト画面でAIが全員「ノーマル顔」になっていたデザイン非同期を完全根絶
+// ・【空き枠ダミーAI（Slot 0〜5）整合性保証】スロット0〜5のリモート走者は、NetworkManager.slots
+// 　の割り当て情報（名前・カラー・人間/CPU判定）を最優先で反映し、偽装ダミーAIと人間を区別
+// ・【リモート死亡時肉片還元】ゲストが自己判定で死亡した際、ホストが即座に肉片クラスタを発行
+// ・【胴体シフトAPI完全統合】snake.js の公式カプセル化メソッド shiftHistory(dx, dy) 適用
+// ・【餌消去の絶対座標化】onFoodPicked で world.removeFoodAt(pick.x, pick.y) を安全実行
+// ・【ランキング再ソート】ゲスト端末自己補正後に topList.sort((a, b) => b.score - a.score) 実行
 // ==============================================================================
 
 import { Snake } from './snake.js';
 import { NetworkManager } from './network.js';
-import { SNAKE_COLORS, TOTAL_SNAKES } from './constants.js';
+import { SNAKE_COLORS, TOTAL_SNAKES, MAX_PLAYERS } from './constants.js';
+
+// 表情タイプの同期用定義（ai.js と完全一致）
+const AI_FACES = ['normal', 'angry', 'happy', 'cool', 'cute'];
 
 // ランキングDOM書き換えチラつき防止用シグネチャキャッシュ
 let lastLeaderboardSignature = '';
@@ -64,14 +59,29 @@ export function setupNetworkHandlers(ctx) {
 
             let remote = remoteSnakes.get(data.slot);
             if (!remote) {
-                const isPlayerSlot = data.slot < 6;
-                const color = SNAKE_COLORS[data.slot % SNAKE_COLORS.length];
-                const slotData = NetworkManager.slots[data.slot];
-                const resolvedName = (slotData && slotData.name && !slotData.isAI) 
-                    ? slotData.name 
-                    : (isPlayerSlot ? `P${data.slot + 1}` : `CPU ${data.slot - 5}`);
+                const isPlayerSlot = data.slot < MAX_PLAYERS;
+                let color;
+                let resolvedName;
+                let face = 'normal';
 
-                remote = new Snake(false, data.slot, resolvedName, color, 'normal');
+                if (isPlayerSlot) {
+                    // スロット 0〜5: 人間プレイヤーまたは空き枠ダミーAI
+                    const slotData = NetworkManager.slots[data.slot];
+                    color = (slotData && slotData.color) ? slotData.color : SNAKE_COLORS[data.slot % SNAKE_COLORS.length];
+                    resolvedName = (slotData && slotData.name)
+                        ? slotData.name 
+                        : (data.isAI ? `CPU ${data.slot + 1}` : `P${data.slot + 1}`);
+                    face = 'normal';
+                } else {
+                    // スロット 6〜99: ホストがシミュレートしている通常AI
+                    const originalAiId = data.slot - MAX_PLAYERS + 1;
+                    color = SNAKE_COLORS[originalAiId % SNAKE_COLORS.length];
+                    resolvedName = `CPU ${originalAiId}`;
+                    // ★ ホスト側の ai.js と全く同じ計算式で表情を完全復元
+                    face = AI_FACES[originalAiId % AI_FACES.length];
+                }
+
+                remote = new Snake(false, data.slot, resolvedName, color, face);
                 remote.reset(data.x, data.y);
                 remoteSnakes.set(data.slot, remote);
 
@@ -86,9 +96,12 @@ export function setupNetworkHandlers(ctx) {
             }
 
             // ★ 名前同期保証：スロット情報に人間プレイヤー名が存在する場合、CPU名から即時上書き
-            const curSlot = NetworkManager.slots[data.slot];
-            if (curSlot && curSlot.name && !curSlot.isAI && remote.name !== curSlot.name) {
-                remote.name = curSlot.name;
+            if (data.slot < MAX_PLAYERS) {
+                const curSlot = NetworkManager.slots[data.slot];
+                if (curSlot && curSlot.name && !curSlot.isAI && remote.name !== curSlot.name) {
+                    remote.name = curSlot.name;
+                    if (curSlot.color) remote.color = curSlot.color;
+                }
             }
 
             // =========================================================================

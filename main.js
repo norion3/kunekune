@@ -1,19 +1,17 @@
 // ==============================================================================
 // 『くねくねバトル オンライン』Phase 7 マスター統合オーケストレーター (main.js)
-// v29.0.0 モジュール分割スリム化＆完全生態系・食物連鎖保護版:
-// ・【モジュール分割による軽量化】起動・自動合流（boot.js）およびホスト昇格移行
-// 　（host_migration.js）を外部モジュールへ安全に移譲。約690行から約500行へ大幅スリム化し、
-// 　メンテナンス性と出力安全性を最高水準へ最適化
-// ・【ゲスト退出時ダミーAI即時補充】onUserExited 内で、人間ゲストが退出した際に
-// 　空き枠となったスロットへ即座にダミーAI（ID: MAX_AIS + slotIdx + 1）を生成・配備。
-// 　入退室の繰り返しによるスネーク数減少（過疎化・定員割れ）を完全根絶し100体を死守
-// ・【デッドレコニング shiftHistory 公式統合】大距離ワープ補正時、
-// 　snake.js の公式カプセル化API `remote.shiftHistory(shiftX, shiftY)` を統一適用
-// ・【空き枠AIダミーID適正化維持】MAX_AIS + i + 1（95〜100）の専用ID空間を完全維持
+// v30.0.0 リーダーボードスロット同期＆再入室ゴーストパージ完全対応版:
+// ・【リーダーボードスロットIDの完全同期】ホストがリーダーボード情報を同報する際、
+// 　通常AI(6〜99)およびダミーAI(0〜5)のスロット番号を、Pパケットの仕様と寸分違わず
+// 　完全一致化。受信側（ゲスト）でのスロット・実体データの不整合を構造から根絶
+// ・【再入室ゴーストパージ連携】NetworkManager.callbacks.onWorldPurged を実装。
+// 　再入室やルーム切り替え時に remoteSnakes を即時消去し、自機ゴースト化・多重描画を根絶
+// ・【モジュール分割による軽量化維持】boot.js / host_migration.js との連携維持
+// ・【ゲスト退出時ダミーAI即時補充維持】MAX_AIS + slotIdx + 1 による定員100体死守
+// ・【デッドレコニング shiftHistory 公式統合維持】大距離ワープ時の安定追従
 // ・【リセットボタン動的表示連動】updateResetButtonVisibility によりソロ対戦中のみ表示
 // ・【CPUキルログ完全排除】プレイヤーまたは人間参加者が関与した撃破のみ通知表示
 // ・【スコア単位短縮フォーマッター】formatScore 配備（10k / 1M 短縮表示）
-// ・【ゴースト完全パージ】切断スロット残留エンティティの即時消去
 // ・【餌同期の絶対座標化】checkFoodConsumption のコールバックを絶対座標 (x, y) に適応
 // ==============================================================================
 
@@ -437,6 +435,15 @@ NetworkManager.setCallbacks({
                 window.allAISnakesInstance = aiManager.ais;
             }
         }
+    },
+
+    // ★ 再入室・ルーム遷移時のゴースト走者完全パージハンドラ
+    onWorldPurged() {
+        remoteSnakes.clear();
+        if (allSnakes && player) {
+            allSnakes = [player, ...(aiManager && Array.isArray(aiManager.ais) ? aiManager.ais : [])];
+            sortedSnakes = [...allSnakes];
+        }
     }
 });
 
@@ -702,7 +709,16 @@ function gameLoop() {
                         ranks: slotRanks,
                         top: topList.map(s => {
                             let slotNum = s.id;
-                            if (s === player) slotNum = NetworkManager.mySlot;
+                            // ★ リーダーボードスロットIDの完全同期
+                            if (s === player) {
+                                slotNum = NetworkManager.mySlot;
+                            } else if (!s.isPlayer && s.id !== undefined) {
+                                if (s.id > MAX_AIS) {
+                                    slotNum = s.id - MAX_AIS - 1; // 空き枠ダミーAI (0〜5)
+                                } else {
+                                    slotNum = MAX_PLAYERS + (s.id - 1); // 通常AI (6〜99)
+                                }
+                            }
                             return {
                                 slot: slotNum,
                                 name: s.name,
