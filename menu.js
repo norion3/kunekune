@@ -1,16 +1,15 @@
 /**
  * ==============================================================================
  * 『くねくねバトル オンライン』ボトムシートメニュー (menu.js)
- * v26.2.0 メニュー外タップ即時終了＆動的HOSTバッジ版:
- * ・【メニュー外タップ終了】ボトムシートの背後（画面上部〜中央の暗い余白部分）を
- * 　タップした際、✕ボタンを押さずとも即座にメニューを閉じるイベントハンドラを配備
- * ・【誤閉塞完全防止】ボトムシート内部（#bottom-sheet）の操作（タブ切替、チャット入力、
- * 　スクロール等）は stopPropagation() で確実に保護し、操作中の意図しない誤閉塞を100%防止
- * ・【動的HOSTバッジ解決】ホスト昇格時に空き枠AIスロット0からHOSTバッジを解除し、新ホストへ正確にHOSTを動的付与
- * ・GravityRouter を gravity_router.js へ完全委譲し、ボトムシートUI専任化
- * ・シングル・マルチ共通：走者タブ内に最大定員6名分のスロット枠を常時整然と確保
- * ・実走者タップ時のGRAVITYプロフィール画面安全起動
- * ・右上の共有 [↑] ボタン直下の分離型いいね誘導アンカー (#like-guide-anchor) 制御
+ * v27.0.0 余白ドラッグ画面連動バウンス完全遮断＆タップクローズ両立版:
+ * ・【メニュー外余白ドラッグ完全遮断】#menu-overlay の touchmove イベントを
+ * 　能動的に preventDefault() して、iOS WebKit がページ全体を上に引き上げて
+ * 　最下部に白いOS背景を露出させるラバーバンド現象をJavaScript層からも物理遮断
+ * ・【メニュー外タップ終了維持】背後余白をタップした際の即時クローズを100%両立
+ * ・【誤閉塞完全防止維持】ボトムシート内部（#bottom-sheet）の操作は
+ * 　stopPropagation() で確実に保護し、操作中の意図しない誤閉塞を完全防止
+ * ・【動的HOSTバッジ解決維持】ホスト昇格時のHOSTバッジ正確表示
+ * ・GravityRouter 連携、走者一覧の最大定員6名枠完全維持
  * ==============================================================================
  */
 
@@ -71,6 +70,14 @@ export class MenuManager {
 
             overlay.addEventListener('click', handleOverlayDismiss);
             overlay.addEventListener('touchend', handleOverlayDismiss, { passive: false });
+
+            // ★ メニュー外の余白エリアをドラッグした際、画面全体が上に引っ張られて白地が露出するバウンスを完全遮断
+            overlay.addEventListener('touchmove', (e) => {
+                if (e.target === overlay) {
+                    if (e.cancelable) e.preventDefault();
+                    e.stopPropagation();
+                }
+            }, { passive: false });
         }
 
         // ボトムシート内部の操作がオーバーレイに貫通して誤閉塞するのを完全ガード

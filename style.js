@@ -1,14 +1,15 @@
 // ==============================================================================
 // 『くねくねバトル オンライン』iOS WebKit & iPhone 干渉完全マスクスタイル (style.js)
-// v26.3.0 メニュードラッグ画面連動バウンス完全マスク版:
-// ・【メニュードラッグ完全マスク】#bottom-sheet に touch-action: none; および
-// 　overscroll-behavior: none; を適用。メニュー内ドラッグ時に画面全体が引っ張られ、
-// 　最下部に白いOS背景が露出するラバーバンド現象を物理的に完全遮断
-// ・【内部スクロール保護】走者一覧（.participants-list）は touch-action: pan-y; と
+// v27.0.0 メニュー余白ドラッグ・画面スライド完全物理遮断版:
+// ・【メニュー外余白ドラッグ完全遮断】#menu-overlay に touch-action: none; および
+// 　overscroll-behavior: none; を配備。メニュー展開時に背後の暗い余白部分を
+// 　ドラッグした際、画面全体が上に引っ張られて最下部に白いOS背景が露出する
+// 　ラバーバンド現象をスタイルシート層から物理的に完全根絶
+// ・【メニュードラッグ完全マスク維持】#bottom-sheet に touch-action: none; 適用
+// ・【内部スクロール保護維持】走者一覧（.participants-list）は touch-action: pan-y; と
 // 　overscroll-behavior: contain; により独立した軽快な縦スクロールを100%維持
-// ・【カスタム顔スクロール保護】顔選択行（.custom-row）に touch-action: pan-x; を適用し、
+// ・【カスタム顔スクロール保護維持】顔選択行（.custom-row）に touch-action: pan-x; を適用し、
 // 　横スクロール操作時の画面連動引っ張りを確実に防止
-// ・【既存機能完全維持】メニュー外タップによるクローズ処理や各種UIへの影響は一切なし
 // ==============================================================================
 
 export function injectStyles() {
@@ -384,7 +385,8 @@ export function injectStyles() {
 
         /* ==========================================================================
            ボトムシートメニュー
-           ★ touch-action: none; & overscroll-behavior: none; でドラッグによる画面引っ張りを物理遮断
+           ★ touch-action: none; & overscroll-behavior: none; で
+           ドラッグによる画面引っ張り・最下部白地露出を物理遮断
            ========================================================================== */
         #menu-overlay {
             display: none;
@@ -396,6 +398,9 @@ export function injectStyles() {
             background: transparent;
             z-index: 150;
             pointer-events: none;
+            touch-action: none;
+            overscroll-behavior: none;
+            -webkit-overscroll-behavior: none;
         }
         #bottom-sheet {
             position: absolute;

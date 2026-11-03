@@ -1,14 +1,13 @@
 // ==============================================================================
 // 『くねくねバトル オンライン』自律DOMマウントモジュール (dom.js)
-// v29.3.0 メニューSVG完全準拠＆4番目「ω口」マスコットフェイス刷新版:
-// ・【メニューの顔の形を「正」として完全統一】メニューSVGを基準原典とし、
-// 　眉毛の角度・長さ・瞳の位置・口の曲線を snake_face.js と1ピクセルも違わず完全一致化
-// ・【4番目の舌を完全撤廃＆「ω口」へ刷新】不自然だった舌出しを完全削除。
-// 　キュッと上がった波型リップ「ω口（ネコ口／マスコット口）」のSVGベクターパスを配備し、
-// 　1番目（上品な微笑み）と一目で差別化された愛らしく見やすいデザインを確立
-// ・【ワールドリセットボタン】音量ボタンの上に透過ガラスモーフィズム仕様(#btn-world-reset)完備
-// ・【クリーンレイアウト】MENU、音量、リセットの左下縦並び ＆ 右側アクション群の引き上げ維持
-// ・【公式DM招待UI】待機室最大6名完全収容、GRAVITYマイアイコン顔選択ボタン完備
+// v29.4.0 キュート瞳対称化＆口角アップ・製作者メッセージ調律版:
+// ・【5番目「キュート」瞳の左右対称補正】黒目が右偏向してロンパって見えていた
+// 　不整合を完全解消。白目・黒目・ハイライトを完全対称配置し、愛くるしいうるうる瞳を再現
+// ・【キュート口角の跳ね上げ強調】短く潰れていたおちょぼ口を広角アーチへ拡張。
+// 　両端の口角がキュッと上がった華やかな笑顔リップへ刷新
+// ・【製作者メッセージの表現刷新】「楽しかったら〜」から「制作意欲があがるから〜」へ変更
+// ・【カラー表記のシンプル化】「カラー（8色対応）」から「カラー」へスッキリ整理
+// ・【メニューSVG完全準拠維持】他表情パーツの黄金比、ワールドリセットボタン等の構造は100%維持
 // ==============================================================================
 
 import { SNAKE_COLORS, TOTAL_SNAKES } from './constants.js';
@@ -260,7 +259,7 @@ export function mountDOM() {
                                 <path d="M 17 26 A 3 3 0 0 0 23 26" fill="none" stroke="#111827" stroke-width="2.0" stroke-linecap="round"/>
                             </svg>
                         </button>
-                        <!-- 4. ★ 新設「ω口（ネコ口／マスコット口）」（舌出し完全撤廃・最高に愛嬌ある表情） -->
+                        <!-- 4. ★ 改良型「ω口（ネコ口／マスコット口）」 -->
                         <button class="custom-face-btn" data-face="smile" aria-label="スマイル">
                             <svg viewBox="0 0 40 40">
                                 <circle cx="14" cy="20" r="5.8" fill="#ffffff"/>
@@ -269,20 +268,26 @@ export function mountDOM() {
                                 <circle cx="25" cy="19" r="2.7" fill="#111827"/>
                                 <circle cx="14.2" cy="18.2" r="1.0" fill="#ffffff"/>
                                 <circle cx="24.2" cy="18.2" r="1.0" fill="#ffffff"/>
-                                <!-- キュッと上がった波型リップ「ω口」 -->
                                 <path d="M 15.5 26.2 A 2.3 2.3 0 0 0 20 27.2 A 2.3 2.3 0 0 0 24.5 26.2" fill="none" stroke="#111827" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
                             </svg>
                         </button>
-                        <!-- 5. キュート -->
+                        <!-- 5. ★ キュート（完全左右対称・うるうる上目遣い瞳 ＆ キュッと上がった笑顔リップ） -->
                         <button class="custom-face-btn" data-face="cute" aria-label="キュート">
                             <svg viewBox="0 0 40 40">
-                                <circle cx="14" cy="20" r="6.5" fill="#ffffff"/>
-                                <circle cx="26" cy="20" r="6.5" fill="#ffffff"/>
-                                <circle cx="15" cy="20" r="3.5" fill="#0f172a"/>
-                                <circle cx="27" cy="20" r="3.5" fill="#0f172a"/>
-                                <circle cx="16.5" cy="18.5" r="1.3" fill="#ffffff"/>
-                                <circle cx="28.5" cy="18.5" r="1.3" fill="#ffffff"/>
-                                <path d="M 17.5 28 A 2.5 2.5 0 0 0 22.5 28" fill="none" stroke="#111827" stroke-width="1.8" stroke-linecap="round"/>
+                                <!-- 白目（左右対称配置: x 14, 26） -->
+                                <circle cx="14" cy="19.5" r="6.8" fill="#ffffff"/>
+                                <circle cx="26" cy="19.5" r="6.8" fill="#ffffff"/>
+                                <!-- 黒目（左右均等対称配置: x 14.8, 25.2 で偏向・ロンパリ完全解消） -->
+                                <circle cx="14.8" cy="19.2" r="3.8" fill="#0f172a"/>
+                                <circle cx="25.2" cy="19.2" r="3.8" fill="#0f172a"/>
+                                <!-- 上部メインハイライト -->
+                                <circle cx="16.2" cy="17.5" r="1.6" fill="#ffffff"/>
+                                <circle cx="26.6" cy="17.5" r="1.6" fill="#ffffff"/>
+                                <!-- 側部サブハイライト（愛らしいツヤ感） -->
+                                <circle cx="13.6" cy="20.4" r="1.0" fill="#ffffff"/>
+                                <circle cx="24.0" cy="20.4" r="1.0" fill="#ffffff"/>
+                                <!-- ★ キュッと上がった広角笑顔リップ（口角アップ） -->
+                                <path d="M 16.5 26.2 A 3.5 3.5 0 0 0 23.5 26.2" fill="none" stroke="#111827" stroke-width="2.2" stroke-linecap="round"/>
                             </svg>
                         </button>
                         <!-- 6. GRAVITYマイアイコン顔 -->
@@ -291,7 +296,8 @@ export function mountDOM() {
                         </button>
                     </div>
 
-                    <div class="custom-label" style="margin-top: 8px;">カラー（8色対応）</div>
+                    <!-- ★ ラベル表記を「カラー」へシンプル化 -->
+                    <div class="custom-label" style="margin-top: 8px;">カラー</div>
                     <div class="custom-colors-grid">
                         ${SNAKE_COLORS.map((col, idx) => `
                             <div class="custom-color-btn ${idx === 0 ? 'selected' : ''}" style="background-color: ${col};" data-color="${col}"></div>
@@ -303,7 +309,8 @@ export function mountDOM() {
             <div id="tab-pane-creator" class="sheet-tab-content" style="display: none;">
                 <div class="creator-notice-card">
                     遊んでくれてありがとうございます！<br>
-                    <strong style="color: #ffdd00;">楽しかったら右上の [...] から いいね を押してね</strong><br>
+                    <!-- ★ 制作意欲があがるから〜 へ変更 -->
+                    <strong style="color: #ffdd00;">制作意欲があがるから右上の [...] から いいね を押してね</strong><br>
                     ご意見やご要望もお気軽にどうぞ！
                 </div>
                 <div id="link-creator-profile" class="creator-link-row">
