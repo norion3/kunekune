@@ -1,18 +1,23 @@
 /**
  * ==============================================================================
  * 『くねくねバトル オンライン』ゼロアロケーション空間ハッシュ衝突判定エンジン (combat.js)
- * v27.6.0 デバッグ用無敵シールド(isGodMode)判定統合＆正面衝突・同座標完全防護版:
- * ・【デバッグ用無敵シールド(isGodMode)判定統合】
- * 　自機が isGodMode === true を保持している場合、頭部正面衝突および頭部vs胴体激突時に
- * 　通常の無敵時間と同様に双方ノックバック退避（弾き飛ばし）を実行！
- * 　敵を即死させず、自機も絶対に死なない「永続シールド・不死身モード」を完全成立
- * ・【正面衝突・完全同座標例外ガード】頭部同士が完全に同座標(dx=0, dy=0)で重なった場合の
- * 　ゼロ除算・NaNエラーを防止し、ランダム拡散ベクトルで安全に弾き飛ばすフォールバック配備
- * ・【胴体接触ノックバックゼロ除算防止】胴体接触による押し戻し時にも同座標ガードを配備
- * ・【壁際スライディング接線ベクトル強化】壁際でのノックバック時、壁の外へ押し出そうとする力を
- * 　完全接線方向（壁沿い）へ流し、角（コーナー）に追い詰められた際の振動フリーズや突き抜けを完全根絶
- * ・【GCスパイク完全根絶維持】MAX_POOL_CAPACITY(24,576) ＆ MAX_CELL_POOL_CAPACITY(4,096)
- * 　により、100体交戦時でも毎フレームのヒープ確保・GCカクつきを完全排除
+ * v34.0.0 超巨大化対応動的探索半径＆完全ゼロアロケーション版:
+ * ・【超巨大スネークの空間ハッシュすり抜け完全防止】
+ * 　頭部半径(hRadius)が GRID_SIZE (通常200〜300px) に迫る超巨大化時でも、
+ * 　周囲3x3固定走査からサイズ連動の動的探索半径（searchRange）へ自動拡張！
+ * 　自身の巨体によって隣接グリッドを飛び越えてしまう交差判定漏れを物理根絶
+ * ・【ホストカメラ依存(!s.isVisibleスキップ)の完全撤廃維持】
+ * 　画面外の遠隔ゲスト走者同士やゲストvs AIの衝突判定を常時100%シミュレーション
+ * ・【リスポーン直後CCD誤爆防止ガード維持】スポーン直後の点判定安全フォールバック
+ * ・【CCD変位リミッター維持】長距離ワープ時の巨大判定線分（デス・レーザー）完全遮断
+ * ・【Mapイテレータ排除による完全ゼロアロケーション維持】activeCells 配列直接管理
+ * ・【空間ハッシュマイナス座標ビット崩壊完全防護維持】((gx + 10) << 16) | (gy + 10)
+ * ・【リモート走者死亡判定委譲維持】復活ループ・幽霊化完全根絶
+ * ・【頭部同士の正面衝突CCD統合維持】
+ * ・【デバッグ用無敵シールド(isGodMode)判定統合維持】双方ノックバック退避
+ * ・【正面衝突・完全同座標例外ガード維持】ゼロ除算・NaNエラー完全防止
+ * ・【胴体接触ノックバックゼロ除算防止維持】
+ * ・【壁際スライディング接線ベクトル強化維持】
  * ・【対戦公平性維持】スコア比率（1.25倍 / 0.8倍）による大型優先判定、拮抗時双方跳ね返り維持
  * ==============================================================================
  */
@@ -23,6 +28,9 @@ import { GRID_SIZE, MAP_SIZE } from './constants.js';
 const MAX_POOL_CAPACITY = 24576;
 const MAX_CELL_POOL_CAPACITY = 4096;
 
+// CCD変位上限二乗値（400px相当: 通常ブースト時のフレーム移動量を大きく上回る安全閾値）
+const MAX_CCD_DISPLACEMENT_SQ = 160000;
+
 export class SpatialCollisionEngine {
     constructor() {
         this.grid = new Map();
@@ -32,25 +40,28 @@ export class SpatialCollisionEngine {
         // セル配列再利用バッファ（ヒープ再アロケーション根絶用）
         this.cellPool = [];
         this.cellPoolIndex = 0;
+
+        // イテレータ生成排除用アクティブセル追跡配列（ゼロアロケーション）
+        this.activeCells = [];
     }
 
     clear() {
-        // グリッド内の既存セル配列をプールへ返却
-        for (const cell of this.grid.values()) {
+        const activeCount = this.activeCells.length;
+        for (let i = 0; i < activeCount; i++) {
+            const cell = this.activeCells[i];
             cell.length = 0;
             if (this.cellPool.length < MAX_CELL_POOL_CAPACITY) {
                 this.cellPool.push(cell);
             }
         }
+        this.activeCells.length = 0;
         this.grid.clear();
         this.cellPoolIndex = 0;
 
-        // 長時間プレイ時のメモリ肥大化を防ぐ安全トリミング
         if (this.nodePool.length > MAX_POOL_CAPACITY) {
             this.nodePool.length = MAX_POOL_CAPACITY;
         }
 
-        // ガベージコレクタを阻害しないよう、使用済みノードのエンティティ参照を解放
         const limit = Math.min(this.poolIndex, this.nodePool.length);
         for (let i = 0; i < limit; i++) {
             this.nodePool[i].snake = null;
@@ -82,14 +93,15 @@ export class SpatialCollisionEngine {
         return [];
     }
 
-    // 全スネークの胴体体節を空間グリッドに登録
+    // 全スネークの胴体体節を空間グリッドに登録（画面外であっても常時演算）
     registerBodies(snakes) {
         this.clear();
 
         const total = snakes.length;
         for (let i = 0; i < total; i++) {
             const s = snakes[i];
-            if (s.isDead || !s.isVisible) continue;
+            // 画面外フラグ(!s.isVisible)でのスキップを撤廃し、死亡中(isDead)のみ除外
+            if (s.isDead) continue;
 
             const histLen = s.historyLength || 0;
 
@@ -104,12 +116,14 @@ export class SpatialCollisionEngine {
 
                 const gx = Math.floor(pt.x / GRID_SIZE);
                 const gy = Math.floor(pt.y / GRID_SIZE);
-                const key = `${gx}_${gy}`;
+                // 整数ビット演算ハッシュ（負の座標によるビット崩壊を防ぐ正のオフセット +10 適用）
+                const key = ((gx + 10) << 16) | (gy + 10);
 
                 let cell = this.grid.get(key);
                 if (!cell) {
                     cell = this.obtainCell();
                     this.grid.set(key, cell);
+                    this.activeCells.push(cell);
                 }
                 cell.push(this.obtainNode(s, pt.x, pt.y, radius));
             }
@@ -143,45 +157,80 @@ export class SpatialCollisionEngine {
     }
 
     /**
-     * 衝突判定メイン（頭部同士の正面衝突 ＋ 頭部vs胴体の衝突）
+     * 衝突判定メイン（画面外であっても全エンティティを常時正確にシミュレーション）
      */
     checkHeadCollisions(snakes, onKill) {
         const total = snakes.length;
 
         // =========================================================================
-        // 1. 頭部同士の正面衝突（Head-on Collision）判定
+        // 1. 頭部同士の正面衝突（Head-on Collision）判定 ＆ 相対CCD
         // =========================================================================
         for (let i = 0; i < total; i++) {
             const sA = snakes[i];
-            if (sA.isDead || !sA.isVisible) continue;
+            if (sA.isDead) continue;
+
+            const prevAx = sA.prevX !== undefined ? sA.prevX : sA.x;
+            const prevAy = sA.prevY !== undefined ? sA.prevY : sA.y;
+            const isARespawning = (sA.historyLength || 0) < 2;
 
             for (let j = i + 1; j < total; j++) {
                 const sB = snakes[j];
-                if (sB.isDead || !sB.isVisible) continue;
+                if (sB.isDead) continue;
 
-                let dx = sA.x - sB.x;
-                let dy = sA.y - sB.y;
+                const prevBx = sB.prevX !== undefined ? sB.prevX : sB.x;
+                const prevBy = sB.prevY !== undefined ? sB.prevY : sB.y;
+                const isBRespawning = (sB.historyLength || 0) < 2;
+
+                // 相対変位線分（sAから見たsBの相対移動スイープ）
+                const relStartX = prevAx - prevBx;
+                const relStartY = prevAy - prevBy;
+                const relEndX = sA.x - sB.x;
+                const relEndY = sA.y - sB.y;
+
+                const relDx = relEndX - relStartX;
+                const relDy = relEndY - relStartY;
+                const relLenSq = relDx * relDx + relDy * relDy;
+
                 const minHeadDist = sA.size + sB.size;
+                const minHeadDistSq = minHeadDist * minHeadDist;
 
-                if (dx * dx + dy * dy < minHeadDist * minHeadDist) {
-                    // ★ isGodMode または通常の invulnerableTimer による無敵判定
+                let closestDistSq = 0;
+                let evalDx = relEndX;
+                let evalDy = relEndY;
+
+                // ワープ時およびリスポーン直後はCCDをスキップして現在位置の点判定へ安全フォールバック
+                const canUseCCD = !isARespawning && !isBRespawning && relLenSq > 0.0001 && relLenSq <= MAX_CCD_DISPLACEMENT_SQ;
+
+                if (canUseCCD) {
+                    const t = Math.max(0, Math.min(1, -(relStartX * relDx + relStartY * relDy) / relLenSq));
+                    evalDx = relStartX + t * relDx;
+                    evalDy = relStartY + t * relDy;
+                    closestDistSq = evalDx * evalDx + evalDy * evalDy;
+                } else {
+                    closestDistSq = relEndX * relEndX + relEndY * relEndY;
+                }
+
+                if (closestDistSq < minHeadDistSq) {
+                    // isGodMode または通常の invulnerableTimer による無敵判定
                     const isAProtected = Boolean(sA.isGodMode || (sA.invulnerableTimer && sA.invulnerableTimer > 0));
                     const isBProtected = Boolean(sB.isGodMode || (sB.invulnerableTimer && sB.invulnerableTimer > 0));
 
                     // 完全に同座標に重なった場合のゼロ除算・NaN例外ガード
-                    let dist = Math.sqrt(dx * dx + dy * dy);
+                    let dist = Math.sqrt(closestDistSq);
+                    let pushDx = evalDx;
+                    let pushDy = evalDy;
                     if (dist < 0.001) {
                         const randomAngle = Math.random() * Math.PI * 2;
-                        dx = Math.cos(randomAngle);
-                        dy = Math.sin(randomAngle);
+                        pushDx = Math.cos(randomAngle);
+                        pushDy = Math.sin(randomAngle);
                         dist = 1.0;
                     }
 
                     // どちらかが無敵（isGodMode含む）なら双方ノックバックで弾き飛ばし
                     if (isAProtected || isBProtected) {
                         const push = (minHeadDist - dist) * 0.5 + 2.0;
-                        this._applySafeKnockback(sA, (dx / dist) * push, (dy / dist) * push);
-                        this._applySafeKnockback(sB, -(dx / dist) * push, -(dy / dist) * push);
+                        this._applySafeKnockback(sA, (pushDx / dist) * push, (pushDy / dist) * push);
+                        this._applySafeKnockback(sB, -(pushDx / dist) * push, -(pushDy / dist) * push);
                         continue;
                     }
 
@@ -189,44 +238,73 @@ export class SpatialCollisionEngine {
                     const scoreRatio = sA.score / Math.max(1, sB.score);
                     if (scoreRatio >= 1.25) {
                         // Aの勝ち
-                        sB.isDead = true;
+                        const isBRemoteHuman = Boolean(sB.isHumanPlayer && !sB.isPlayer);
+                        if (!isBRemoteHuman) {
+                            sB.isDead = true;
+                        }
                         sA.kills++;
                         if (onKill) onKill(sA, sB);
                     } else if (scoreRatio <= 0.8) {
                         // Bの勝ち
-                        sA.isDead = true;
+                        const isARemoteHuman = Boolean(sA.isHumanPlayer && !sA.isPlayer);
+                        if (!isARemoteHuman) {
+                            sA.isDead = true;
+                        }
                         sB.kills++;
                         if (onKill) onKill(sB, sA);
                     } else {
                         // 拮抗時：双方が安全に跳ね返る（相打ち爆死防止）
                         const push = (minHeadDist - dist) * 0.6 + 3.0;
-                        this._applySafeKnockback(sA, (dx / dist) * push, (dy / dist) * push);
-                        this._applySafeKnockback(sB, -(dx / dist) * push, -(dy / dist) * push);
+                        this._applySafeKnockback(sA, (pushDx / dist) * push, (pushDy / dist) * push);
+                        this._applySafeKnockback(sB, -(pushDx / dist) * push, -(pushDy / dist) * push);
                     }
                 }
             }
         }
 
         // =========================================================================
-        // 2. 頭部 vs 胴体の激突判定（空間ハッシュグリッド走査）
+        // 2. 頭部 vs 胴体の激突判定（空間ハッシュグリッド走査 ＆ 連続衝突判定CCD）
         // =========================================================================
         for (let i = 0; i < total; i++) {
             const victim = snakes[i];
-            if (victim.isDead || !victim.isVisible) continue;
-
             const hx = victim.x;
             const hy = victim.y;
+
+            if (victim.isDead) {
+                victim.prevX = hx;
+                victim.prevY = hy;
+                continue;
+            }
+
             const hRadius = victim.size;
+
+            // 前フレーム位置（未記録時は現位置として通常の点判定に安全フォールバック）
+            const prevHx = victim.prevX !== undefined ? victim.prevX : hx;
+            const prevHy = victim.prevY !== undefined ? victim.prevY : hy;
+
+            // スイープ線分ベクトル
+            const segDx = hx - prevHx;
+            const segDy = hy - prevHy;
+            const segLenSq = segDx * segDx + segDy * segDy;
+
+            // リスポーン直後は前フレーム線分の誤爆を防ぐためCCDを安全にスキップ
+            const isVictimRespawning = (victim.historyLength || 0) < 2;
 
             const gx = Math.floor(hx / GRID_SIZE);
             const gy = Math.floor(hy / GRID_SIZE);
 
+            // =========================================================================
+            // ★ 【動的探索半径による超巨大スネークすり抜け完全防止】
+            // 頭部半径が GRID_SIZE に迫る・超える巨大化時でも、探索範囲を動的に拡張して判定漏れを根絶
+            // =========================================================================
+            const searchRange = Math.max(1, Math.min(3, Math.ceil(hRadius / GRID_SIZE)));
+
             let hasDied = false;
 
-            // 周囲9マスを走査
-            for (let ox = -1; ox <= 1 && !hasDied; ox++) {
-                for (let oy = -1; oy <= 1 && !hasDied; oy++) {
-                    const key = `${gx + ox}_${gy + oy}`;
+            for (let ox = -searchRange; ox <= searchRange && !hasDied; ox++) {
+                for (let oy = -searchRange; oy <= searchRange && !hasDied; oy++) {
+                    // 整数ビット演算ハッシュ（負の座標によるビット崩壊を防ぐ正のオフセット +10 適用）
+                    const key = ((gx + ox + 10) << 16) | (gy + oy + 10);
                     const bodies = this.grid.get(key);
                     if (!bodies) continue;
 
@@ -237,13 +315,38 @@ export class SpatialCollisionEngine {
                         
                         if (!killer || killer === victim || killer.isDead) continue; 
 
-                        let dx = hx - bodyNode.x;
-                        let dy = hy - bodyNode.y;
+                        const bx = bodyNode.x;
+                        const by = bodyNode.y;
                         const minDist = hRadius + bodyNode.radius * 0.75;
+                        const minDistSq = minDist * minDist;
+
+                        // =========================================================================
+                        // 線分 vs 円の最短距離判定（CCD: トンネリングすり抜け根絶）
+                        // ワープ・長距離跳躍時およびリスポーン直後は点判定へ安全フォールバック
+                        // =========================================================================
+                        let closestDistSq = 0;
+                        let hitX = hx;
+                        let hitY = hy;
+
+                        const canUseVictimCCD = !isVictimRespawning && segLenSq > 0.0001 && segLenSq <= MAX_CCD_DISPLACEMENT_SQ;
+
+                        if (canUseVictimCCD) {
+                            // 胴体中心 P(bx, by) を線分 A(prevHx, prevHy) -> B(hx, hy) に射影
+                            const t = Math.max(0, Math.min(1, ((bx - prevHx) * segDx + (by - prevHy) * segDy) / segLenSq));
+                            hitX = prevHx + t * segDx;
+                            hitY = prevHy + t * segDy;
+                            const cdx = hitX - bx;
+                            const cdy = hitY - by;
+                            closestDistSq = cdx * cdx + cdy * cdy;
+                        } else {
+                            const dx = hx - bx;
+                            const dy = hy - by;
+                            closestDistSq = dx * dx + dy * dy;
+                        }
 
                         // 接触判定
-                        if (dx * dx + dy * dy < minDist * minDist) {
-                            // ★ isGodMode または通常の invulnerableTimer による無敵判定
+                        if (closestDistSq < minDistSq) {
+                            // isGodMode または通常の invulnerableTimer による無敵判定
                             const isVictimProtected = Boolean(victim.isGodMode || (victim.invulnerableTimer && victim.invulnerableTimer > 0));
                             const isKillerProtected = Boolean(killer.isGodMode || (killer.invulnerableTimer && killer.invulnerableTimer > 0));
 
@@ -256,7 +359,9 @@ export class SpatialCollisionEngine {
                                     killer.invulnerableTimer = 0.45;
                                 }
 
-                                let dist = Math.sqrt(dx * dx + dy * dy);
+                                let dist = Math.sqrt(closestDistSq);
+                                let dx = hitX - bx;
+                                let dy = hitY - by;
                                 if (dist < 0.001) {
                                     const randomAngle = Math.random() * Math.PI * 2;
                                     dx = Math.cos(randomAngle);
@@ -271,7 +376,11 @@ export class SpatialCollisionEngine {
                                 continue;
                             }
 
-                            victim.isDead = true;
+                            // リモートの人間走者は相手自身の判定に委任し、ローカルで即死フラグを立てない
+                            const isVictimRemoteHuman = Boolean(victim.isHumanPlayer && !victim.isPlayer);
+                            if (!isVictimRemoteHuman) {
+                                victim.isDead = true;
+                            }
                             killer.kills++;
 
                             if (onKill) {
@@ -284,6 +393,10 @@ export class SpatialCollisionEngine {
                     }
                 }
             }
+
+            // 次フレームのCCD判定用に現フレーム頭部座標を記録
+            victim.prevX = hx;
+            victim.prevY = hy;
         }
     }
 }

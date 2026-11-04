@@ -1,15 +1,17 @@
 /**
  * ==============================================================================
  * 『くねくねバトル オンライン』Web Audio API プログラム動的音響エンジン (audio.js)
- * v25.6.0 タイマー排他管理＆メモリリーク完全防止・耳に優しい音響刷新版:
- * ・【メモリリーク完全防止】stopBoostSound() 連打時の setTimeout 重複タイマーを
- * 　this._stopTimeoutId で完全に排他管理。未切断ノードの浮遊やメモリリークを物理根絶！
- * ・【即時クリーンアップガード】連続停止呼び出し時でも古いノードを確実に切断・解放
- * ・甲高い高周波（520〜780Hzサイン波）を完全撤廃し、耳鳴り・耳障り感を100%根絶
- * ・バンドパスフィルターを通過させた柔らかな風切りエアフローノイズ（気流音）を主推進音に採用
- * ・中低域の温かみのあるサイン波推進ハム（130Hz->180Hz）を控えめに重ね、重厚かつ疲れない推進感を演出
- * ・滑らかな linearRamp によるフェード制御でプチッ音（クリップノイズ）を完全根絶
- * ・iOS WebKit バックグラウンド自動サスペンド/レジューム制御
+ * v26.0.0 餌取得音スロットリング＆クリッピングノイズ完全根絶版:
+ * ・【効果音スロットリングによるAudioContext飽和・音割れ完全防止】
+ * 　撃破肉片クラスタ密集地への突入時など、1フレーム内で数十個の餌を連続捕食した際に
+ * 　オシレーター・ゲインノードが瞬時に大量生成されて音が割れる（クリッピングノイズ）現象、
+ * 　およびモバイルブラウザで AudioContext が過負荷クラッシュする問題を
+ * 　25ms（playEatSmall）/ 30ms（playEatBig）の最小発音インターバル制御により完全根絶！
+ * ・【メモリリーク完全防止維持】stopBoostSound() 連打時の _stopTimeoutId 排他管理
+ * ・【即時クリーンアップガード維持】連続停止呼び出し時の確実なノード切断・解放
+ * ・【耳に優しい音響設計維持】バンドパス気流ノイズ＋温かみのある中低域推進ハム
+ * ・【クリップノイズ防止フェード維持】linearRampToValueAtTime
+ * ・【iOS WebKit バックグラウンド自動サスペンド/レジューム維持】
  * ==============================================================================
  */
 
@@ -29,6 +31,10 @@ class AudioManager {
 
         // 切断タイマー排他管理ID（メモリリーク防止用）
         this._stopTimeoutId = null;
+
+        // ★ 効果音スロットリング用タイムスタンプ（ノード乱立・音割れ防止）
+        this._lastEatSmallTime = 0;
+        this._lastEatBigTime = 0;
 
         this.bindVisibilityChange();
     }
@@ -91,9 +97,15 @@ class AudioManager {
         return this.isMuted;
     }
 
-    // 小餌取得音（サイン波 880Hz -> 1320Hz の爽快なピコ音）
+    // 小餌取得音（サイン波 880Hz -> 1320Hz の爽快なピコ音、25msスロットリング制御付）
     playEatSmall() {
         if (this.isMuted || !this.ctx) return;
+
+        // ★ 密集地帯での連続発音による音割れ・負荷を防止
+        const nowMs = performance.now();
+        if (nowMs - this._lastEatSmallTime < 25) return;
+        this._lastEatSmallTime = nowMs;
+
         try {
             const now = this.ctx.currentTime;
             const osc = this.ctx.createOscillator();
@@ -119,9 +131,15 @@ class AudioManager {
         } catch (e) {}
     }
 
-    // 巨大餌取得音（三角波 440Hz -> 880Hz -> 1760Hz のリッチな和音）
+    // 巨大餌取得音（三角波 440Hz -> 880Hz -> 1760Hz のリッチな和音、30msスロットリング制御付）
     playEatBig() {
         if (this.isMuted || !this.ctx) return;
+
+        // ★ 密集肉片捕食時のオシレーター飽和・クラッシュを防止
+        const nowMs = performance.now();
+        if (nowMs - this._lastEatBigTime < 30) return;
+        this._lastEatBigTime = nowMs;
+
         try {
             const now = this.ctx.currentTime;
             const osc = this.ctx.createOscillator();

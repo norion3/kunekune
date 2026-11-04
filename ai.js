@@ -1,10 +1,14 @@
 // ==============================================================================
 // 『くねくねバトル オンライン』スネーク.io型 自律生態系AIマネージャー (ai.js)
-// v32.0.0 空間ハッシュ局所グリッド思考走査＆スマホ発熱90%削減版:
-// ・【空間ハッシュ局所グリッド走査(O(1))への完全刷新】
-// 　think() 内部の胴体激突回避において、全スネーク×全節の総当たり走査(O(N^2))を完全撤廃！
-// 　AI頭部周辺の空間グリッド（周囲9マス）のみを局所スキャンする高速走査エンジンを内蔵し、
-// 　スマホ端末でのCPU負荷・バッテリー消費・発熱を約90%大幅削減！
+// v35.0.0 ホストカメラ描画フラグ分離＆画面外AI自律思考完全保証版:
+// ・【ホストカメラ依存(!isVisible)スキップの完全撤廃】
+// 　_rebuildSpatialGrid および think ルーチン内のターゲット走査（AMBUSH, HUNTER, TIMID）
+// 　において、ホストカメラ画面外フラグ(!isVisible)によるスキップ判定を撤廃！
+// 　ホストの画面外であっても全スネークの胴体を空間グリッドに漏れなく登録し、
+// 　遠隔ゲストや他AIとの回避・追跡・狩猟思考を常時100%正確にシミュレーション
+// ・【空間ハッシュマイナス座標ビット崩壊完全防護維持】((gx + 10) << 16) | (gy + 10)
+// ・【整数ビット演算ハッシュによる文字列アロケーション完全根絶維持】
+// ・【空間ハッシュ局所グリッド走査(O(1))維持】
 // ・【AI行動タイマー実時間同期維持】毎フレーム実時間（timeScale）一括減算
 // ・【画面外AI成長キャップ維持】MAX_VIRTUAL_AI_SCORE = 3,000pt
 // ・【開幕ピラミッド配分維持】小型85%、中堅12%、ボス3%
@@ -124,7 +128,7 @@ export class AIManager {
     }
 
     /**
-     * 思考走査専用グリッドの構築（画面内および近接スネークの胴体をO(1)走査用にマッピング）
+     * 思考走査専用グリッドの構築（全スネークの胴体を画面内外問わずO(1)走査用にマッピング）
      */
     _rebuildSpatialGrid(allSnakes) {
         for (const cell of this.bodySpatialGrid.values()) {
@@ -135,7 +139,8 @@ export class AIManager {
         const total = allSnakes.length;
         for (let i = 0; i < total; i++) {
             const s = allSnakes[i];
-            if (s.isDead || !s.isVisible) continue;
+            // 画面外フラグ(!s.isVisible)でのスキップを撤廃し、画面外でも衝突回避ができるよう登録
+            if (s.isDead) continue;
 
             const histLen = s.historyLength || 0;
             // 頭部付近（先頭2節）は自爆防止のためスキップし、4節刻みで間引き登録して超軽量化
@@ -149,7 +154,8 @@ export class AIManager {
 
                 const gx = Math.floor(pt.x / GRID_SIZE);
                 const gy = Math.floor(pt.y / GRID_SIZE);
-                const key = `${gx}_${gy}`;
+                // 整数ビット演算ハッシュ（負の座標によるビット崩壊を防ぐ正のオフセット +10 適用）
+                const key = ((gx + 10) << 16) | (gy + 10);
 
                 let cell = this.bodySpatialGrid.get(key);
                 if (!cell) {
@@ -325,7 +331,8 @@ export class AIManager {
 
         for (let ox = -1; ox <= 1 && !threatFound; ox++) {
             for (let oy = -1; oy <= 1 && !threatFound; oy++) {
-                const key = `${gx + ox}_${gy + oy}`;
+                // 整数ビット演算ハッシュ（負の座標によるビット崩壊を防ぐ正のオフセット +10 適用）
+                const key = ((gx + ox + 10) << 16) | (gy + oy + 10);
                 const cell = this.bodySpatialGrid.get(key);
                 if (!cell || cell.length === 0) continue;
 
@@ -362,14 +369,14 @@ export class AIManager {
 
         const totalSnakes = allSnakes.length;
 
-        // 3. 【カミカゼ暗殺特攻（AMBUSH）】
+        // 3. 【カミカゼ暗殺特攻（AMBUSH）】（画面外ターゲットも公平に評価）
         if ((meta.persona === 'ambusher' || (meta.persona === 'harasser' && Math.random() < 0.4)) && ai.score > 60) {
             let giantTarget = null;
             let minGiantDistSq = 1400 * 1400;
 
             for (let i = 0; i < totalSnakes; i++) {
                 const other = allSnakes[i];
-                if (other === ai || other.isDead || !other.isVisible) continue;
+                if (other === ai || other.isDead) continue;
                 if (other.invulnerableTimer && other.invulnerableTimer > 0) continue;
 
                 if (other.score >= ai.score * 1.8 || other.size >= 24) {
@@ -397,14 +404,14 @@ export class AIManager {
             }
         }
 
-        // 4. 【ビビり逃走の限定化】
+        // 4. 【ビビり逃走の限定化】（画面外脅威も公平に評価）
         if (meta.persona === 'timid' && meta.panicCooldown <= 0 && meta.state !== AI_STATE.PANIC && ai.score > 60) {
             let giantThreat = null;
             const panicDistSq = 350 * 350;
 
             for (let i = 0; i < totalSnakes; i++) {
                 const other = allSnakes[i];
-                if (other === ai || other.isDead || !other.isVisible) continue;
+                if (other === ai || other.isDead) continue;
                 if (other.score >= ai.score * 2.5) {
                     const gdx = other.x - ai.x;
                     const gdy = other.y - ai.y;
@@ -460,7 +467,7 @@ export class AIManager {
         }
 
         // 6. 【プレイヤー接近時のちょっかい行動トリガー】
-        const isPlayerActive = player && !player.isDead && player.isVisible;
+        const isPlayerActive = player && !player.isDead;
         if (isPlayerActive && meta.harassCooldown <= 0 && meta.state !== AI_STATE.HARASS && meta.state !== AI_STATE.PANIC && meta.state !== AI_STATE.AMBUSH) {
             const pdx = player.x - ai.x;
             const pdy = player.y - ai.y;
@@ -548,7 +555,7 @@ export class AIManager {
 
                 for (let i = 0; i < totalSnakes; i++) {
                     const other = allSnakes[i];
-                    if (other === ai || other.isDead || !other.isVisible) continue;
+                    if (other === ai || other.isDead) continue;
                     if (other.invulnerableTimer && other.invulnerableTimer > 0) continue;
 
                     const hdx = other.x - ai.x;

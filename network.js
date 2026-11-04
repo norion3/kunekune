@@ -1,11 +1,12 @@
 // ==============================================================================
 // 『くねくねバトル オンライン』AgentSDK公式マルチプレイ通信マネージャー (network.js)
-// v36.0.0 空き枠ダミーAIのCPU完全統一命名＆幽霊プレイヤー根絶版:
-// ・【空き枠ダミーAIのCPU完全統一命名】
-// 　初期スロット、退室時スロット、ホスト昇格時の解放スロット名を「プレイヤー X」から
-// 　`CPU ${MAX_AIS + i + 1}`（例: CPU 96〜100）へと完全統一！
-// 　空き枠ダミーAIがゲーム内で成長してもランキングに「プレイヤー 4」「プレイヤー 5」などの
-// 　謎のプレイヤー名が載る現象を100%物理根絶
+// v37.0.0 スプリットブレイン降格時送信ロックアウト＆スロット競合完全防止版:
+// ・【スプリットブレイン降格時送信ロックアウト機構】
+// 　ホストがゲストへサレンダー降格した瞬間、パケット送信（NetBroadcaster）を即時停止！
+// 　新ホストから ROOM_MEMBERS_SYNC を受信して自機の新スロット番号が正式確定するまでの間、
+// 　古いスロット番号でパケットを送り続けて世界線を破壊するID競合バグを100%物理根絶
+// ・【新スロット番号確定時の送信自律復帰】ROOM_MEMBERS_SYNC 受信時に安全に送信再開
+// ・【空き枠ダミーAIのCPU完全統一命名維持】CPU 96〜100
 // ・【ホスト昇格時のSlot 0引越し＆元スロット解放維持】
 // ・【START_GAME ゲームオーバー中完全遮断維持】
 // ・【メモリリーク完全防止維持】_recentlyExitedRoomIds の20件ローテーション破棄
@@ -135,6 +136,7 @@ export const NetworkManager = {
     _lastHostPacketTime: 0,
     _hasReceivedFirstHostPacket: false,
     _isPromoting: false,
+    _isSurrenderLocked: false, // ★ スプリットブレイン降格時の送信一時停止フラグ
 
     callbacks: {
         onRemoteSnakeUpdate: null,
@@ -158,17 +160,17 @@ export const NetworkManager = {
     // --- キューイングAPI ---
     // 餌取得同期（絶対座標 x, y）
     queueFoodPick(x, y) {
-        if (!this.isMultiplayerActive) return;
+        if (!this.isMultiplayerActive || this._isSurrenderLocked) return;
         NetBroadcaster.queueFoodPick(x, y);
     },
 
     queueDropFood(x, y, val, colorIdx) {
-        if (!this.isMultiplayerActive) return;
+        if (!this.isMultiplayerActive || this._isSurrenderLocked) return;
         NetBroadcaster.queueDropFood(x, y, val, colorIdx);
     },
 
     queueDropCluster(x, y, totalVal, count, colorIdx) {
-        if (!this.isMultiplayerActive) return;
+        if (!this.isMultiplayerActive || this._isSurrenderLocked) return;
         NetBroadcaster.queueDropCluster(x, y, totalVal, count, colorIdx);
     },
 
@@ -186,7 +188,7 @@ export const NetworkManager = {
         
         Danmaku.push(myName, cleanText, myColor);
 
-        if (this.isMultiplayerActive) {
+        if (this.isMultiplayerActive && !this._isSurrenderLocked) {
             NetBroadcaster.queueChat(this.mySlot, cleanText);
         }
     },
@@ -195,7 +197,7 @@ export const NetworkManager = {
     // ★ 【撃破チャット一斉同報API（被害者スロット同期対応）】
     // =========================================================================
     broadcastKill(killerName, victimName, color, victimSlot = null) {
-        if (!this.isMultiplayerActive) return;
+        if (!this.isMultiplayerActive || this._isSurrenderLocked) return;
         this._sendCustomMessage({
             e: 'KILL_ALERT',
             kn: killerName,
@@ -210,7 +212,7 @@ export const NetworkManager = {
      * ブースト状態変化やリスポーン時の即時割り込み送信（Event-driven）
      */
     forceImmediateSync() {
-        if (this.isMultiplayerActive) {
+        if (this.isMultiplayerActive && !this._isSurrenderLocked) {
             NetBroadcaster.forceImmediateSync(this);
         }
     },
@@ -220,7 +222,7 @@ export const NetworkManager = {
     // 単発送信によるパケットロスを克服。0ms, 60ms, 150ms で3連続送信
     // =========================================================================
     broadcastStartGame() {
-        if (!this.isMultiplayerActive || !this.isHost) return;
+        if (!this.isMultiplayerActive || !this.isHost || this._isSurrenderLocked) return;
         
         const packet = {
             e: 'START_GAME',
@@ -232,14 +234,14 @@ export const NetworkManager = {
 
         // 2発目：60ms後に再送（パケットロスおよびレートリミット救済）
         setTimeout(() => {
-            if (this.isMultiplayerActive && this.isHost) {
+            if (this.isMultiplayerActive && this.isHost && !this._isSurrenderLocked) {
                 this._sendCustomMessage(packet);
             }
         }, 60);
 
         // 3発目：150ms後に再送（回線瞬断時のバックアップ）
         setTimeout(() => {
-            if (this.isMultiplayerActive && this.isHost) {
+            if (this.isMultiplayerActive && this.isHost && !this._isSurrenderLocked) {
                 this._sendCustomMessage(packet);
             }
         }, 150);
@@ -383,6 +385,7 @@ export const NetworkManager = {
             this.isHost = true;
             this.mySlot = 0;
             this.isMultiplayerActive = true;
+            this._isSurrenderLocked = false;
             this.currentSeed = Math.floor(Math.random() * 90000000) + 10000000;
 
             const myResolvedName = (typeof window !== 'undefined' && window.GRAVITY_USER_NAME)
@@ -471,6 +474,7 @@ export const NetworkManager = {
 
             this.isHost = false;
             this.isMultiplayerActive = true;
+            this._isSurrenderLocked = false;
             this.mySlot = 1;
 
             const myResolvedName = (typeof window !== 'undefined' && window.GRAVITY_USER_NAME)
@@ -734,6 +738,7 @@ export const NetworkManager = {
         this._stopHostWatchdog();
 
         this.isHost = true;
+        this._isSurrenderLocked = false;
 
         const oldSlot = this.mySlot;
 
@@ -906,6 +911,14 @@ export const NetworkManager = {
                                     this.isHost = false;
                                     if(this.slots[this.mySlot]) this.slots[this.mySlot].isHost = false;
 
+                                    // =========================================================================
+                                    // ★ 【サレンダー降格時の送信一時停止（スロット競合バグ完全防護）】
+                                    // 新ホストから ROOM_MEMBERS_SYNC で自機の新スロットが確定するまで送信をサスペンド
+                                    // =========================================================================
+                                    this._isSurrenderLocked = true;
+                                    NetBroadcaster.stop();
+                                    this._startHostWatchdog();
+
                                     if (this.callbacks.onSurrenderedAsHost) {
                                         this.callbacks.onSurrenderedAsHost();
                                     }
@@ -968,7 +981,18 @@ export const NetworkManager = {
                     if (mySlotData) {
                         this.mySlot = mySlotData.slot;
                         if (window.localPlayerInstance) {
+                            window.localPlayerInstance.id = mySlotData.slot;
                             window.localPlayerInstance.color = mySlotData.color;
+                        }
+
+                        // =========================================================================
+                        // ★ 【新スロット番号確定による送信自律復帰】
+                        // サレンダーロック中だった場合、新スロット確定を受けて安全に送信再開
+                        // =========================================================================
+                        if (this._isSurrenderLocked) {
+                            console.log(`[NetworkManager] 新ホストからのスロット同期完了: Slot ${this.mySlot} として通信を再開します。`);
+                            this._isSurrenderLocked = false;
+                            this._startBroadcasting();
                         }
                     }
 
@@ -1010,6 +1034,7 @@ export const NetworkManager = {
         this._lastHostPacketTime = 0;
         this._hasReceivedFirstHostPacket = false;
         this._isPromoting = false;
+        this._isSurrenderLocked = false;
 
         // 再入室時・ルーム遷移時にメインループ側の残留走者を完全パージ
         if (this.callbacks.onWorldPurged) {
@@ -1033,6 +1058,7 @@ export const NetworkManager = {
         this.isHost = false;
         this.isMultiplayerActive = false;
         this.mySlot = 0;
+        this._isSurrenderLocked = false;
     }
 };
 

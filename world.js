@@ -1,23 +1,34 @@
 // ==============================================================================
 // 『くねくねバトル オンライン』ワールド・動的チャンク餌・決定論的シード生成 (world.js)
-// v33.0.0 餌密度適正化＆画面外即時破棄・フィールド視界クリア化版:
-// ・【画面外遠隔チャンクの即時回収】
-// 　チャンク保持上限を 2,500 ➔ 500 チャンクへと大幅縮小！
-// 　プレイヤーの視界外へ外れた餌チャンクを無理に保持し続けず即時破棄することで、
-// 　メモリ消費を抑制し、常に索敵に必要な周辺エリアのみをクリーンに維持
-// ・【肉片ドロップ寿命の適正化】
-// 　ドロップ餌（死体肉片・ブースト餌）の生存期間を 35秒 ➔ 12秒 へ短縮！
-// 　食べ残された肉片がいつまでも画面を埋め尽くす「餌の山」を解消し、
-// 　広々とした漆黒の宇宙空間と高い視認性を復元
-// ・【通常チャンク・ホットスポット餌密度のスマート化】
-// 　通常チャンク1〜3個、ホットスポット最大8個に抑制して画面の過密白飛びを防止
+// v40.0.0 肉片ドロップFIFO上限キャップ＆O(N^2)処理落ち完全防護版:
+// ・【肉片ドロップFIFO上限キャップによるO(N^2)処理落ち完全防護】
+// 　画面外でのAI乱戦・大量撃破時に dropFoods 配列が無制限に肥大化し、
+// 　全スネークの毎フレーム距離判定が O(N^2) 爆発を起こしてFPSが急降下する問題を
+// 　MAX_DROP_FOODS = 400 のハードキャップと古い肉片から削除するFIFOリング管理で根絶！
+// ・【餌捕食判定への連続衝突判定(CCD)統合維持】高速ブースト時のフード・トンネリング完全防止
+// ・【無限餌増殖(ボーダーダンス)の完全根絶維持】FIFOリングバッファ管理(最大4,096件)
+// ・【整数ビット演算ハッシュによる文字列アロケーション完全根絶維持】
+// 　foodGrid, generatedChunks, consumedFoodBits を 32bit整数キーで一貫運用
+// ・【撃破時肉片ドロップの外壁内安全クランプ維持】
+// ・【画面外遠隔チャンクの即時回収維持】保持上限500チャンク
+// ・【肉片ドロップ寿命の適正化維持】12秒TTL
+// ・【通常チャンク・ホットスポット餌密度のスマート化維持】
 // ・【大餌・肉片オーラの超遠景ハイライト維持】
-// ・【絶対座標消去API完全維持】removeFoodAt(x, y) による通信同期ズレ完全排除
-// ・【ゼロアロケーション描画バケット維持】毎フレームのGCスパイク完全根絶
+// ・【絶対座標消去API完全維持】removeFoodAt(x, y) 連動
+// ・【ゼロアロケーション描画バケット維持】
 // ==============================================================================
 
 import { MAP_SIZE, GRID_SIZE, FOOD_COLORS } from './constants.js';
 import { NetworkManager } from './network.js';
+
+// 消費ビットマスクの最大キャッシュ保持チャンク数（メモリリーク防止 ＆ 長期エコシステム維持）
+const MAX_CONSUMED_CACHE_SIZE = 4096;
+
+// CCD変位上限二乗値（ワープ時や長距離移動時の誤爆防止リミッター）
+const MAX_CCD_DISPLACEMENT_SQ = 160000;
+
+// ★ 肉片ドロップ最大保持上限（乱戦・大量撃破時の計算量爆発・FPS崩壊を物理防護）
+const MAX_DROP_FOODS = 400;
 
 export class WorldManager {
     constructor() {
@@ -25,6 +36,10 @@ export class WorldManager {
         this.generatedChunks = new Set();
         this.dropFoods = [];
         this.particles = [];
+
+        // ★ チャンクアンロード後も捕食履歴を保持し続ける軽量ビットマスクキャッシュ（FIFOリング制限付き）
+        // キー: チャンクキー ((gx + 10) << 16) | (gy + 10), 値: 32bitビットマスク (Bit i = 餌インデックス i が消費済みか)
+        this.consumedFoodBits = new Map();
 
         // ゼロアロケーション用色別描画バケット
         this.batchBuckets = new Map();
@@ -37,6 +52,7 @@ export class WorldManager {
         this.generatedChunks.clear();
         this.dropFoods = [];
         this.particles = [];
+        this.consumedFoodBits.clear();
         this.batchBuckets.clear();
         this.bigAuraBuffer.length = 0;
     }
@@ -55,6 +71,24 @@ export class WorldManager {
         };
     }
 
+    /**
+     * 消費ビットマスクの安全な記録ヘルパー（FIFOリングバッファ管理）
+     * @param {number} chunkIntKey 
+     * @param {number} foodIdx 
+     */
+    _recordConsumedBit(chunkIntKey, foodIdx) {
+        const curMask = this.consumedFoodBits.get(chunkIntKey) || 0;
+        this.consumedFoodBits.set(chunkIntKey, curMask | (1 << foodIdx));
+
+        // メモリ上限管理：最大件数を超えた場合、最も古い探索履歴から順に安全削除（FIFO）
+        if (this.consumedFoodBits.size > MAX_CONSUMED_CACHE_SIZE) {
+            const oldestKey = this.consumedFoodBits.keys().next().value;
+            if (oldestKey !== undefined) {
+                this.consumedFoodBits.delete(oldestKey);
+            }
+        }
+    }
+
     // プレイヤー視界周辺のチャンクを動的生成（ズーム時のチャンク大爆発ガード付き）
     updateChunks(playerX, playerY, viewRadius) {
         const clampedRadius = Math.min(8000, viewRadius);
@@ -66,10 +100,10 @@ export class WorldManager {
 
         for (let gx = minGx; gx <= maxGx; gx++) {
             for (let gy = minGy; gy <= maxGy; gy++) {
-                const key = `${gx}_${gy}`;
-                if (!this.generatedChunks.has(key)) {
-                    this.generatedChunks.add(key);
-                    this.spawnChunkFoods(gx, gy);
+                const intKey = ((gx + 10) << 16) | (gy + 10);
+                if (!this.generatedChunks.has(intKey)) {
+                    this.generatedChunks.add(intKey);
+                    this.spawnChunkFoods(gx, gy, intKey);
                 }
             }
         }
@@ -82,27 +116,30 @@ export class WorldManager {
             const deleteKeys = [];
             const maxDistSq = (clampedRadius * 1.35) ** 2;
 
-            for (let key of this.generatedChunks) {
-                const [gxStr, gyStr] = key.split('_');
-                const cx = parseInt(gxStr, 10) * GRID_SIZE;
-                const cy = parseInt(gyStr, 10) * GRID_SIZE;
+            for (let intKey of this.generatedChunks) {
+                const gx = (intKey >> 16) - 10;
+                const gy = (intKey & 0xFFFF) - 10;
+                const cx = gx * GRID_SIZE;
+                const cy = gy * GRID_SIZE;
                 const distSq = (cx - playerX) ** 2 + (cy - playerY) ** 2;
                 if (distSq > maxDistSq) {
-                    deleteKeys.push(key);
+                    deleteKeys.push(intKey);
                 }
             }
 
             for (let k of deleteKeys) {
                 this.generatedChunks.delete(k);
                 this.foodGrid.delete(k);
+                // チャンク破棄時に consumedFoodBits を即時削除しない！
+                // これにより、境界反復移動（ボーダーダンス）による餌無限復活を物理根絶
             }
         }
     }
 
     /**
-     * ホットスポット群生地 ＆ 3段階美麗餌生成（適正密度バランス版）
+     * ホットスポット群生地 ＆ 3段階美麗餌生成（消費済みビットマスク判定対応版）
      */
-    spawnChunkFoods(gx, gy) {
+    spawnChunkFoods(gx, gy, intKey = null) {
         const baseSeed = (NetworkManager && NetworkManager.currentSeed) ? NetworkManager.currentSeed : 12345678;
         const chunkSeed = (baseSeed ^ (gx * 73856093) ^ (gy * 19349663)) >>> 0;
         const prng = this.createChunkPRNG(chunkSeed);
@@ -124,11 +161,13 @@ export class WorldManager {
         const hotspotThreshold = 0.05 + centerProximity * 0.05;
         const isHotspot = prng() < hotspotThreshold;
 
-        // =========================================================================
-        // ★ 【生成数適正化】通常1〜3個、ホットスポット最大8個に抑制して画面の過密を解消
-        // =========================================================================
+        // 生成数適正化：通常1〜3個、ホットスポット最大8個
         const baseCount = Math.floor(prng() * 3) + 1;
         const count = isHotspot ? Math.min(8, baseCount * 2 + Math.floor(centerProximity * 2)) : baseCount;
+
+        // チャンク整数キー（32bit）
+        const chunkIntKey = intKey !== null ? intKey : (((gx + 10) << 16) | (gy + 10));
+        const consumedMask = this.consumedFoodBits.get(chunkIntKey) || 0;
 
         const list = [];
 
@@ -147,6 +186,21 @@ export class WorldManager {
             const x = gx * GRID_SIZE + prng() * GRID_SIZE;
             const y = gy * GRID_SIZE + prng() * GRID_SIZE;
 
+            // =========================================================================
+            // ★ 【消費済みビット判定（ゾンビ復活防止）】
+            // 過去に捕食されたインデックスの餌は、PRNGの乱数順序を狂わせずにスポーンのみ安全にスキップ
+            // =========================================================================
+            if ((consumedMask & (1 << i)) !== 0) {
+                if (sizeCategory === 2) {
+                    prng(); prng(); // 大餌の乱数消費を同期
+                } else if (sizeCategory === 1) {
+                    prng(); prng(); prng(); // 中餌の乱数消費を同期
+                } else {
+                    prng(); prng(); prng(); // 小餌の乱数消費を同期
+                }
+                continue;
+            }
+
             if (sizeCategory === 2) {
                 // 大サイズ餌（val 22〜42、白色コア＋淡黄色オーラ）
                 list.push({
@@ -156,7 +210,9 @@ export class WorldManager {
                     size: 9.5 + prng() * 3.5,
                     isBig: true,
                     isLargeAura: true,
-                    color: '#ffffff'
+                    color: '#ffffff',
+                    chunkIntKey: chunkIntKey,
+                    foodIdx: i
                 });
             } else if (sizeCategory === 1) {
                 // 中サイズ餌（val 10〜20、カラーオーラ）
@@ -167,7 +223,9 @@ export class WorldManager {
                     size: 5.5 + prng() * 2.5,
                     isBig: true,
                     isLargeAura: false,
-                    color: FOOD_COLORS[Math.floor(prng() * FOOD_COLORS.length)]
+                    color: FOOD_COLORS[Math.floor(prng() * FOOD_COLORS.length)],
+                    chunkIntKey: chunkIntKey,
+                    foodIdx: i
                 });
             } else {
                 // 小サイズ餌（val 4〜6）
@@ -178,26 +236,37 @@ export class WorldManager {
                     size: 3.0 + prng() * 1.5,
                     isBig: false,
                     isLargeAura: false,
-                    color: FOOD_COLORS[Math.floor(prng() * FOOD_COLORS.length)]
+                    color: FOOD_COLORS[Math.floor(prng() * FOOD_COLORS.length)],
+                    chunkIntKey: chunkIntKey,
+                    foodIdx: i
                 });
             }
         }
 
-        this.foodGrid.set(`${gx}_${gy}`, list);
+        this.foodGrid.set(chunkIntKey, list);
     }
 
-    // 撃破されたスネークの肉片ドロップ（TTLタイムスタンプ付き）
+    // 撃破されたスネークの肉片ドロップ（TTLタイムスタンプ付き ＆ 外壁内安全クランプ ＆ ハードキャップ管理）
     spawnDeathDrop(snake) {
         const histLen = snake.historyLength || 0;
         const now = performance.now();
+        const margin = 20;
+
         for (let i = 0; i < histLen; i += 2) {
             const idx = (snake.headIdx + i) % 2048;
             const pt = snake.history[idx];
             if (!pt) continue;
-            
+
+            // =========================================================================
+            // ★ 【外壁内安全クランプ】
+            // 外壁際で撃破された際、肉片がマップ外に飛び出して回収不能になるのを完全防止
+            // =========================================================================
+            const dropX = Math.max(margin, Math.min(MAP_SIZE - margin, pt.x + (Math.random() - 0.5) * 20));
+            const dropY = Math.max(margin, Math.min(MAP_SIZE - margin, pt.y + (Math.random() - 0.5) * 20));
+
             this.dropFoods.push({
-                x: pt.x + (Math.random() - 0.5) * 20,
-                y: pt.y + (Math.random() - 0.5) * 20,
+                x: dropX,
+                y: dropY,
                 size: 7 + Math.random() * 4,
                 val: 18 + Math.random() * 12,
                 isBig: true,
@@ -205,6 +274,15 @@ export class WorldManager {
                 color: snake.color,
                 spawnTime: now
             });
+        }
+
+        // =========================================================================
+        // ★ 【肉片ドロップFIFOハードキャップ防護】
+        // 画面外大乱戦時でも MAX_DROP_FOODS を超過した分を最も古い肉片から安全に切り捨て
+        // =========================================================================
+        if (this.dropFoods.length > MAX_DROP_FOODS) {
+            const overflow = this.dropFoods.length - MAX_DROP_FOODS;
+            this.dropFoods.splice(0, overflow);
         }
 
         for (let p = 0; p < 18; p++) {
@@ -219,11 +297,27 @@ export class WorldManager {
         }
     }
 
-    // 餌の捕食判定
+    /**
+     * 餌の捕食判定（連続衝突判定CCD統合：高速ブースト移動時のすり抜けを完全防止）
+     */
     checkFoodConsumption(snake, onEat) {
-        const gx = Math.floor(snake.x / GRID_SIZE);
-        const gy = Math.floor(snake.y / GRID_SIZE);
+        const hx = snake.x;
+        const hy = snake.y;
         const headR = snake.size;
+
+        // 前フレーム座標（未記録時は現位置として通常の点判定に安全フォールバック）
+        const prevHx = snake.prevX !== undefined ? snake.prevX : hx;
+        const prevHy = snake.prevY !== undefined ? snake.prevY : hy;
+
+        const segDx = hx - prevHx;
+        const segDy = hy - prevHy;
+        const segLenSq = segDx * segDx + segDy * segDy;
+
+        const isRespawning = (snake.historyLength || 0) < 2;
+        const canUseCCD = !isRespawning && segLenSq > 0.0001 && segLenSq <= MAX_CCD_DISPLACEMENT_SQ;
+
+        const gx = Math.floor(hx / GRID_SIZE);
+        const gy = Math.floor(hy / GRID_SIZE);
 
         let skipSmallProb = 0;
         if (headR > 22) {
@@ -233,8 +327,8 @@ export class WorldManager {
         // 1. チャンク餌
         for (let ox = -1; ox <= 1; ox++) {
             for (let oy = -1; oy <= 1; oy++) {
-                const key = `${gx + ox}_${gy + oy}`;
-                const list = this.foodGrid.get(key);
+                const intKey = ((gx + ox + 10) << 16) | (gy + oy + 10);
+                const list = this.foodGrid.get(intKey);
                 if (!list) continue;
 
                 for (let i = list.length - 1; i >= 0; i--) {
@@ -244,10 +338,32 @@ export class WorldManager {
                         continue;
                     }
 
-                    const dx = snake.x - f.x;
-                    const dy = snake.y - f.y;
-                    if (dx * dx + dy * dy < (headR + f.size) ** 2) {
+                    const minDist = headR + f.size;
+                    const minDistSq = minDist * minDist;
+
+                    // =========================================================================
+                    // ★ 【線分 vs 餌(円)の幾何学的最短距離判定（CCD捕食）】
+                    // =========================================================================
+                    let hitDistSq = 0;
+                    if (canUseCCD) {
+                        const t = Math.max(0, Math.min(1, ((f.x - prevHx) * segDx + (f.y - prevHy) * segDy) / segLenSq));
+                        const cdx = prevHx + t * segDx - f.x;
+                        const cdy = prevHy + t * segDy - f.y;
+                        hitDistSq = cdx * cdx + cdy * cdy;
+                    } else {
+                        const dx = hx - f.x;
+                        const dy = hy - f.y;
+                        hitDistSq = dx * dx + dy * dy;
+                    }
+
+                    if (hitDistSq < minDistSq) {
                         snake.addScore(f.val);
+
+                        // ★ チャンク内での捕食インデックスを永続ビットマスク（FIFO管理）へ刻印
+                        if (f.chunkIntKey !== undefined && f.foodIdx !== undefined) {
+                            this._recordConsumedBit(f.chunkIntKey, f.foodIdx);
+                        }
+
                         list[i] = list[list.length - 1];
                         list.pop();
                         if (onEat) onEat(snake, f, f.x, f.y);
@@ -259,9 +375,22 @@ export class WorldManager {
         // 2. 肉片ドロップ餌
         for (let i = this.dropFoods.length - 1; i >= 0; i--) {
             const f = this.dropFoods[i];
-            const dx = snake.x - f.x;
-            const dy = snake.y - f.y;
-            if (dx * dx + dy * dy < (headR + f.size) ** 2) {
+            const minDist = headR + f.size;
+            const minDistSq = minDist * minDist;
+
+            let hitDistSq = 0;
+            if (canUseCCD) {
+                const t = Math.max(0, Math.min(1, ((f.x - prevHx) * segDx + (f.y - prevHy) * segDy) / segLenSq));
+                const cdx = prevHx + t * segDx - f.x;
+                const cdy = prevHy + t * segDy - f.y;
+                hitDistSq = cdx * cdx + cdy * cdy;
+            } else {
+                const dx = hx - f.x;
+                const dy = hy - f.y;
+                hitDistSq = dx * dx + dy * dy;
+            }
+
+            if (hitDistSq < minDistSq) {
                 snake.addScore(f.val);
                 this.dropFoods[i] = this.dropFoods[this.dropFoods.length - 1];
                 this.dropFoods.pop();
@@ -293,8 +422,8 @@ export class WorldManager {
         const gy = Math.floor(y / GRID_SIZE);
         for (let ox = -1; ox <= 1; ox++) {
             for (let oy = -1; oy <= 1; oy++) {
-                const key = `${gx + ox}_${gy + oy}`;
-                const list = this.foodGrid.get(key);
+                const intKey = ((gx + ox + 10) << 16) | (gy + oy + 10);
+                const list = this.foodGrid.get(intKey);
                 if (!list) continue;
 
                 for (let i = list.length - 1; i >= 0; i--) {
@@ -302,6 +431,11 @@ export class WorldManager {
                     const dx = f.x - x;
                     const dy = f.y - y;
                     if (dx * dx + dy * dy < searchDistSq) {
+                        // ★ 他走者の捕食時もインデックスを永続ビットマスク（FIFO管理）へ刻印
+                        if (f.chunkIntKey !== undefined && f.foodIdx !== undefined) {
+                            this._recordConsumedBit(f.chunkIntKey, f.foodIdx);
+                        }
+
                         list[i] = list[list.length - 1];
                         list.pop();
                         return true;
@@ -368,7 +502,8 @@ export class WorldManager {
 
         for (let gx = minGx; gx <= maxGx; gx++) {
             for (let gy = minGy; gy <= maxGy; gy++) {
-                const list = this.foodGrid.get(`${gx}_${gy}`);
+                const intKey = ((gx + 10) << 16) | (gy + 10);
+                const list = this.foodGrid.get(intKey);
                 if (!list) continue;
 
                 for (let i = 0; i < list.length; i++) {
