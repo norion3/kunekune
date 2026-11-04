@@ -1,13 +1,16 @@
 /**
  * ==============================================================================
  * 『くねくねバトル オンライン』ボトムシートメニュー (menu.js)
- * v27.0.0 余白ドラッグ画面連動バウンス完全遮断＆タップクローズ両立版:
- * ・【メニュー外余白ドラッグ完全遮断】#menu-overlay の touchmove イベントを
- * 　能動的に preventDefault() して、iOS WebKit がページ全体を上に引き上げて
- * 　最下部に白いOS背景を露出させるラバーバンド現象をJavaScript層からも物理遮断
- * ・【メニュー外タップ終了維持】背後余白をタップした際の即時クローズを100%両立
- * ・【誤閉塞完全防止維持】ボトムシート内部（#bottom-sheet）の操作は
- * 　stopPropagation() で確実に保護し、操作中の意図しない誤閉塞を完全防止
+ * v28.0.0 走者アイコン淵（枠線）カスタムカラー完全連動版:
+ * ・【走者アイコン枠線(淵)のカスタムカラー完全連動】
+ * 　走者リスト描画のキャッシュシグネチャ（signature）に各走者の最新カラー（s.color）
+ * 　を統合！色変更時にキャッシュ破棄され、アバター画像の border および
+ * 　文字バッジの淵が、選択したカスタムカラーへ即座かつ鮮明に切り替わります
+ * ・【自機カスタムカラーの即時優先反映】
+ * 　自機スロットの描画時、localPlayerInstance.color を優先参照して0msで枠線色を更新
+ * ・【メニュー外余白ドラッグ完全遮断維持】ラバーバンド現象遮断
+ * ・【メニュー外タップ終了維持】背後余白タップでの即時クローズ
+ * ・【誤閉塞完全防止維持】ボトムシート内部の stopPropagation()
  * ・【動的HOSTバッジ解決維持】ホスト昇格時のHOSTバッジ正確表示
  * ・GravityRouter 連携、走者一覧の最大定員6名枠完全維持
  * ==============================================================================
@@ -331,10 +334,13 @@ export class MenuManager {
         const mySlot = netMgr ? netMgr.mySlot : 0;
         const myUserId = (netMgr && netMgr.myUser) ? String(netMgr.myUser.user_id) : 'local_user';
 
+        // =========================================================================
+        // ★ 【シグネチャに color を追加し、色変更時の即時再描画を保証】
+        // =========================================================================
         const signature = slotsSource.slice(0, MAX_PLAYERS).map(s => {
             if (!s) return 'empty';
-            return `${s.slot}_${s.userId || ''}_${s.name || ''}_${s.portrait || ''}_${s.isAI}_${s.isHost || false}`;
-        }).join('|') + `_host:${isNetHost}_mySlot:${mySlot}`;
+            return `${s.slot}_${s.userId || ''}_${s.name || ''}_${s.portrait || ''}_${s.color || ''}_${s.isAI}_${s.isHost || false}`;
+        }).join('|') + `_host:${isNetHost}_mySlot:${mySlot}_customCol:${this.selectedColor}`;
 
         if (signature === this._lastParticipantSignature && listContainer.children.length === MAX_PLAYERS) {
             return;
@@ -359,7 +365,14 @@ export class MenuManager {
                 }
             }
 
-            const slotColor = (slotData && slotData.color) ? slotData.color : SNAKE_COLORS[i % SNAKE_COLORS.length];
+            // 自機の場合は選択された最新カラー、それ以外はスロットカラーをダイレクトに反映
+            let slotColor = (slotData && slotData.color) ? slotData.color : SNAKE_COLORS[i % SNAKE_COLORS.length];
+            if (isMe && this.selectedColor) {
+                slotColor = this.selectedColor;
+            } else if (isMe && window.localPlayerInstance && window.localPlayerInstance.color) {
+                slotColor = window.localPlayerInstance.color;
+            }
+
             const displayName = isAssigned 
                 ? (slotData.name || (isCurrentHost ? 'ホスト' : `プレイヤー ${i + 1}`))
                 : `CPU ${i + 1} (空き枠)`;
@@ -380,6 +393,9 @@ export class MenuManager {
                 transition: background 0.15s, border-color 0.15s;
             `;
 
+            // =========================================================================
+            // ★ 【アイコンの淵（border）および文字バッジ枠線を最新 slotColor に完全連動】
+            // =========================================================================
             let avatarHtml = '';
             if (portraitUrl) {
                 avatarHtml = `
@@ -388,7 +404,8 @@ export class MenuManager {
                         height: 36px;
                         border-radius: 50%;
                         object-fit: cover;
-                        border: 2px solid ${slotColor};
+                        border: 2.5px solid ${slotColor};
+                        box-shadow: 0 0 6px ${slotColor}55;
                         margin-right: 10px;
                         flex-shrink: 0;
                     ">
@@ -409,7 +426,8 @@ export class MenuManager {
                         font-size: ${isAssigned ? '14px' : '10px'};
                         margin-right: 10px;
                         flex-shrink: 0;
-                        border: 1.5px solid ${isAssigned ? 'rgba(255,255,255,0.4)' : 'rgba(255,255,255,0.1)'};
+                        border: 2px solid ${isAssigned ? slotColor : 'rgba(255,255,255,0.1)'};
+                        box-shadow: ${isAssigned ? `0 0 6px ${slotColor}55` : 'none'};
                     ">
                         ${badgeInitial}
                     </div>
