@@ -1,11 +1,14 @@
 // ==============================================================================
 // 『くねくねバトル オンライン』リモートパケット受信反映ハンドラ (net_handlers.js)
-// v36.0.0 相手顔タイプ・マイアイコン(face/faceIdx)リアルタイム同期版:
-// ・【相手顔タイプ・マイアイコン(face/faceIdx)リアルタイム同期】
-// 　onRemoteSnakeUpdate 内で、相手端末から届いたタプルの顔情報（data.face / data.faceIdx）
-// 　を毎フレーム検知し、remote.face を即座に更新！
-// 　さらに NetworkManager.slots[data.slot].face にも即時反映させ、
-// 　snake.js の avatarImg キャッシュ機構と連動して相手のマイアイコン顔・表情を100%リアルタイム同期！
+// v37.0.0 ランキング同期デッドロック完全解消＆顔・色リアルタイム同期版:
+// ・【ランキング同期デッドロックの完全解消】
+// 　onLeaderboardSync 内にあった非表示ガード（listEl.parentElement.style.display !== 'none'）
+// 　を完全撤廃！非表示中であっても DOM 内の innerHTML を常に最新の順位リストへ構築し、
+// 　ユーザーがトロフィーボタンでパネルを開いた瞬間に100%確実に上位リストを表示
+// ・【リーダーボードキャッシュのリセット機構】
+// 　ワールドパージ時（onWorldPurged）に lastLeaderboardSignature を空文字リセットし、
+// 　入退室やホスト切り替えを繰り返しても古いキャッシュ判定でリスト生成が停止する不具合を根絶
+// ・【相手顔タイプ・マイアイコン(face/faceIdx)リアルタイム同期維持】
 // ・【相手走者アイコン枠線(淵)リアルタイム連動維持】Menu.updateParticipants 連動
 // ・【onGameStart ゲームオーバー中完全遮断維持】リザルト画面誤消去完全防止
 // ・【ホスト(Slot 0)人間走者フラグ(isHumanPlayer)の完全刻印維持】
@@ -29,6 +32,13 @@ const AI_FACES = ['normal', 'angry', 'happy', 'cool', 'cute'];
 
 // ランキングDOM書き換えチラつき防止用シグネチャキャッシュ
 let lastLeaderboardSignature = '';
+
+/**
+ * リーダーボードのキャッシュを明示的にクリアするヘルパー
+ */
+export function resetLeaderboardCache() {
+    lastLeaderboardSignature = '';
+}
 
 // スコア表示用単位短縮ヘルパー（6桁フル表示 ＆ 7桁目から小数3桁固定 X.XXXM）
 function formatScore(val) {
@@ -320,9 +330,13 @@ export function setupNetworkHandlers(ctx) {
             }
             lastLeaderboardSignature = newSignature;
 
+            // =========================================================================
+            // ★ 【非表示スキップの撤廃（デッドロックの完全解消）】
+            // パネルが閉じている時でも常に最新の innerHTML を構築しておくことで、
+            // ユーザーがトロフィーボタンを押した瞬間に100%確実にリストが表示される！
+            // =========================================================================
             const listEl = document.getElementById('leaderboard-list');
-            if (listEl && listEl.parentElement && listEl.parentElement.style.display !== 'none') {
-                // ★ 順位番号を独立ブロック（width: 18px）化し「CPU」の頭出しを一直線に整列。名前は ellipsis で安全短縮
+            if (listEl) {
                 listEl.innerHTML = topList.slice(0, 8).map((item, idx) => {
                     const isMe = item.slot === NetworkManager.mySlot;
                     return `
@@ -395,6 +409,7 @@ export function setupNetworkHandlers(ctx) {
             if (world) {
                 world.clear();
             }
+            resetLeaderboardCache();
         }
     });
 }

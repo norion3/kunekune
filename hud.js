@@ -1,12 +1,16 @@
 /**
  * ==============================================================================
  * 『くねくねバトル オンライン』一体型HUD ＆ 自機中心相対追従レーダー (hud.js)
- * v29.0.0 カスタムカラー即時マルチ同期＆isHumanPlayer厳格判定版:
- * ・【カスタムカラー即時マルチ同期】
+ * v30.0.0 ランキング同期デッドロック完全解消＆カスタムカラー即時マルチ同期版:
+ * ・【ランキング同期デッドロックの完全解消(toggleRanking連動)】
+ * 　toggleRanking() でトロフィーボタンを押してパネルを開いた際、resetLeaderboardCache()
+ * 　を即座に実行！入退室やホスト切り替えを繰り返して非表示中にキャッシュがロックされた
+ * 　場合でも、パネル展開と同時に即座にリスト再描画を促し、点線下が真っ白になる問題を100%根絶！
+ * ・【カスタムカラー即時マルチ同期維持】
  * 　レーダー描画時に対象スネークの実カラー（s.color）および最新ネットワークスロット情報
  * 　（netSlots[s.id].color）を確実に参照。メニューで色を変更した瞬間に、
  * 　レーダー内の二重パルスリングおよび最外周の方向ポインター（▲）の色を即時100%同期！
- * ・【自機カスタムカラー完全連動】自機中心コアの色も player.color と完全リアルタイム同期
+ * ・【自機カスタムカラー完全連動維持】自機中心コアの色も player.color と完全リアルタイム同期
  * ・【矢印二重描画の完全根絶維持】
  * 　ホスト画面において、AIである CPU 1（ID: 1）と ゲスト（Slot: 1）の数値重複により
  * 　方向矢印が2つ出てしまっていたバグを解消。
@@ -25,6 +29,7 @@
 
 import { MAX_PLAYERS } from './constants.js';
 import { NetworkManager } from './network.js';
+import { resetLeaderboardCache } from './net_handlers.js';
 
 export class HUDManager {
     constructor() {
@@ -65,6 +70,17 @@ export class HUDManager {
         if (btnRankToggle) {
             btnRankToggle.classList.toggle('active', this.showRanking);
         }
+
+        // =========================================================================
+        // ★ 【ランキング展開時のキャッシュクリア・即時再描画トリガー】
+        // トロフィーボタンで開いた瞬間にキャッシュを破棄し、最新リストを100%表示
+        // =========================================================================
+        if (this.showRanking) {
+            if (typeof resetLeaderboardCache === 'function') {
+                resetLeaderboardCache();
+            }
+        }
+
         return this.showRanking;
     }
 
