@@ -1,9 +1,16 @@
 // ==============================================================================
 // 『くねくねバトル オンライン』Phase 7 マスター統合オーケストレーター (main.js)
-// v43.0.0 ランキング人間プレイヤー個別カスタムカラー＆AIホワイト描画版:
-// ・【ランキング文字色の個別カスタムカラー化】
-// 　ホスト側のランキングDOM生成部において、自機（player.color）およびリモートの人間プレイヤー
-// 　（s.color）にそれぞれのカスタムカラーを適用。AIスネークは従来どおり白（#ffffff）を維持
+// v44.0.0 リモート人間プレイヤースロット番号死守＆ワープ閾値適正化版:
+// ・【リーダーボードパケットのリモート人間プレイヤースロット番号死守】
+// 　ホスト側のパケット生成部において、リモート人間プレイヤー（s.isHumanPlayer または
+// 　s.id < MAX_PLAYERS かつ !isAI）のスロット番号をAIスロット（6以降）へ変換せず、
+// 　本来のスロットID（s.id）をそのままパケットへ格納！
+// 　これにより、ゲスト端末側で自機スロット番号との一致判定が100%成功し、
+// 　ゲスト側でも自分の色が確実にランキングに反映されるよう完全修正
+// ・【リモート追従ワープ判定閾値の適正化】
+// 　パケット追従のワープ判定閾値を 1,000px（1,000,000）から 250px（62,500）へ適正化。
+// 　パケットの遅延や急変時に過剰なlerpで胴体が引き裂かれる現象を抑止
+// ・【ホスト端末側ランキング表示：人間プレイヤーはカスタムカラー / AIは白】
 // ・【ホスト端末側ランキング非表示デッドロックの完全解消維持】
 // ・【空き枠ダミーAIフォールバック名のCPU統一（名前重複完全根絶）維持】
 // ・【待機室(マッチング画面)空き枠表記の統一維持】
@@ -634,7 +641,8 @@ function gameLoop() {
 
                 const distSq = (remote.targetNetX - remote.x) ** 2 + (remote.targetNetY - remote.y) ** 2;
                 
-                if (distSq > 1000000) {
+                // ★ 250px（62500）へ適正化（旧 1,000,000）し、急変時の無理なlerp引き裂きを抑止
+                if (distSq > 62500) {
                     const shiftX = remote.targetNetX - remote.x;
                     const shiftY = remote.targetNetY - remote.y;
                     
@@ -832,10 +840,19 @@ function gameLoop() {
                             if (s === player) {
                                 slotNum = NetworkManager.mySlot;
                             } else if (!s.isPlayer && s.id !== undefined) {
-                                if (s.id > MAX_AIS) {
-                                    slotNum = s.id - MAX_AIS - 1;
-                                } else {
-                                    slotNum = MAX_PLAYERS + (s.id - 1);
+                                // ★ 【リモート人間プレイヤーのスロット番号保護】
+                                // 人間走者の場合は本来のスロット番号（0〜5）を維持し、AIスロットへの誤変換を遮断
+                                const isRemoteHuman = Boolean(
+                                    s.isHumanPlayer ||
+                                    (s.id < MAX_PLAYERS && NetworkManager.slots[s.id] && !NetworkManager.slots[s.id].isAI)
+                                );
+
+                                if (!isRemoteHuman) {
+                                    if (s.id > MAX_AIS) {
+                                        slotNum = s.id - MAX_AIS - 1;
+                                    } else {
+                                        slotNum = MAX_PLAYERS + (s.id - 1);
+                                    }
                                 }
                             }
                             return {

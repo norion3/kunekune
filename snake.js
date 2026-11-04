@@ -1,16 +1,18 @@
 // ==============================================================================
 // 『くねくねバトル オンライン』スネークエンティティクラス (snake.js)
-// v35.0.0 ブースト肉片ドロップ外壁安全クランプ＆マイアイコン完全描画版:
-// ・【ブースト肉片ドロップの外壁内安全クランプ】
-// 　外壁際でブースト加速した際、散布される肉片がマップ境界の外側にこぼれ落ちて
-// 　回収不能になるのを防ぐため、ドロップ座標(dropX, dropY)をフィールド内へ確実にクランプ！
+// v36.0.0 体節間異常距離スキップ＆背骨ライン引き裂き紐描画完全根絶版:
+// ・【背骨ネオンライン引き裂き紐描画の完全根絶】
+// 　第3層（脊椎ネオンコアハイライトライン）の描画ループにおいて、直前の体節との距離を
+// 　判定する異常検知ガードを配備！パケット遅延や急変時に体節間が異常に離れた場合でも、
+// 　`ctx.lineTo` による直線の引き伸ばしを行わず `ctx.moveTo` でペンを離すことで、
+// 　画面を横断する細い紐状の不自然な描画を100%物理遮断
+// ・【ブースト肉片ドロップ外壁安全クランプ維持】
 // ・【相手マイアイコン顔(user_avatar)のCanvas完全描画維持】avatarImgキャッシュ
 // ・【デバッグ用無敵シールド(isGodMode)維持】外壁死スキップ＆不死身判定
 // ・【ブースト肉片ドロップの復元維持】身を削る加速と餌散布
 // ・【巨大化時の旋回慣性（ジャイアントキリング）維持】
 // ・【外壁激突即死判定維持】
 // ・【とぐろ立体感＆生体ウロコ重なりレイヤード描画維持】
-// ・【中心コアハイライトライン維持】
 // ・【ゼロ負荷設計＆生体テーパーウェーブ完全維持】
 // ==============================================================================
 
@@ -399,6 +401,14 @@ export class Snake {
             ctx.lineCap = 'round';
             ctx.lineJoin = 'round';
 
+            // ★ 【体節間異常距離スキップ防護】
+            // 直前体節との距離を計測し、通信揺らぎやリスポーン等で異常に離れている（size * 3.5以上）場合は
+            // ctx.moveTo でペンを離すことで、画面を横断する細い紐状の直線を物理根絶
+            let lastDrawX = null;
+            let lastDrawY = null;
+            const maxSegDist = this.size * 3.5;
+            const maxSegDistSq = maxSegDist * maxSegDist;
+
             for (let i = histLen - 1; i >= 0; i--) {
                 const idx = (this.headIdx + i) % MAX_HISTORY;
                 const pt = this.history[idx];
@@ -410,11 +420,22 @@ export class Snake {
                 const drawX = pt.x + Math.cos(normAngle) * waveOffset;
                 const drawY = pt.y + Math.sin(normAngle) * waveOffset;
 
-                if (i === histLen - 1) {
+                if (i === histLen - 1 || lastDrawX === null) {
                     ctx.moveTo(drawX, drawY);
                 } else {
-                    ctx.lineTo(drawX, drawY);
+                    const dx = drawX - lastDrawX;
+                    const dy = drawY - lastDrawY;
+                    const distSq = dx * dx + dy * dy;
+
+                    if (distSq > maxSegDistSq) {
+                        ctx.moveTo(drawX, drawY);
+                    } else {
+                        ctx.lineTo(drawX, drawY);
+                    }
                 }
+
+                lastDrawX = drawX;
+                lastDrawY = drawY;
             }
             ctx.stroke();
         }
