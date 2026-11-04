@@ -1,13 +1,18 @@
 // ==============================================================================
 // 『くねくねバトル オンライン』マルチプレイ通信プロトコル ＆ 極小タプルパッカー (net_protocol.js)
-// v27.0.0 究極同期・絶対座標管理版:
-// ・【餌同期の絶対座標化】packFoodPickTuple を [gx, gy, index] から [x, y] へ刷新し、通信ラグによるインデックスズレバグを根絶
-// ・タプル flags に Bit 4: isInvulnerable（無敵状態）を新設し、ホスト＆全端末へ完全同期
-// ・ゼロアロケーション純粋算術丸め（JSON文字列化時の桁あふれ完全防止）
-// ・スネーク走者9要素タプル規格（1人あたり約32バイト、完全互換維持）
-// ・撃破クラスタ・チャットの極小タプルシリアライザー
-// ・1KB制限超過防止用 UTF-8 高速バイト長計算ヘルパー
+// v28.0.0 リアルタイム動的カラー同期(colorIdx)完全対応版:
+// ・【動的カラーインデックス(colorIdx)タプル統合】
+// 　encodeSnakeToTuple に第10要素として snake.color から動的算出した colorIdx を追加！
+// 　decodeTupleToSnake で確実にデコードして net_handlers.js へ受け渡すことで、
+// 　メニューで色を変更した瞬間に相手端末のキャラおよびレーダー表示色を100%同期
+// ・【餌同期の絶対座標化維持】packFoodPickTuple を [x, y] で運用
+// ・【無敵フラグ同期維持】Bit 4: isInvulnerable
+// ・【ゼロアロケーション純粋算術丸め維持】
+// ・【撃破クラスタ・チャットの極小タプルシリアライザー維持】
+// ・【1KB制限超過防止用 UTF-8 高速バイト長計算ヘルパー維持】
 // ==============================================================================
+
+import { SNAKE_COLORS } from './constants.js';
 
 // --- 高速・ゼロアロケーション純粋算術丸めヘルパー ---
 export const round1 = (val) => Math.round((Number(val) || 0) * 10) / 10;
@@ -44,13 +49,13 @@ export function getUtf8ByteLength(str) {
 }
 
 /**
- * スネーク走者オブジェクトを9要素の極小タプル配列へエンコード
- * 形式: [slot, x, y, angle, speed, length, score, flags, kills]
+ * スネーク走者オブジェクトを10要素の極小タプル配列へエンコード
+ * 形式: [slot, x, y, angle, speed, length, score, flags, kills, colorIdx]
  * 
  * @param {Object} snake スネークインスタンス
  * @param {number} slot スロット番号 (0〜49)
  * @param {boolean} isHost ホスト端末フラグ
- * @returns {Array} 9要素タプル配列
+ * @returns {Array} 10要素タプル配列
  */
 export function encodeSnakeToTuple(snake, slot, isHost = false) {
     let flags = 0;
@@ -61,6 +66,12 @@ export function encodeSnakeToTuple(snake, slot, isHost = false) {
     // Bit 4: 無敵状態（リスポーン即死防止用）
     if (snake.invulnerableTimer && snake.invulnerableTimer > 0) flags |= 16;
 
+    // スネークの現在色からカラーインデックスを動的算出
+    let colorIdx = SNAKE_COLORS.indexOf(snake.color);
+    if (colorIdx === -1) {
+        colorIdx = slot % SNAKE_COLORS.length;
+    }
+
     return [
         slot,
         round1(snake.x),
@@ -70,14 +81,15 @@ export function encodeSnakeToTuple(snake, slot, isHost = false) {
         Math.floor(snake.targetLength || 10),
         Math.floor(snake.score || 50),
         flags,
-        Math.floor(snake.kills || 0)
+        Math.floor(snake.kills || 0),
+        colorIdx
     ];
 }
 
 /**
- * 9要素タプル配列を受信側オブジェクトへデコード
+ * 10要素タプル配列を受信側オブジェクトへデコード
  * 
- * @param {Array} tuple 9要素タプル配列
+ * @param {Array} tuple 10要素タプル配列
  * @returns {Object} デコード済みスネーク情報
  */
 export function decodeTupleToSnake(tuple) {
@@ -92,6 +104,7 @@ export function decodeTupleToSnake(tuple) {
     const score = tuple[6];
     const flags = tuple[7] || 0;
     const kills = tuple[8] || 0;
+    const colorIdx = tuple[9] !== undefined ? tuple[9] : (slot % SNAKE_COLORS.length);
 
     return {
         slot: slot,
@@ -106,7 +119,8 @@ export function decodeTupleToSnake(tuple) {
         isHost: Boolean(flags & 4),
         isAI: Boolean(flags & 8),
         isInvulnerable: Boolean(flags & 16),
-        kills: kills
+        kills: kills,
+        colorIdx: colorIdx
     };
 }
 

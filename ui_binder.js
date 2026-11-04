@@ -1,20 +1,17 @@
 // ==============================================================================
 // 『くねくねバトル オンライン』UIイベントバインダーモジュール (ui_binder.js)
-// v29.0.0 デバッグ用無敵シールドボタン連携＆リトライ適正化版:
-// ・【デバッグ用無敵シールドボタン(#btn-god-mode)イベントバインド】
-// 　左下のリセットボタン直上に配置された無敵シールドボタンのタップイベントを実装。
-// 　タップごとに自機の isGodMode をトグル切り替えし、ボタンの active クラス（発光）
-// 　と完全連動！ bindFastTap により背後Canvasへのタッチ貫通・誤爆を完全遮断
-// ・【リトライ明示連携(isExplicitRetry)】
-// 　リトライボタン押下時に initGame(true, true) を実行！
-// 　main.js のゲームオーバー防護壁に対し「ユーザー本人の手動タップである」ことを
-// 　明示的に伝達し、安全かつ確実にリスポーン画面遷移を実行
-// ・【リトライタップ反応性向上】
-// 　リトライボタンのデバウンスを旧 800ms から 300ms へ適正化。
-// 　再戦時のタップ反応の鈍さを解消し、テンポの良いリスポーンを実現
-// ・【ズーム境界判定の浮動小数点誤差吸収】
-// 　zoomMultiplier の丸め誤差を考慮し、updateZoomButtonsState の閾値を
-// 　<= 0.211 で確実にキャッチ。下限(0.20)到達時にボタンを確実に disabled 化
+// v30.0.0 カスタムカラー即時マルチ同期＆無敵シールド・リトライ完全調和版:
+// ・【カスタムカラー即時マルチ同期】
+// 　Menu.init コールバック内で色変更が行われた際、自機 player.color だけでなく
+// 　NetworkManager.slots[mySlot].color を即時更新！
+// 　ホスト時は ROOM_MEMBERS_SYNC を一斉同報し、ホスト・ゲスト問わず
+// 　forceImmediateSync() を即座に発火して相手画面へ新色を0msで同期
+// ・【待機室＆メニュー走者リスト即時連動】UIController.updateWaitingMembersList()
+// 　と Menu.updateParticipants() を直ちに呼び、待機室アイコン色も瞬時に連動
+// ・【デバッグ用無敵シールドボタン(#btn-god-mode)イベントバインド維持】
+// ・【リトライ明示連携(isExplicitRetry)維持】initGame(true, true)
+// ・【リトライタップ反応性向上維持】300ms デバウンス
+// ・【ズーム境界判定の浮動小数点誤差吸収維持】
 // ・【タッチ貫通根絶維持】bindFastTap による背面ジョイスティック誤爆完全遮断
 // ・【待機室開始デバウンス維持】btnWaitingStart の 1000ms 連打ガード配備
 // ==============================================================================
@@ -156,7 +153,7 @@ export function initUIBindings(ctx) {
         });
     }
 
-    // 5. ★ デバッグ用：無敵シールドボタン（高速タップ対応＆貫通防止＆トグル連動）
+    // 5. デバッグ用：無敵シールドボタン（高速タップ対応＆貫通防止＆トグル連動）
     const btnGodMode = document.getElementById('btn-god-mode');
     if (btnGodMode && !btnGodMode._hasGodModeBound) {
         btnGodMode._hasGodModeBound = true;
@@ -250,12 +247,52 @@ export function initUIBindings(ctx) {
         };
     }
 
-    // 9. メニュー着せ替えコールバック初期化
+    // =========================================================================
+    // 9. ★ 【メニュー着せ替えコールバック（リアルタイムマルチ同期完全対応）】
+    // 色変更時に自機の player.color だけでなく、NetworkManager.slots を更新し、
+    // 即時パケット送信(forceImmediateSync)およびスロット同期を相手へ伝達
+    // =========================================================================
     Menu.init((face, color) => {
         const p = getPlayer();
         if (p) {
             p.face = face;
             p.color = color;
+        }
+
+        if (NetworkManager) {
+            const mySlot = NetworkManager.mySlot;
+            if (NetworkManager.slots && NetworkManager.slots[mySlot]) {
+                NetworkManager.slots[mySlot].color = color;
+            }
+
+            // マルチプレイ中の即時反映処理
+            if (NetworkManager.isMultiplayerActive) {
+                // 1. 即時パケットフラッシュ（相手端末の onRemoteSnakeUpdate へ即反映）
+                if (typeof NetworkManager.forceImmediateSync === 'function') {
+                    NetworkManager.forceImmediateSync();
+                }
+
+                // 2. ホストの場合、スロット同期パケットを一斉同報
+                if (NetworkManager.isHost && typeof NetworkManager._sendCustomMessage === 'function') {
+                    const isPlaying = (typeof window !== 'undefined' && window.currentGameState === 'playing');
+                    NetworkManager._sendCustomMessage({
+                        e: 'ROOM_MEMBERS_SYNC',
+                        slots: NetworkManager.slots,
+                        seed: NetworkManager.currentSeed,
+                        act: isPlaying
+                    });
+                }
+            }
+
+            // 待機室表示中の場合、リストバッジ色を即時反映
+            if (UIController && typeof UIController.updateWaitingMembersList === 'function') {
+                UIController.updateWaitingMembersList();
+            }
+
+            // メニュー内参加者一覧のアイコン色も連動更新
+            if (NetworkManager.slots) {
+                Menu.updateParticipants(NetworkManager.slots.filter(s => !s.isAI));
+            }
         }
     });
 
