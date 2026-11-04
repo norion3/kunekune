@@ -1,10 +1,12 @@
 // ==============================================================================
 // 『くねくねバトル オンライン』マルチプレイ通信プロトコル ＆ 極小タプルパッカー (net_protocol.js)
-// v28.0.0 リアルタイム動的カラー同期(colorIdx)完全対応版:
-// ・【動的カラーインデックス(colorIdx)タプル統合】
-// 　encodeSnakeToTuple に第10要素として snake.color から動的算出した colorIdx を追加！
+// v29.0.0 リアルタイム動的顔タイプ・マイアイコン同期(faceIdx)完全対応版:
+// ・【動的顔タイプ(faceIdx)タプル統合】
+// 　FACE_TYPES（全6種: normal, angry, happy, smile, cute, user_avatar）を定義し、
+// 　encodeSnakeToTuple の第11要素として snake.face から動的算出した faceIdx を追加！
 // 　decodeTupleToSnake で確実にデコードして net_handlers.js へ受け渡すことで、
-// 　メニューで色を変更した瞬間に相手端末のキャラおよびレーダー表示色を100%同期
+// 　メニューで表情やマイアイコンを変更した瞬間に相手端末のキャラ顔を100%同期
+// ・【動的カラーインデックス(colorIdx)同期維持】第10要素
 // ・【餌同期の絶対座標化維持】packFoodPickTuple を [x, y] で運用
 // ・【無敵フラグ同期維持】Bit 4: isInvulnerable
 // ・【ゼロアロケーション純粋算術丸め維持】
@@ -13,6 +15,9 @@
 // ==============================================================================
 
 import { SNAKE_COLORS } from './constants.js';
+
+// 顔タイプのマッピングテーブル（マイアイコン user_avatar 含む全6種）
+export const FACE_TYPES = ['normal', 'angry', 'happy', 'smile', 'cute', 'user_avatar'];
 
 // --- 高速・ゼロアロケーション純粋算術丸めヘルパー ---
 export const round1 = (val) => Math.round((Number(val) || 0) * 10) / 10;
@@ -49,13 +54,13 @@ export function getUtf8ByteLength(str) {
 }
 
 /**
- * スネーク走者オブジェクトを10要素の極小タプル配列へエンコード
- * 形式: [slot, x, y, angle, speed, length, score, flags, kills, colorIdx]
+ * スネーク走者オブジェクトを11要素の極小タプル配列へエンコード
+ * 形式: [slot, x, y, angle, speed, length, score, flags, kills, colorIdx, faceIdx]
  * 
  * @param {Object} snake スネークインスタンス
  * @param {number} slot スロット番号 (0〜49)
  * @param {boolean} isHost ホスト端末フラグ
- * @returns {Array} 10要素タプル配列
+ * @returns {Array} 11要素タプル配列
  */
 export function encodeSnakeToTuple(snake, slot, isHost = false) {
     let flags = 0;
@@ -72,6 +77,12 @@ export function encodeSnakeToTuple(snake, slot, isHost = false) {
         colorIdx = slot % SNAKE_COLORS.length;
     }
 
+    // スネークの現在の顔タイプからインデックスを動的算出
+    let faceIdx = FACE_TYPES.indexOf(snake.face);
+    if (faceIdx === -1) {
+        faceIdx = 0; // デフォルト normal
+    }
+
     return [
         slot,
         round1(snake.x),
@@ -82,14 +93,15 @@ export function encodeSnakeToTuple(snake, slot, isHost = false) {
         Math.floor(snake.score || 50),
         flags,
         Math.floor(snake.kills || 0),
-        colorIdx
+        colorIdx,
+        faceIdx
     ];
 }
 
 /**
- * 10要素タプル配列を受信側オブジェクトへデコード
+ * 11要素タプル配列を受信側オブジェクトへデコード
  * 
- * @param {Array} tuple 10要素タプル配列
+ * @param {Array} tuple 11要素タプル配列
  * @returns {Object} デコード済みスネーク情報
  */
 export function decodeTupleToSnake(tuple) {
@@ -105,6 +117,8 @@ export function decodeTupleToSnake(tuple) {
     const flags = tuple[7] || 0;
     const kills = tuple[8] || 0;
     const colorIdx = tuple[9] !== undefined ? tuple[9] : (slot % SNAKE_COLORS.length);
+    const faceIdx = tuple[10] !== undefined ? tuple[10] : 0;
+    const face = FACE_TYPES[faceIdx] || 'normal';
 
     return {
         slot: slot,
@@ -120,7 +134,9 @@ export function decodeTupleToSnake(tuple) {
         isAI: Boolean(flags & 8),
         isInvulnerable: Boolean(flags & 16),
         kills: kills,
-        colorIdx: colorIdx
+        colorIdx: colorIdx,
+        faceIdx: faceIdx,
+        face: face
     };
 }
 
