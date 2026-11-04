@@ -1,13 +1,20 @@
 // ==============================================================================
 // 『くねくねバトル オンライン』Phase 7 マスター統合オーケストレーター (main.js)
-// v38.0.0 被撃破判定双方向完全同期＆リトライ画面100%点灯保証版:
-// ・【被撃破宣告(onPlayerKilled)コールバック連携】
-// 　相手端末で自機が撃破されたと判定された際、通信ラグで自機ローカルの衝突判定が
-// 　まだ成立していなくても、受信した死亡宣告パケットにより即座に handleGameOver() を発火！
-// 　ホスト・ゲスト双方が相手に倒された際、100%確実にリトライ画面が表示されるよう完全保証
-// ・【撃破同報への被害者スロット(victimSlot)連携】
-// 　checkHeadCollisions で敵を撃破した際、NetworkManager.broadcastKill に被害者スロット
-// 　（victim.id または mySlot）を引数として確実に渡し、倒された相手端末へ死亡を直接通告
+// v39.0.0 被撃破判定完全同期＆リザルト画面100%表示絶対保証版:
+// ・【リザルト画面表示処理の例外完全防護（100%点灯保証）】
+// 　handleGameOver 内の統計計算および DOM 代入処理全体を try-catch で厳格防護。
+// 　allSnakes 内の null 参照や未定義プロパティ（maxSize 等）による TypeError を
+// 　完全に排除し、いかなる極限状況でも overScreen.style.display = 'flex' を絶対実行！
+// ・【ゲームオーバー中の外部同期による誤リセット完全遮断】
+// 　死亡直後に他端末から飛んでくる同期パケット等による意図しない initGame() の
+// 　自動発火を gameState === 'gameover' ガードで物理遮断。リザルト画面が一瞬で
+// 　消去されるバグを根絶
+// ・【被撃破宣告(onPlayerKilled)の確実発火】
+// 　player.isDead の先行判定を撤廃し、gameState !== 'gameover' であれば相手端末からの
+// 　死亡宣告により即座に handleGameOver() を確実に起動
+// ・【撃破同報への被害者スロット(victimSlot)数値同期】
+// 　checkHeadCollisions で敵を撃破した際、NetworkManager.broadcastKill に
+// 　被害者スロット（Number(victimSlot)）を確実に渡し、相手端末へ死亡宣告を直通
 // ・【描画ループ未起動ブラックアウト完全防止フェイルセーフ維持】
 // 　initGame 突入時に animFrameId が停止していれば無条件で requestAnimationFrame(gameLoop) 起動
 // ・【撃破重複判定多重発火完全根絶維持】victim._hasBeenKilled フラグによる単発キル限定
@@ -258,6 +265,16 @@ if (typeof window !== 'undefined') {
 }
 
 export function initGame(isRespawn = false) {
+    // =========================================================================
+    // ★ 【ゲームオーバー中の外部自動リセット完全遮断】
+    // リザルト画面表示中は、明示的なリトライ操作（isRespawn=true）以外による
+    // 通信パケット経由の自動 initGame を遮断し、リザルト画面の消失を防止！
+    // =========================================================================
+    if (gameState === 'gameover' && !isRespawn) {
+        console.warn('[initGame] ゲームオーバー表示中のため、自動開始パケットを抑止します。');
+        return;
+    }
+
     if (!isRespawn && animFrameId) {
         cancelAnimationFrame(animFrameId);
         animFrameId = null;
@@ -467,10 +484,11 @@ NetworkManager.setCallbacks({
 
     // =========================================================================
     // ★ 【相手端末からの被撃破宣告(onPlayerKilled)受信ハンドラ】
-    // 相手端末の判定で自機が倒された際、即座にゲームオーバー（リトライ画面）を発火！
+    // 相手端末の判定で自機が倒された際、ローカルの gameState !== 'gameover' であれば
+    // 即座にゲームオーバー（リトライ画面）を100%発火！
     // =========================================================================
     onPlayerKilled(killerName) {
-        if (!player.isDead) {
+        if (gameState !== 'gameover') {
             console.warn(`[Sync] 相手端末からの死亡通告を受信: キラー「${killerName || '敵スネーク'}」により撃破確定。リトライ画面を表示します。`);
             handleGameOver({ name: killerName || '敵スネーク', isDead: false });
         }
@@ -489,7 +507,7 @@ initUIBindings({
 });
 
 function handleGameOver(killer) {
-    if (gameState === 'gameover' && player.isDead) return;
+    if (gameState === 'gameover') return;
 
     gameState = 'gameover';
     window.currentGameState = gameState;
@@ -512,7 +530,7 @@ function handleGameOver(killer) {
     camera.spectatorCamX = player.x;
     camera.spectatorCamY = player.y;
 
-    const finalScore = Math.floor(player.score);
+    const finalScore = Math.floor(player.score || 0);
 
     try {
         if (window.parent && window.parent !== window) {
@@ -529,15 +547,32 @@ function handleGameOver(killer) {
     const overScreen = document.getElementById('over-screen');
     if (!overScreen) return;
 
-    const higherCount = allSnakes.filter(s => s !== player && s.score > finalScore).length;
-    const exactRank = higherCount + 1;
-    const duration = Math.floor((Date.now() - gameStartTime) / 1000);
+    // =========================================================================
+    // ★ 【リザルト表示の例外完全防護（100%点灯保証）】
+    // allSnakes の要素検査や DOM 代入を安全に実行し、何があっても overScreen を表示！
+    // =========================================================================
+    try {
+        const higherCount = allSnakes.filter(s => s && s !== player && (s.score || 0) > finalScore).length;
+        const exactRank = higherCount + 1;
+        const duration = Math.floor((Date.now() - gameStartTime) / 1000);
 
-    document.getElementById('res-rank').innerText = `${exactRank} 位`;
-    document.getElementById('res-score').innerText = formatScore(finalScore);
-    document.getElementById('res-kills').innerText = player.kills;
-    document.getElementById('res-time').innerText = `${duration} 秒`;
-    document.getElementById('res-size').innerText = Math.floor(player.maxSize);
+        const elRank = document.getElementById('res-rank');
+        if (elRank) elRank.innerText = `${exactRank} 位`;
+
+        const elScore = document.getElementById('res-score');
+        if (elScore) elScore.innerText = formatScore(finalScore);
+
+        const elKills = document.getElementById('res-kills');
+        if (elKills) elKills.innerText = player.kills || 0;
+
+        const elTime = document.getElementById('res-time');
+        if (elTime) elTime.innerText = `${duration} 秒`;
+
+        const elSize = document.getElementById('res-size');
+        if (elSize) elSize.innerText = Math.floor(player.size || 0);
+    } catch (calcErr) {
+        console.warn('[GameOver] Stats calculation fallback:', calcErr);
+    }
 
     overScreen.style.display = 'flex';
 }
@@ -726,10 +761,10 @@ function gameLoop() {
                     const killColor = killer.color || '#ff3366';
                     Danmaku.push(killer.name, `${victim.name} を撃破！`, killColor);
 
-                    // ★ 被害者スロット番号を同封して全端末へ撃破チャットを一斉同報（被撃破判定同期）
+                    // ★ 被害者スロット番号を数値型で同封して全端末へ撃破チャットを一斉同報（被撃破判定同期）
                     if (NetworkManager.isMultiplayerActive && typeof NetworkManager.broadcastKill === 'function') {
                         const victimSlot = victim.isPlayer ? NetworkManager.mySlot : victim.id;
-                        NetworkManager.broadcastKill(killer.name, victim.name, killColor, victimSlot);
+                        NetworkManager.broadcastKill(killer.name, victim.name, killColor, Number(victimSlot));
                     }
                 }
             }
@@ -747,14 +782,14 @@ function gameLoop() {
         if (frameCount % 10 === 0) {
             sortedSnakes = [...allSnakes].sort((a, b) => b.score - a.score);
             const myScore = player.score;
-            const higher = allSnakes.filter(s => s !== player && s.score > myScore).length;
+            const higher = allSnakes.filter(s => s && s !== player && s.score > myScore).length;
             const myRank = higher + 1;
-            const totalAlive = sortedSnakes.filter(s => !s.isDead).length;
+            const totalAlive = sortedSnakes.filter(s => s && !s.isDead).length;
 
             if (!NetworkManager.isMultiplayerActive || NetworkManager.isHost) {
                 hud.updateStats(myRank, totalAlive, player.score);
 
-                const topList = sortedSnakes.filter(s => !s.isDead).slice(0, 8);
+                const topList = sortedSnakes.filter(s => s && !s.isDead).slice(0, 8);
 
                 if (NetworkManager.isHost && NetworkManager.isMultiplayerActive) {
                     const slotRanks = {};
@@ -766,12 +801,12 @@ function gameLoop() {
                             targetSnake = remoteSnakes.get(sIdx);
                             if (!targetSnake) {
                                 const dummyId = MAX_AIS + sIdx + 1;
-                                targetSnake = allSnakes.find(s => s.id === dummyId);
+                                targetSnake = allSnakes.find(s => s && !s.isPlayer && s.id === dummyId);
                             }
                         }
 
                         if (targetSnake && !targetSnake.isDead) {
-                            const exactHigher = allSnakes.filter(s => s !== targetSnake && !s.isDead && s.score > targetSnake.score).length;
+                            const exactHigher = allSnakes.filter(s => s && s !== targetSnake && !s.isDead && s.score > targetSnake.score).length;
                             slotRanks[sIdx] = exactHigher + 1;
                         } else {
                             slotRanks[sIdx] = totalAlive;
@@ -795,7 +830,7 @@ function gameLoop() {
                             return {
                                 slot: slotNum,
                                 name: s.name,
-                                score: Math.floor(s.score)
+                                score: Math.floor(s.score || 0)
                             };
                         })
                     });
@@ -834,7 +869,7 @@ function gameLoop() {
 
         for (let i = sortedSnakes.length - 1; i >= 0; i--) {
             const s = sortedSnakes[i];
-            if ((s === player && !player.isDead) || s.isVisible) {
+            if (s && ((s === player && !player.isDead) || s.isVisible)) {
                 s.draw(ctx, frameCount, camera.scale);
             }
         }
