@@ -1,6 +1,10 @@
 // ==============================================================================
 // 『くねくねバトル オンライン』リモートパケット受信反映ハンドラ (net_handlers.js)
-// v33.0.0 ホスト(Slot 0)人間走者完全刻印＆配列直接統合・レーダー同期確定版:
+// v34.0.0 リザルト画面死守(onGameStart遮断)＆ホスト(Slot 0)人間走者刻印版:
+// ・【onGameStart ゲームオーバー中完全遮断】
+// 　ホストからのゲーム開始合図・途中参加（immediate）パケットを受信した際、
+// 　自端末が gameover 中またはリザルトモーダル（#over-screen）が表示されていれば
+// 　initGame() の呼び出しを無条件でスキップ。リザルト画面の誤消去・誤リセットを完全遮断！
 // ・【ホスト(Slot 0)人間走者フラグ(isHumanPlayer)の完全刻印】
 // 　ゲスト端末がホストからデータを受信する際、data.slot === 0 を無条件で人間走者
 // 　（isHumanPlayer = true）として明示刻印。スロット情報受領の遅延やタイミングのズレ
@@ -52,9 +56,20 @@ export function setupNetworkHandlers(ctx) {
     NetworkManager.setCallbacks({
         /**
          * ホストからのゲーム開始・直接参戦合図受信ハンドラ
+         * ★ ゲームオーバー表示中は外部からの自動開始をブロックしリザルト画面を死守
          * ★ 途中参加時は isRespawn = true 扱いにして受信済み他プレイヤーの消去（点滅）を完全防止
          */
         onGameStart(packet) {
+            // 自端末がゲームオーバー中またはリザルト画面が表示されている場合は開始処理を破棄
+            const overScreen = document.getElementById('over-screen');
+            const isGameOver = (typeof window !== 'undefined' && window.currentGameState === 'gameover') ||
+                (overScreen && overScreen.style.display === 'flex');
+
+            if (isGameOver) {
+                console.warn('[net_handlers] リザルト画面表示中のため、onGameStart をスキップします。');
+                return;
+            }
+
             const isMidJoin = Boolean(packet && (packet.direct || packet.immediate));
             if (typeof initGame === 'function') {
                 initGame(isMidJoin);

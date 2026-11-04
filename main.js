@@ -1,30 +1,24 @@
 // ==============================================================================
 // 『くねくねバトル オンライン』Phase 7 マスター統合オーケストレーター (main.js)
-// v39.0.0 被撃破判定完全同期＆リザルト画面100%表示絶対保証版:
-// ・【リザルト画面表示処理の例外完全防護（100%点灯保証）】
-// 　handleGameOver 内の統計計算および DOM 代入処理全体を try-catch で厳格防護。
-// 　allSnakes 内の null 参照や未定義プロパティ（maxSize 等）による TypeError を
-// 　完全に排除し、いかなる極限状況でも overScreen.style.display = 'flex' を絶対実行！
-// ・【ゲームオーバー中の外部同期による誤リセット完全遮断】
-// 　死亡直後に他端末から飛んでくる同期パケット等による意図しない initGame() の
-// 　自動発火を gameState === 'gameover' ガードで物理遮断。リザルト画面が一瞬で
-// 　消去されるバグを根絶
-// ・【被撃破宣告(onPlayerKilled)の確実発火】
-// 　player.isDead の先行判定を撤廃し、gameState !== 'gameover' であれば相手端末からの
-// 　死亡宣告により即座に handleGameOver() を確実に起動
-// ・【撃破同報への被害者スロット(victimSlot)数値同期】
-// 　checkHeadCollisions で敵を撃破した際、NetworkManager.broadcastKill に
-// 　被害者スロット（Number(victimSlot)）を確実に渡し、相手端末へ死亡宣告を直通
-// ・【描画ループ未起動ブラックアウト完全防止フェイルセーフ維持】
-// 　initGame 突入時に animFrameId が停止していれば無条件で requestAnimationFrame(gameLoop) 起動
-// ・【撃破重複判定多重発火完全根絶維持】victim._hasBeenKilled フラグによる単発キル限定
-// ・【リザルト画面前の即時パケットフラッシュ維持】handleGameOver 突入時の forceImmediateSync()
-// ・【配列参照乖離バグの完全根絶維持】allSnakes.length = 0 インプレース更新
-// ・【ゲスト側リモート走者常時マージ維持】remoteSnakes の allSnakes 自動統合
-// ・【ホスト(Slot 0)および通常AIのゴースト誤パージ完全防止維持】
-// ・【自機player.id適正同期維持】ID衝突防止
-// ・【スコア省略フォーマッター維持】6桁フル表示、7桁目小数3桁固定（X.XXXM）
-// ・【ランキング順位番号と名前の完全頭出し整列維持】
+// v40.0.0 リトライ画面絶対防護＆撃破スロットID完全一致・外壁激突死連携版:
+// ・【リザルト画面強制消去の完全遮断】
+// 　handleGameOver 発火後、モーダル（#over-screen）が表示されている間は外部の
+// 　途中参加・開始バースト等による initGame() を物理遮断。ユーザーの手動リトライタップ
+// 　以外でリザルト画面が消去される現象を100%根絶
+// ・【空き枠ダミーAI撃破スロットID完全マッピング】
+// 　ホスト側で空き枠ダミーAI (ID: 95〜100) と判定されている走者を撃破した際、
+// 　victim.id - MAX_AIS - 1 でゲスト正規スロット (0〜5) へ変換して broadcastKill を送信。
+// 　相手端末での victimSlot 照合不一致による被撃破判定スルーを完全根絶
+// ・【外壁激突死のゲームオーバー連携】
+// 　updatePhysics 内で外壁接触により player.isDead がセットされた際、即座に
+// 　handleGameOver({ name: '外壁 (MAP境界)' }) を発火してリザルト画面へ直行
+// ・【リザルト画面表示例外完全防護】
+// 　統計計算および DOM 代入処理全体を try-catch で厳格防護（100%点灯保証）
+// ・【被撃破宣告(onPlayerKilled)確実発火】
+// 　gameState !== 'gameover' であれば相手端末からの死亡通告により即座に起動
+// ・【描画ループ未起動ブラックアウト完全防止フェイルセーフ】
+// ・【撃破重複判定多重発火完全根絶】victim._hasBeenKilled フラグ制御
+// ・【リザルト画面前の即時パケットフラッシュ】forceImmediateSync()
 // ==============================================================================
 
 import { injectStyles } from './style.js';
@@ -264,14 +258,23 @@ if (typeof window !== 'undefined') {
     window.UIController = UIController;
 }
 
-export function initGame(isRespawn = false) {
+/**
+ * ゲームセッションの初期化＆開始
+ * @param {boolean} [isRespawn=false] リスポーンフラグ
+ * @param {boolean} [isExplicitRetry=false] ユーザーの手動リトライボタン押下による明示的な再開フラグ
+ */
+export function initGame(isRespawn = false, isExplicitRetry = false) {
     // =========================================================================
     // ★ 【ゲームオーバー中の外部自動リセット完全遮断】
-    // リザルト画面表示中は、明示的なリトライ操作（isRespawn=true）以外による
-    // 通信パケット経由の自動 initGame を遮断し、リザルト画面の消失を防止！
+    // リザルトモーダル（#over-screen）が表示中、または gameState === 'gameover' の場合、
+    // ユーザー自身の手動リトライ（isExplicitRetry = true）以外による
+    // 通信パケット経由の自動 initGame を物理遮断し、リザルト画面の消失を100%防止！
     // =========================================================================
-    if (gameState === 'gameover' && !isRespawn) {
-        console.warn('[initGame] ゲームオーバー表示中のため、自動開始パケットを抑止します。');
+    const overScreenEl = document.getElementById('over-screen');
+    const isModalVisible = overScreenEl && overScreenEl.style.display === 'flex';
+
+    if ((gameState === 'gameover' || isModalVisible) && !isExplicitRetry) {
+        console.warn('[initGame] リザルト画面表示中のため、外部パケットや自動同期による再開を物理遮断します。');
         return;
     }
 
@@ -369,8 +372,6 @@ export function initGame(isRespawn = false) {
 
     // =========================================================================
     // ★ 【描画ループ未起動ブラックアウト完全防止フェイルセーフ】
-    // いかなるルート（isRespawn=true 等）でゲーム画面に入った場合でも、
-    // メイン描画ループ（gameLoop）が停止していれば無条件で起動！
     // =========================================================================
     if (!animFrameId) {
         animFrameId = requestAnimationFrame(gameLoop);
@@ -484,8 +485,6 @@ NetworkManager.setCallbacks({
 
     // =========================================================================
     // ★ 【相手端末からの被撃破宣告(onPlayerKilled)受信ハンドラ】
-    // 相手端末の判定で自機が倒された際、ローカルの gameState !== 'gameover' であれば
-    // 即座にゲームオーバー（リトライ画面）を100%発火！
     // =========================================================================
     onPlayerKilled(killerName) {
         if (gameState !== 'gameover') {
@@ -518,7 +517,6 @@ function handleGameOver(killer) {
 
     // =========================================================================
     // ★ 【リザルト画面前の即時パケットフラッシュ】
-    // 自分が倒されたことを他端末へ遅延なく一刻も早く割り込み送信！
     // =========================================================================
     if (NetworkManager && NetworkManager.isMultiplayerActive) {
         NetworkManager.forceImmediateSync();
@@ -549,7 +547,6 @@ function handleGameOver(killer) {
 
     // =========================================================================
     // ★ 【リザルト表示の例外完全防護（100%点灯保証）】
-    // allSnakes の要素検査や DOM 代入を安全に実行し、何があっても overScreen を表示！
     // =========================================================================
     try {
         const higherCount = allSnakes.filter(s => s && s !== player && (s.score || 0) > finalScore).length;
@@ -592,6 +589,14 @@ function gameLoop() {
                 inputAngle = Math.atan2(input.y, input.x);
             }
             player.updatePhysics(dtSec, inputAngle, input.boost);
+
+            // =========================================================================
+            // ★ 【外壁激突死のゲームオーバー連携】
+            // updatePhysics 内で外壁境界接触により player.isDead が立った場合、即座に起動
+            // =========================================================================
+            if (player.isDead) {
+                handleGameOver({ name: '外壁 (MAP境界)', isDead: false });
+            }
         }
 
         remoteSnakes.forEach((remote, slotIdx) => {
@@ -721,7 +726,6 @@ function gameLoop() {
         collisionEngine.checkHeadCollisions(allSnakes, (killer, victim) => {
             // =========================================================================
             // ★ 【撃破判定の多重発火防止ガード】
-            // 同一スネークが複数関節と接触した際でも、撃破処理は厳格に1回のみ実行！
             // =========================================================================
             if (!victim || victim.isDead || victim._hasBeenKilled) {
                 return;
@@ -761,9 +765,15 @@ function gameLoop() {
                     const killColor = killer.color || '#ff3366';
                     Danmaku.push(killer.name, `${victim.name} を撃破！`, killColor);
 
-                    // ★ 被害者スロット番号を数値型で同封して全端末へ撃破チャットを一斉同報（被撃破判定同期）
+                    // =========================================================================
+                    // ★ 【撃破同報への被害者スロット(victimSlot)数値同期＆空き枠ダミーID変換】
+                    // 空き枠ダミーAI (ID: 95〜100) はプレイヤー枠 (0〜5) へ変換して相手端末へ直通
+                    // =========================================================================
                     if (NetworkManager.isMultiplayerActive && typeof NetworkManager.broadcastKill === 'function') {
-                        const victimSlot = victim.isPlayer ? NetworkManager.mySlot : victim.id;
+                        let victimSlot = victim.isPlayer ? NetworkManager.mySlot : victim.id;
+                        if (!victim.isPlayer && victim.id !== undefined && victim.id > MAX_AIS) {
+                            victimSlot = victim.id - MAX_AIS - 1;
+                        }
                         NetworkManager.broadcastKill(killer.name, victim.name, killColor, Number(victimSlot));
                     }
                 }

@@ -1,15 +1,19 @@
 /**
  * ==============================================================================
  * 『くねくねバトル オンライン』ゼロアロケーション空間ハッシュ衝突判定エンジン (combat.js)
- * v27.4.0 正面衝突・壁際スライディング安定化＆ハメ完全根絶版:
+ * v27.6.0 デバッグ用無敵シールド(isGodMode)判定統合＆正面衝突・同座標完全防護版:
+ * ・【デバッグ用無敵シールド(isGodMode)判定統合】
+ * 　自機が isGodMode === true を保持している場合、頭部正面衝突および頭部vs胴体激突時に
+ * 　通常の無敵時間と同様に双方ノックバック退避（弾き飛ばし）を実行！
+ * 　敵を即死させず、自機も絶対に死なない「永続シールド・不死身モード」を完全成立
+ * ・【正面衝突・完全同座標例外ガード】頭部同士が完全に同座標(dx=0, dy=0)で重なった場合の
+ * 　ゼロ除算・NaNエラーを防止し、ランダム拡散ベクトルで安全に弾き飛ばすフォールバック配備
+ * ・【胴体接触ノックバックゼロ除算防止】胴体接触による押し戻し時にも同座標ガードを配備
  * ・【壁際スライディング接線ベクトル強化】壁際でのノックバック時、壁の外へ押し出そうとする力を
  * 　完全接線方向（壁沿い）へ流し、角（コーナー）に追い詰められた際の振動フリーズや突き抜けを完全根絶
- * ・【正面衝突・完全同座標例外ガード】頭部同士が完全に同座標(dx=0, dy=0)で重なった場合の
- * 　ゼロ除算・NaNエラーを防止し、ランダム拡散ベクトルで安全に弾き飛ばすフォールバックを新設
  * ・【GCスパイク完全根絶維持】MAX_POOL_CAPACITY(24,576) ＆ MAX_CELL_POOL_CAPACITY(4,096)
  * 　により、100体交戦時でも毎フレームのヒープ確保・GCカクつきを完全排除
- * ・【対戦公平性維持】スコア比率（1.25倍 / 0.8倍）による大型優先判定、拮抗時双方跳ね返り、
- * 　無敵中スネーク胴体接触時のノックバック退避を完全維持
+ * ・【対戦公平性維持】スコア比率（1.25倍 / 0.8倍）による大型優先判定、拮抗時双方跳ね返り維持
  * ==============================================================================
  */
 
@@ -82,7 +86,8 @@ export class SpatialCollisionEngine {
     registerBodies(snakes) {
         this.clear();
 
-        for (let i = 0; i < snakes.length; i++) {
+        const total = snakes.length;
+        for (let i = 0; i < total; i++) {
             const s = snakes[i];
             if (s.isDead || !s.isVisible) continue;
 
@@ -159,10 +164,11 @@ export class SpatialCollisionEngine {
                 const minHeadDist = sA.size + sB.size;
 
                 if (dx * dx + dy * dy < minHeadDist * minHeadDist) {
-                    const isAInvuln = Boolean(sA.invulnerableTimer && sA.invulnerableTimer > 0);
-                    const isBInvuln = Boolean(sB.invulnerableTimer && sB.invulnerableTimer > 0);
+                    // ★ isGodMode または通常の invulnerableTimer による無敵判定
+                    const isAProtected = Boolean(sA.isGodMode || (sA.invulnerableTimer && sA.invulnerableTimer > 0));
+                    const isBProtected = Boolean(sB.isGodMode || (sB.invulnerableTimer && sB.invulnerableTimer > 0));
 
-                    // 完全に同座標に重なった場合のゼロ除算ガード
+                    // 完全に同座標に重なった場合のゼロ除算・NaN例外ガード
                     let dist = Math.sqrt(dx * dx + dy * dy);
                     if (dist < 0.001) {
                         const randomAngle = Math.random() * Math.PI * 2;
@@ -171,8 +177,8 @@ export class SpatialCollisionEngine {
                         dist = 1.0;
                     }
 
-                    // どちらかが無敵なら双方ノックバックで弾き飛ばし
-                    if (isAInvuln || isBInvuln) {
+                    // どちらかが無敵（isGodMode含む）なら双方ノックバックで弾き飛ばし
+                    if (isAProtected || isBProtected) {
                         const push = (minHeadDist - dist) * 0.5 + 2.0;
                         this._applySafeKnockback(sA, (dx / dist) * push, (dy / dist) * push);
                         this._applySafeKnockback(sB, -(dx / dist) * push, -(dy / dist) * push);
@@ -224,7 +230,8 @@ export class SpatialCollisionEngine {
                     const bodies = this.grid.get(key);
                     if (!bodies) continue;
 
-                    for (let b = 0; b < bodies.length; b++) {
+                    const bodyCount = bodies.length;
+                    for (let b = 0; b < bodyCount; b++) {
                         const bodyNode = bodies[b];
                         const killer = bodyNode.snake;
                         
@@ -236,15 +243,16 @@ export class SpatialCollisionEngine {
 
                         // 接触判定
                         if (dx * dx + dy * dy < minDist * minDist) {
-                            const isVictimInvuln = Boolean(victim.invulnerableTimer && victim.invulnerableTimer > 0);
-                            const isKillerInvuln = Boolean(killer.invulnerableTimer && killer.invulnerableTimer > 0);
+                            // ★ isGodMode または通常の invulnerableTimer による無敵判定
+                            const isVictimProtected = Boolean(victim.isGodMode || (victim.invulnerableTimer && victim.invulnerableTimer > 0));
+                            const isKillerProtected = Boolean(killer.isGodMode || (killer.invulnerableTimer && killer.invulnerableTimer > 0));
 
                             // 無敵特攻キルの完全根絶＆連続ハメ防止
-                            if (isVictimInvuln || isKillerInvuln) {
-                                if (isVictimInvuln && victim.invulnerableTimer < 0.25) {
+                            if (isVictimProtected || isKillerProtected) {
+                                if (victim.invulnerableTimer !== undefined && victim.invulnerableTimer < 0.25 && !victim.isGodMode) {
                                     victim.invulnerableTimer = 0.45;
                                 }
-                                if (isKillerInvuln && killer.invulnerableTimer < 0.25) {
+                                if (killer.invulnerableTimer !== undefined && killer.invulnerableTimer < 0.25 && !killer.isGodMode) {
                                     killer.invulnerableTimer = 0.45;
                                 }
 

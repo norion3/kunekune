@@ -1,11 +1,13 @@
 /**
  * ==============================================================================
  * 『くねくねバトル オンライン』Web Audio API プログラム動的音響エンジン (audio.js)
- * v25.5.0 心地よいエアフロージェット推進＆耳に優しい音響刷新版:
+ * v25.6.0 タイマー排他管理＆メモリリーク完全防止・耳に優しい音響刷新版:
+ * ・【メモリリーク完全防止】stopBoostSound() 連打時の setTimeout 重複タイマーを
+ * 　this._stopTimeoutId で完全に排他管理。未切断ノードの浮遊やメモリリークを物理根絶！
+ * ・【即時クリーンアップガード】連続停止呼び出し時でも古いノードを確実に切断・解放
  * ・甲高い高周波（520〜780Hzサイン波）を完全撤廃し、耳鳴り・耳障り感を100%根絶
  * ・バンドパスフィルターを通過させた柔らかな風切りエアフローノイズ（気流音）を主推進音に採用
  * ・中低域の温かみのあるサイン波推進ハム（130Hz->180Hz）を控えめに重ね、重厚かつ疲れない推進感を演出
- * ・発音切断タイマーの重複によるノード浮遊を完全防止（即時disconnectガード配備）
  * ・滑らかな linearRamp によるフェード制御でプチッ音（クリップノイズ）を完全根絶
  * ・iOS WebKit バックグラウンド自動サスペンド/レジューム制御
  * ==============================================================================
@@ -24,6 +26,9 @@ class AudioManager {
         this.boostMasterGain = null;
         this.boostFilter = null;
         this._noiseBuffer = null;
+
+        // 切断タイマー排他管理ID（メモリリーク防止用）
+        this._stopTimeoutId = null;
 
         this.bindVisibilityChange();
     }
@@ -151,6 +156,13 @@ class AudioManager {
      */
     startBoostSound() {
         if (this.isMuted || !this.ctx || this.boostMasterGain) return;
+
+        // 前回の切断待機タイマーがあれば即時破棄
+        if (this._stopTimeoutId) {
+            clearTimeout(this._stopTimeoutId);
+            this._stopTimeoutId = null;
+        }
+
         try {
             const now = this.ctx.currentTime;
             if (!this._noiseBuffer) this._initNoiseBuffer();
@@ -199,10 +211,17 @@ class AudioManager {
     }
 
     /**
-     * ブースト加速音 停止
+     * ブースト加速音 停止（タイマー排他管理＆即時解放ガード）
      */
     stopBoostSound() {
         if (!this.boostMasterGain || !this.ctx) return;
+
+        // 前回の切断待機タイマーがあれば即時破棄
+        if (this._stopTimeoutId) {
+            clearTimeout(this._stopTimeoutId);
+            this._stopTimeoutId = null;
+        }
+
         try {
             const now = this.ctx.currentTime;
             const masterGain = this.boostMasterGain;
@@ -222,7 +241,8 @@ class AudioManager {
                 try { hum.stop(now + 0.06); } catch (e) {}
             }
 
-            setTimeout(() => {
+            // タイマーを排他管理し、80ms後に確実に破棄・切断
+            this._stopTimeoutId = setTimeout(() => {
                 try {
                     if (noise) noise.disconnect();
                     if (hum) hum.disconnect();
@@ -231,6 +251,7 @@ class AudioManager {
                     if (humGain) humGain.disconnect();
                     masterGain.disconnect();
                 } catch (err) {}
+                this._stopTimeoutId = null;
             }, 80);
         } catch (e) {}
 

@@ -1,14 +1,14 @@
 // ==============================================================================
 // 『くねくねバトル オンライン』マルチプレイ送信ループ＆アクションキュー管理 (net_broadcaster.js)
-// v30.0.0 ホスト実プレイ中(act: true)状態同期＆待機室誤脱出完全防止版:
-// ・【ホスト実プレイ中(act: true)状態同期】
-// 　ホスト端末の定期送信ループにおいて、実際にゲーム中（currentGameState === 'playing'）
-// 　である場合のみ packet.act = true を付与。待機室（waiting）にいる間は act を
-// 　付与しないことで、ゲスト端末が入室直後にゲーム中と誤認して画面が真っ暗になる誤脱出を完全防止！
+// v31.0.0 60,000px広域索敵対応＆プレイヤー枠無制限完全同期版:
+// ・【プレイヤー枠(Slot 0〜5)無制限完全同期】
+// 　広大な 60,000px マップにおいて、遠く離れたプレイヤー枠（空き枠ダミーAI ID: 95〜100 含む）
+// 　が近接カリング（3,500px）によって通信パケットから間引かれ、ズームアウト索敵や
+// 　HUDレーダーから消失（ゴースト隔離）していた不具合を完全根絶！
+// 　プレイヤー枠は距離に関わらず最優先で常にタプル化して全端末へ常時同報
+// ・【ホスト実プレイ中(act: true)状態同期維持】待機室誤脱出完全防止
 // ・【重要システムパケットのレートリミットバイパス維持】
-// 　START_GAME、KILL_ALERT、SYS_ALERT、ROOM_MEMBERS_SYNC 等の重要パケットは
-// 　25ms レートリミッターを完全バイパス（無条件即時送信）
-// ・【ダミーAI空き枠偽装スロット適正化維持】CPU 95 現象の完全根絶
+// 　START_GAME、KILL_ALERT、SYS_ALERT、ROOM_MEMBERS_SYNC 等の即時送信
 // ・【餌同期データ最優先保護維持】1KB境界時の段階的フォールバック
 // ・【餌同期の絶対座標化維持】queueFoodPick (x, y) 運用
 // ・【通常キューの差し戻し保護維持】レートリミット接触時のデータ保護
@@ -106,49 +106,73 @@ export const NetBroadcaster = {
                     const selectedSet = new Set();
                     const candidates = [];
 
-                    const sortedAIs = [...ais].filter(a => a && !a.isDead).sort((a, b) => b.score - a.score);
-                    const topLimit = Math.min(4, sortedAIs.length);
-                    for (let t = 0; t < topLimit; t++) {
-                        selectedSet.add(sortedAIs[t]);
-                        candidates.push(sortedAIs[t]);
-                    }
-
-                    const px = mySnake.x;
-                    const py = mySnake.y;
-                    const nearDistSq = 3500 * 3500;
-                    let nearCount = 0;
-
-                    for (let i = 0; i < totalAIs && nearCount < 3; i++) {
+                    // =========================================================================
+                    // ★ 【最優先】プレイヤー枠（空き枠ダミーAI ID: 95〜100）の無条件最優先登録
+                    // 距離に関係なく常に全員へ送信し、60,000pxの広大な宇宙での索敵を保証
+                    // =========================================================================
+                    for (let i = 0; i < totalAIs; i++) {
                         const ai = ais[i];
-                        if (!ai || ai.isDead || selectedSet.has(ai)) continue;
-
-                        const dx = ai.x - px;
-                        const dy = ai.y - py;
-                        if (dx * dx + dy * dy < nearDistSq) {
-                            selectedSet.add(ai);
-                            candidates.push(ai);
-                            nearCount++;
-                        }
-                    }
-
-                    const BATCH_SIZE = 2;
-                    const startIndex = (this._aiSliceIndex * BATCH_SIZE) % totalAIs;
-                    this._aiSliceIndex = (this._aiSliceIndex + 1) % Math.ceil(totalAIs / BATCH_SIZE);
-
-                    for (let i = startIndex; i < startIndex + BATCH_SIZE && candidates.length < 8; i++) {
-                        const targetIdx = i % totalAIs;
-                        const ai = ais[targetIdx];
-                        if (ai && !ai.isDead && !selectedSet.has(ai)) {
+                        if (ai && !ai.isDead && ai.id > MAX_AIS) {
                             selectedSet.add(ai);
                             candidates.push(ai);
                         }
                     }
 
+                    // 通常AI（ID: 1〜94）の選定
+                    const regularAIs = ais.filter(a => a && !a.isDead && a.id <= MAX_AIS);
+                    const totalRegular = regularAIs.length;
+
+                    if (totalRegular > 0) {
+                        // 1. スコア上位4体を登録
+                        const sortedAIs = [...regularAIs].sort((a, b) => b.score - a.score);
+                        const topLimit = Math.min(4, sortedAIs.length);
+                        for (let t = 0; t < topLimit; t++) {
+                            if (!selectedSet.has(sortedAIs[t])) {
+                                selectedSet.add(sortedAIs[t]);
+                                candidates.push(sortedAIs[t]);
+                            }
+                        }
+
+                        // 2. ホスト近隣の通常AI（3体まで）
+                        const px = mySnake.x;
+                        const py = mySnake.y;
+                        const nearDistSq = 3500 * 3500;
+                        let nearCount = 0;
+
+                        for (let i = 0; i < totalRegular && nearCount < 3; i++) {
+                            const ai = regularAIs[i];
+                            if (selectedSet.has(ai)) continue;
+
+                            const dx = ai.x - px;
+                            const dy = ai.y - py;
+                            if (dx * dx + dy * dy < nearDistSq) {
+                                selectedSet.add(ai);
+                                candidates.push(ai);
+                                nearCount++;
+                            }
+                        }
+
+                        // 3. ローテーションスライス（2体ずつ巡回配信）
+                        const BATCH_SIZE = 2;
+                        const startIndex = (this._aiSliceIndex * BATCH_SIZE) % totalRegular;
+                        this._aiSliceIndex = (this._aiSliceIndex + 1) % Math.ceil(totalRegular / BATCH_SIZE);
+
+                        for (let i = startIndex; i < startIndex + BATCH_SIZE && candidates.length < 14; i++) {
+                            const targetIdx = i % totalRegular;
+                            const ai = regularAIs[targetIdx];
+                            if (ai && !selectedSet.has(ai)) {
+                                selectedSet.add(ai);
+                                candidates.push(ai);
+                            }
+                        }
+                    }
+
+                    // 候補エンティティをタプルへエンコード
                     for (let c = 0; c < candidates.length; c++) {
                         const ai = candidates[c];
                         
                         let aiSlot;
-                        // 空き枠ダミーAI (ID: 95〜100) はプレイヤー枠 (0〜5) へ変換して送信
+                        // 空き枠ダミーAI (ID: 95〜100) はプレイヤー枠 (0〜5) へ正規変換
                         if (ai.id > MAX_AIS) {
                             aiSlot = ai.id - MAX_AIS - 1;
                         } else {

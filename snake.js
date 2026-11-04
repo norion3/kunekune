@@ -1,19 +1,23 @@
 // ==============================================================================
 // 『くねくねバトル オンライン』スネークエンティティクラス (snake.js)
-// v30.0.0 とぐろ立体感＆生体ウロコ重なりレイヤード描画刷新版:
-// ・【とぐろ平坦化・チープ感の完全根絶】一括パスfillによる「スライムの塊化」を廃止。
-// 　尾から頭へ向かって「わずかに暗いエッジ輪郭」と「生体コアパス」をレイヤードし、
-// 　とぐろを巻いても体節ごとの上下の重なり・境目がくっきりと立体的に浮かび上がる
-// ・【中心コアハイライトライン】身体の中心線に沿って繊細なグローハイライトを配備。
-// 　密集時でも「身体のうねる進行軌跡」が一目で分かり、深海発光生物のような極上の質感を獲得
-// ・【ゼロ負荷設計】重い shadowBlur や毎フレームの RadialGradient 生成は一切不使用。
-// 　純粋なパス結合（2パス描画）のみで構成し、100体交戦時でもスマホで60FPSを完全維持
-// ・【生体テーパー＆うねり波完全維持】Math.pow(progress, 3.0) による力強い首回りと
-// 　しなやかな尾先、自然な横揺れウェーブを100%継承
-// ・【胴体履歴シフトAPI維持】shiftHistory(dx, dy) によるワープ補正の安定性を完全保持
+// v33.0.0 デバッグ用無敵シールド(isGodMode)＆ブースト肉片ドロップ・巨大化旋回慣性版:
+// ・【デバッグ用無敵シールド(isGodMode)】
+// 　isGodMode（デフォルトtrue）を新設。有効時は常に無敵扱いとなり、
+// 　外壁激突死を安全にスキップして跳ね返り、敵との接触時も絶対に死なない
+// ・【ブースト肉片ドロップの復元】
+// 　ブースト時にスコアを消費する際、自身の尾の部分からフィールドへ肉片をドロップ！
+// 　「身を削って加速し、その軌跡にハイエナが群がる」スネーク.io本来の駆け引きを完全復活
+// ・【巨大化時の旋回慣性（ジャイアントキリング）】
+// 　体が大きくなる（sizeが増加する）につれて、旋回速度（turnSpeed）に慣性がかかり
+// 　緩やかになるロジックを追加。巨大化時の圧倒的な重厚感と、小型スネークが
+// 　懐に飛び込んで一発逆転を狙うスリルを両立！
+// ・【外壁激突即死判定】isGodMode無効時かつ無敵時間外での境界即死(die)判定
+// ・【とぐろ立体感＆生体ウロコ重なりレイヤード描画維持】
+// ・【中心コアハイライトライン維持】
+// ・【ゼロ負荷設計＆生体テーパーウェーブ完全維持】
 // ==============================================================================
 
-import { BASE_SPEED, BOOST_SPEED_MULT, TURN_SPEED_PLAYER, MAP_SIZE } from './constants.js';
+import { BASE_SPEED, BOOST_SPEED_MULT, TURN_SPEED_PLAYER, MAP_SIZE, SNAKE_COLORS } from './constants.js';
 import { drawSnakeFace } from './snake_face.js';
 
 const MAX_HISTORY = 2048; // リングバッファ最大長
@@ -59,6 +63,9 @@ export class Snake {
         
         this.distCounter = 0;
         this.maxSize = this.size;
+        
+        // ブースト時の肉片ドロップ用カウンター
+        this.boostDropCounter = 0;
 
         this.isDead = false;
         this.kills = 0;
@@ -67,6 +74,9 @@ export class Snake {
         this.isVisible = true;
 
         this.invulnerableTimer = 0;
+        // ★ デバッグ用無敵シールド（デフォルトON）
+        this.isGodMode = isPlayer ? true : false;
+
         this.aiLevel = isPlayer ? 0 : (Math.floor(Math.random() * 3) + 1);
         this.aiChangeTimer = Math.floor(Math.random() * 30);
 
@@ -90,6 +100,7 @@ export class Snake {
         this.historyLength = 0;
         
         this.distCounter = 0;
+        this.boostDropCounter = 0;
         this.isDead = false;
         this.kills = 0;
         this.isBoosting = false;
@@ -138,6 +149,8 @@ export class Snake {
     }
 
     die() {
+        // 無敵モードがONの場合は死亡処理を完全にブロック
+        if (this.isGodMode) return;
         this.isDead = true;
     }
 
@@ -186,29 +199,80 @@ export class Snake {
         this.speed = currentSpeed;
 
         if (this.isBoosting) {
-            this.score = Math.max(50, this.score - 0.35 * timeScale);
+            const scoreCost = 0.35 * timeScale;
+            this.score = Math.max(50, this.score - scoreCost);
             this.recalculateSize();
+
+            // =========================================================================
+            // ★ 【ブースト肉片ドロップの復元】
+            // 自分のスコア（身）を削って加速する際、尾の位置から餌をドロップする
+            // =========================================================================
+            this.boostDropCounter += scoreCost;
+            if (this.boostDropCounter >= 2.5 && this.score > 65) {
+                this.boostDropCounter = 0;
+                
+                // 尻尾の座標を取得してドロップ
+                const tailIdx = (this.headIdx + this.historyLength - 1 + MAX_HISTORY) % MAX_HISTORY;
+                const tailPt = this.history[tailIdx];
+                
+                if (tailPt) {
+                    if (this.isPlayer && typeof window !== 'undefined' && window.NetworkManager && window.NetworkManager.isMultiplayerActive) {
+                        const colorIdx = Math.max(0, SNAKE_COLORS.indexOf(this.color));
+                        window.NetworkManager.queueDropFood(tailPt.x, tailPt.y, 2.5, colorIdx);
+                    } else if (typeof window !== 'undefined' && window.currentWorldInstance) {
+                        window.currentWorldInstance.dropFoods.push({
+                            x: tailPt.x + (Math.random() - 0.5) * 10,
+                            y: tailPt.y + (Math.random() - 0.5) * 10,
+                            val: 2.5,
+                            size: 4.5,
+                            isBig: true,
+                            isLargeAura: false,
+                            color: this.color,
+                            spawnTime: performance.now()
+                        });
+                    }
+                }
+            }
         }
 
         if (inputAngle !== null) {
             this.targetAngle = inputAngle;
         }
 
+        // =========================================================================
+        // ★ 【巨大化時の旋回慣性（ジャイアントキリング・バランス調整）】
+        // =========================================================================
+        const dynamicTurnMultiplier = Math.max(0.35, 14.0 / Math.max(14.0, this.size));
+        const currentTurnSpeed = (this.isPlayer ? TURN_SPEED_PLAYER : 0.08) * dynamicTurnMultiplier;
+
         let diff = this.targetAngle - this.angle;
         while (diff < -Math.PI) diff += Math.PI * 2;
         while (diff > Math.PI) diff -= Math.PI * 2;
-        this.angle += Math.sign(diff) * Math.min(Math.abs(diff), this.turnSpeed * timeScale);
+        this.angle += Math.sign(diff) * Math.min(Math.abs(diff), currentTurnSpeed * timeScale);
 
         this.x += Math.cos(this.angle) * (this.speed * timeScale);
         this.y += Math.sin(this.angle) * (this.speed * timeScale);
 
+        // =========================================================================
+        // 【外壁（マップ境界）激突判定】
+        // isGodMode が ON または無敵時間中の場合は死亡せず安全にクランプ＆跳ね返し
+        // =========================================================================
         const wallMin = this.size;
         const wallMax = MAP_SIZE - this.size;
-        if (this.x < wallMin || this.x > wallMax || this.y < wallMin || this.y > wallMax) {
-            this.x = Math.max(wallMin, Math.min(wallMax, this.x));
-            this.y = Math.max(wallMin, Math.min(wallMax, this.y));
-            if (!this.isPlayer) {
-                this.targetAngle = Math.atan2(MAP_SIZE / 2 - this.y, MAP_SIZE / 2 - this.x);
+        if (this.x <= wallMin || this.x >= wallMax || this.y <= wallMin || this.y >= wallMax) {
+            const isProtected = this.isGodMode || (this.invulnerableTimer && this.invulnerableTimer > 0);
+            if (!isProtected) {
+                this.x = Math.max(wallMin, Math.min(wallMax, this.x));
+                this.y = Math.max(wallMin, Math.min(wallMax, this.y));
+                this.die();
+                return;
+            } else {
+                // 無敵シールド中または無敵時間中は安全にクランプして押し戻す
+                this.x = Math.max(wallMin, Math.min(wallMax, this.x));
+                this.y = Math.max(wallMin, Math.min(wallMax, this.y));
+                if (!this.isPlayer) {
+                    this.targetAngle = Math.atan2(MAP_SIZE / 2 - this.y, MAP_SIZE / 2 - this.x);
+                }
             }
         }
 
@@ -236,8 +300,6 @@ export class Snake {
 
     /**
      * ★ 新生・立体生体チューブ＆ウロコ重なり描画
-     * とぐろを巻いた時のベタ塗り平坦化（スライム化）を完全解消。
-     * 低負荷な2パス合成により、重なり合う体節の前後関係と中心光彩ラインを美しく描写
      */
     draw(ctx, frameCount, cameraScale = 1.0) {
         if (this.isDead || !this.isVisible) return;
@@ -267,15 +329,12 @@ export class Snake {
         }
 
         const histLen = this.historyLength;
-        const invulnAlpha = (this.invulnerableTimer > 0)
-            ? ((Math.floor(Date.now() / 100) % 2 === 0) ? 0.35 : 0.75)
+        const isInvulnerableActive = this.isGodMode || (this.invulnerableTimer > 0);
+        const invulnAlpha = isInvulnerableActive
+            ? ((Math.floor(Date.now() / 100) % 2 === 0) ? 0.45 : 0.85)
             : 1.0;
 
-        // =========================================================================
         // 1. 【第1層：立体アンダーエッジ（シャドウ輪郭）】
-        // 身体の背底にわずかに広い暗色シルエットを敷くことで、とぐろ時に上層の身体との
-        // 間に自然な陰影の溝が生まれ、巨大な水たまり化を防止
-        // =========================================================================
         ctx.globalAlpha = 0.35 * invulnAlpha;
         ctx.fillStyle = '#060212';
         ctx.beginPath();
@@ -285,7 +344,6 @@ export class Snake {
             if (!pt) continue;
 
             const progress = i / histLen;
-            // 輪郭用にわずかに大きく拡張（+1.8px）
             const segmentRadius = (this.size * (1 - Math.pow(progress, 3.0) * 0.60)) + 1.8;
 
             const waveAmplitude = this.size * 0.22;
@@ -299,17 +357,12 @@ export class Snake {
         }
         ctx.fill();
 
-        // =========================================================================
         // 2. 【第2層：メイン生体ボディ（ウロコ重なりスタッキング）】
-        // 尾から頭へ向かって順次体節を描くことで、後方の節の上に前方の節が重なり、
-        // 蛇腹のような自然な立体感と質感を形成
-        // =========================================================================
         ctx.globalAlpha = 0.88 * invulnAlpha;
         ctx.fillStyle = this.color;
         ctx.strokeStyle = 'rgba(0, 0, 0, 0.28)';
         ctx.lineWidth = Math.max(1.0, this.size * 0.08);
 
-        // 体節の重なりを表現するため、個別ストローク＆フィルを尾から順次適用
         for (let i = histLen - 1; i >= 0; i--) {
             const idx = (this.headIdx + i) % MAX_HISTORY;
             const pt = this.history[idx];
@@ -327,16 +380,12 @@ export class Snake {
             ctx.beginPath();
             ctx.arc(drawX, drawY, segmentRadius, 0, Math.PI * 2);
             ctx.fill();
-            // 2節ごとに微細な境界エッジを描画（とぐろ巻き時の平坦化を解消）
             if (i % 2 === 0 && i !== 0) {
                 ctx.stroke();
             }
         }
 
-        // =========================================================================
         // 3. 【第3層：脊椎ネオンコアハイライト（進行軌跡ライン）】
-        // 身体の中心線に沿って発光コアを通すことで、密集時でも体の流れが一目瞭然
-        // =========================================================================
         if (histLen > 2) {
             ctx.beginPath();
             ctx.strokeStyle = 'rgba(255, 255, 255, 0.42)';
@@ -366,9 +415,7 @@ export class Snake {
 
         ctx.globalAlpha = invulnAlpha;
 
-        // =========================================================================
         // 4. 頭部描画
-        // =========================================================================
         ctx.save();
         ctx.translate(this.x, this.y);
         ctx.rotate(this.angle);
@@ -402,17 +449,16 @@ export class Snake {
             drawSnakeFace(ctx, this.face, this.size);
         }
 
-        // ブースト時の頭部発光（顔崩れ防止）
-        if (this.isBoosting) {
-            ctx.strokeStyle = '#ffffff';
-            ctx.lineWidth = 2.5;
+        // ブースト時の頭部発光または無敵シールド時のオーラ
+        if (this.isBoosting || this.isGodMode) {
+            ctx.strokeStyle = this.isGodMode ? '#fde047' : '#ffffff';
+            ctx.lineWidth = this.isGodMode ? 3.0 : 2.5;
             ctx.beginPath();
             ctx.arc(0, 0, this.size, 0, Math.PI * 2);
             ctx.stroke();
         }
 
         ctx.restore();
-
         ctx.globalAlpha = 1.0;
 
         // 頭上ステータス表示
@@ -444,7 +490,7 @@ export class Snake {
         const radius = 6;
 
         ctx.fillStyle = 'rgba(11, 5, 26, 0.72)';
-        ctx.strokeStyle = 'rgba(0, 229, 255, 0.35)';
+        ctx.strokeStyle = this.isGodMode ? 'rgba(253, 224, 71, 0.75)' : 'rgba(0, 229, 255, 0.35)';
         ctx.lineWidth = 1.2;
 
         ctx.beginPath();

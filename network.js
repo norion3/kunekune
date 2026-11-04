@@ -1,18 +1,21 @@
 // ==============================================================================
 // 『くねくねバトル オンライン』AgentSDK公式マルチプレイ通信マネージャー (network.js)
-// v33.0.0 被撃破判定同期(victimSlot)＆リザルト画面誤閉塞完全防止版:
+// v34.0.0 リザルト画面絶対死守＆メモリリーク完全防止版:
+// ・【START_GAME ゲームオーバー中完全遮断】
+// 　START_GAME パケット受信時、自端末が gameover 中であれば即座に return。
+// 　リザルト画面表示中にホストからの開始合図や再送バーストで画面が吹き飛ぶ現象を根絶
+// ・【メモリリーク完全防止】
+// 　_recentlyExitedRoomIds の Set に最大保持件数（20件）の上限ローテーション破棄を導入。
+// 　長時間プレイや入退室の繰り返しによるメモリ肥大化を完全防止
 // ・【被撃破判定同期(victimSlot)】
 // 　broadcastKill に被害者スロット番号（victimSlot）を同封。
-// 　倒された側の端末が通信ラグ等でローカル衝突判定に至っていない場合でも、
-// 　撃破パケット（KILL_ALERT）の packet.vs === mySlot を検知して即座に onPlayerKilled を発火！
-// 　ホスト・ゲスト双方が相手に倒された際、100%確実にリトライ画面が表示されるよう完全保証
+// 　撃破パケット（KILL_ALERT）の packet.vs === mySlot を検知して即座に onPlayerKilled を発火
 // ・【リザルト画面の誤リセット完全遮断】
 // 　途中参加やPパケット検知時の開始処理を window.currentGameState === 'waiting'
-// 　（待機室にいる場合のみ）に厳格限定。gameover 中にパケットを受信してもリトライ画面が
-// 　勝手に非表示（display: none）にされて消え去る不具合を物理的に根絶！
+// 　（待機室にいる場合のみ）に厳格限定
 // ・【開始合図3連バースト送信維持】0ms, 60ms, 150ms 冗長送信
 // ・【待機室誤脱出完全防止維持】packet.act === true 厳格判定
-// ・【旧ルーム残留・ゴースト部屋完全根絶維持】safeExitCurrentRoom ＆ _recentlyExitedRoomIds
+// ・【旧ルーム残留・ゴースト部屋完全根絶維持】safeExitCurrentRoom
 // ・【ゲスト入室時ホスト枠(Slot 0)整合性保証維持】isAI: (i !== 0) 初期化
 // ・【再入室時ゴースト完全パージ維持】onWorldPurged コールバック連携
 // ・【ホスト昇格後Slot0再利用維持】ホスト切断・昇格後のスロット整合性保証
@@ -38,8 +41,25 @@ import { SNAKE_COLORS, MAX_PLAYERS } from './constants.js';
 
 /**
  * 直前に退出・解散したルームIDのキャッシュ（ゴースト部屋表示防止用）
+ * メモリリーク防止のため最大20件でローテーション破棄
  */
 const _recentlyExitedRoomIds = new Set();
+const MAX_RECENT_ROOM_CACHE = 20;
+
+function addRecentlyExitedRoomId(roomId) {
+    if (!roomId) return;
+    const strId = String(roomId).trim();
+    if (!strId) return;
+
+    if (_recentlyExitedRoomIds.size >= MAX_RECENT_ROOM_CACHE) {
+        // 最も古い要素を1件取り出して削除（メモリリーク防止）
+        const oldest = _recentlyExitedRoomIds.values().next().value;
+        if (oldest !== undefined) {
+            _recentlyExitedRoomIds.delete(oldest);
+        }
+    }
+    _recentlyExitedRoomIds.add(strId);
+}
 
 /**
  * 安全かつ確実に現在ルームを脱出・解散するヘルパー
@@ -71,9 +91,9 @@ async function safeExitCurrentRoom(targetRoomId = null) {
             return;
         }
 
-        // 直前の部屋IDをキャッシュに記録（一覧からのゴースト除外用）
+        // 直前の部屋IDをキャッシュに記録（一覧からのゴースト除外用・上限ローテーション付き）
         if (activeRoomId) {
-            _recentlyExitedRoomIds.add(String(activeRoomId));
+            addRecentlyExitedRoomId(activeRoomId);
         }
 
         // 2. 確実に room.exit() を発火して完了を待機
@@ -201,7 +221,7 @@ export const NetworkManager = {
 
     // =========================================================================
     // ★ 【開始合図3連バースト送信】
-    // 単発送信によるパケットロスを完全に克服。0ms, 60ms, 150ms で3連続送信
+    // 単発送信によるパケットロスを克服。0ms, 60ms, 150ms で3連続送信
     // =========================================================================
     broadcastStartGame() {
         if (!this.isMultiplayerActive || !this.isHost) return;
@@ -221,7 +241,7 @@ export const NetworkManager = {
             }
         }, 60);
 
-        // 3発目：150ms後に再送（回線瞬断時の完全バックアップ）
+        // 3発目：150ms後に再送（回線瞬断時のバックアップ）
         setTimeout(() => {
             if (this.isMultiplayerActive && this.isHost) {
                 this._sendCustomMessage(packet);
@@ -319,7 +339,7 @@ export const NetworkManager = {
             await this.init();
             
             if (this.currentRoomId) {
-                _recentlyExitedRoomIds.add(String(this.currentRoomId));
+                addRecentlyExitedRoomId(this.currentRoomId);
             }
             await safeExitCurrentRoom(null);
             this.purgeLocalWorldState();
@@ -425,7 +445,7 @@ export const NetworkManager = {
         try {
             await this.init();
             if (this.currentRoomId && String(this.currentRoomId) !== safeRoomId) {
-                _recentlyExitedRoomIds.add(String(this.currentRoomId));
+                addRecentlyExitedRoomId(this.currentRoomId);
             }
             await safeExitCurrentRoom(safeRoomId);
             this.purgeLocalWorldState();
@@ -811,7 +831,16 @@ export const NetworkManager = {
                 return;
             }
 
+            // =========================================================================
+            // ★ 【START_GAME 受信ハンドラ（ゲームオーバー中完全遮断）】
+            // 自端末がゲームオーバー中であれば、ホストからの開始合図や再送バーストを
+            // 即座に破棄してリザルト画面の消去を物理遮断！
+            // =========================================================================
             if (eventType === 'START_GAME') {
+                if (typeof window !== 'undefined' && window.currentGameState === 'gameover') {
+                    console.warn('[NetworkManager] ゲームオーバー中のため、START_GAME パケットを抑止します。');
+                    return;
+                }
                 if (packet.seed && packet.seed !== this.currentSeed) {
                     this.currentSeed = packet.seed;
                 }
@@ -929,8 +958,7 @@ export const NetworkManager = {
 
                 // =========================================================================
                 // ★ 【リザルト画面誤リセットの完全遮断】
-                // 従来の !== 'playing' では 'gameover' 中も合致してしまいリザルト画面が
-                // 勝手に消去されていたため、=== 'waiting'（待機室中）にのみ限定！
+                // 待機室（waiting）にいる場合のみに限定。gameover 中は絶対に無視！
                 // =========================================================================
                 if (packet.act === true && !this.isHost) {
                     if (typeof window !== 'undefined' && window.currentGameState === 'waiting') {
@@ -968,7 +996,7 @@ export const NetworkManager = {
 
     async exitRoom() {
         if (this.currentRoomId) {
-            _recentlyExitedRoomIds.add(String(this.currentRoomId));
+            addRecentlyExitedRoomId(this.currentRoomId);
         }
         
         this.purgeLocalWorldState();

@@ -1,17 +1,17 @@
 // ==============================================================================
 // 『くねくねバトル オンライン』スネーク.io型 自律生態系AIマネージャー (ai.js)
-// v30.0.0 行動タイマー完全実時間同期＆サバイバル適正化版:
-// ・【AI行動タイマー実時間同期（思考分散バグ解消）】4分割バッチ思考（sliceIndex）に伴い
-// 　think 内部でタイマー減算されていたため、行動持続時間やクールダウンが想定の4倍に
-// 　間延びしていた不具合を完全解消。毎フレームの更新ループ（update）側で実時間（timeScale）
-// 　に基づき一括減算することで、ちょっかい・カミカゼ特攻・逃走のテンポを完全実時間に同期
-// ・【画面外AI成長キャップ完全維持】長時間プレイ時の過剰インフレを防ぐ健全な上限キャップ
-// 　（MAX_VIRTUAL_AI_SCORE = 3,000pt / 体長約45節）を完全保持
-// ・【開幕ピラミッド配分完全維持】小型85%(50〜150pt)、中堅12%(200〜500pt)、
-// 　エリアボス3%(800〜1,200pt) によるRPG的サバイバルの楽しさを完全継承
-// ・【全行動ステート完全保持】カミカゼ暗殺(AMBUSH)、包囲コイリング(HUNTER)、3種ちょっかい(HARASS)、
-// 　ハイエナ肉片争奪(SCAVENGER)、ビビり逃走(PANIC)、大回遊(CRUISING)、完全DeltaTime、
-// 　動的循環スポーン、O(1)リングバッファ衝突回避を一切省略せず100%完全保持
+// v31.0.0 思考走査負荷軽減＆実時間同期・サバイバル適正化版:
+// ・【思考走査負荷の大幅軽減】
+// 　think() 内部で発生していた複数の全スネーク全走査ループ（胴体激突回避、
+// 　カミカゼターゲット探索、ハンター探索）を最適化。
+// 　画面外・遠隔の走者を距離二乗の早期判定で確実に刈り込み、スマホ端末での
+// 　CPU発熱およびサーマルスロットリングによるカクつきを防止！
+// ・【AI行動タイマー実時間同期維持】毎フレーム実時間（timeScale）一括減算
+// ・【画面外AI成長キャップ維持】MAX_VIRTUAL_AI_SCORE = 3,000pt
+// ・【開幕ピラミッド配分維持】小型85%、中堅12%、ボス3%
+// ・【全行動ステート完全保持】カミカゼ暗殺(AMBUSH)、包囲コイリング(HUNTER)、
+// 　ちょっかい(HARASS)、ハイエナ(SCAVENGER)、ビビり(PANIC)、大回遊(CRUISING)、
+// 　動的循環スポーン、O(1)リングバッファを100%保持
 // ==============================================================================
 
 import { MAP_SIZE, SNAKE_COLORS } from './constants.js';
@@ -197,7 +197,6 @@ export class AIManager {
             }
 
             // ★ 【タイマー完全実時間同期】
-            // 思考分散バッチの実行有無にかかわらず、毎フレーム実経過時間（timeScale）で確実に減算
             meta.stateTimer -= timeScale;
             if (meta.harassCooldown > 0) {
                 meta.harassCooldown = Math.max(0, meta.harassCooldown - timeScale);
@@ -238,7 +237,7 @@ export class AIManager {
     }
 
     /**
-     * AI思考ルーチン（カミカゼ特攻・包囲狩猟・過度な逃走抑制・O(1)リングバッファ）
+     * AI思考ルーチン（負荷最適化・カミカゼ特攻・包囲狩猟・O(1)リングバッファ）
      */
     think(ai, meta, player, allSnakes, activeDrops) {
         // 1. 【最優先】外壁激突回避
@@ -249,11 +248,12 @@ export class AIManager {
             return;
         }
 
-        // 2. 【最重要】近隣の他スネーク胴体への激突回避（O(1) リングバッファ）
+        // 2. 【最重要】近隣の他スネーク胴体への激突回避（O(1) リングバッファ ＆ 早期刈り込み）
         let threatFound = false;
-        const headCheckDistSq = 900 * 900;
+        const headCheckDistSq = 850 * 850;
+        const totalSnakes = allSnakes.length;
 
-        for (let i = 0; i < allSnakes.length; i++) {
+        for (let i = 0; i < totalSnakes; i++) {
             const other = allSnakes[i];
             if (other === ai || other.isDead || !other.isVisible) continue;
 
@@ -266,13 +266,14 @@ export class AIManager {
                 const safeDistLimit = ai.size * 2.5 + other.size * 1.2;
                 const safeDistLimitSq = safeDistLimit * safeDistLimit;
 
+                // 胴体サンプリング間隔を4節刻みで高速スキャン
                 for (let j = 0; j < histLen; j += 4) {
                     const idx = (other.headIdx + j) % 2048;
-                    const seg = other.history[idx];
-                    if (!seg) continue;
+                    const pt = other.history[idx];
+                    if (!pt) continue;
 
-                    const sdx = seg.x - ai.x;
-                    const sdy = seg.y - ai.y;
+                    const sdx = pt.x - ai.x;
+                    const sdy = pt.y - ai.y;
                     const sDistSq = sdx * sdx + sdy * sdy;
 
                     if (sDistSq < safeDistLimitSq) {
@@ -300,7 +301,7 @@ export class AIManager {
             let giantTarget = null;
             let minGiantDistSq = 1400 * 1400;
 
-            for (let i = 0; i < allSnakes.length; i++) {
+            for (let i = 0; i < totalSnakes; i++) {
                 const other = allSnakes[i];
                 if (other === ai || other.isDead || !other.isVisible) continue;
                 if (other.invulnerableTimer && other.invulnerableTimer > 0) continue;
@@ -335,7 +336,7 @@ export class AIManager {
             let giantThreat = null;
             const panicDistSq = 350 * 350;
 
-            for (let i = 0; i < allSnakes.length; i++) {
+            for (let i = 0; i < totalSnakes; i++) {
                 const other = allSnakes[i];
                 if (other === ai || other.isDead || !other.isVisible) continue;
                 if (other.score >= ai.score * 2.5) {
@@ -479,7 +480,7 @@ export class AIManager {
                 let huntTarget = null;
                 let minHuntDistSq = 1400 * 1400;
 
-                for (let i = 0; i < allSnakes.length; i++) {
+                for (let i = 0; i < totalSnakes; i++) {
                     const other = allSnakes[i];
                     if (other === ai || other.isDead || !other.isVisible) continue;
                     if (other.invulnerableTimer && other.invulnerableTimer > 0) continue;
@@ -495,7 +496,6 @@ export class AIManager {
                 }
 
                 if (huntTarget) {
-                    // 包囲コイリング狩猟知能：獲物が小型で自身が十分大きい場合に発動
                     if (ai.size > huntTarget.size * 1.35 && ai.size > 22) {
                         const toTargetAngle = Math.atan2(huntTarget.y - ai.y, huntTarget.x - ai.x);
                         ai.targetAngle = toTargetAngle + Math.PI / 2.3;

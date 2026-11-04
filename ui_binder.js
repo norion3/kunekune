@@ -1,14 +1,22 @@
 // ==============================================================================
 // 『くねくねバトル オンライン』UIイベントバインダーモジュール (ui_binder.js)
-// v27.6.0 ズーム最適化＆安全操作レンジ完全同期版:
-// ・【ズーム閾値適正化】world.js のチャンク安全クランプと完全に調和するよう、
-// 　手動縮小リミット（0.20）と updateZoomButtonsState の無効化判定（<= 0.21）の
-// 　判定閾値を完全同期。下限到達時に確実にボタンが無効化され、連打による計算誤差を防止
-// ・【ワールドリセットボタンバインド維持】ソロ専用 initGame(false) による新品生態系再初期化
-// ・【タッチ貫通根絶維持】bindFastTap による touchstart の stopPropagation() で
-// 　MENU・音量・リセット・ズーム各ボタンタップ時の背面ジョイスティック誤爆を完全遮断
+// v29.0.0 デバッグ用無敵シールドボタン連携＆リトライ適正化版:
+// ・【デバッグ用無敵シールドボタン(#btn-god-mode)イベントバインド】
+// 　左下のリセットボタン直上に配置された無敵シールドボタンのタップイベントを実装。
+// 　タップごとに自機の isGodMode をトグル切り替えし、ボタンの active クラス（発光）
+// 　と完全連動！ bindFastTap により背後Canvasへのタッチ貫通・誤爆を完全遮断
+// ・【リトライ明示連携(isExplicitRetry)】
+// 　リトライボタン押下時に initGame(true, true) を実行！
+// 　main.js のゲームオーバー防護壁に対し「ユーザー本人の手動タップである」ことを
+// 　明示的に伝達し、安全かつ確実にリスポーン画面遷移を実行
+// ・【リトライタップ反応性向上】
+// 　リトライボタンのデバウンスを旧 800ms から 300ms へ適正化。
+// 　再戦時のタップ反応の鈍さを解消し、テンポの良いリスポーンを実現
+// ・【ズーム境界判定の浮動小数点誤差吸収】
+// 　zoomMultiplier の丸め誤差を考慮し、updateZoomButtonsState の閾値を
+// 　<= 0.211 で確実にキャッチ。下限(0.20)到達時にボタンを確実に disabled 化
+// ・【タッチ貫通根絶維持】bindFastTap による背面ジョイスティック誤爆完全遮断
 // ・【待機室開始デバウンス維持】btnWaitingStart の 1000ms 連打ガード配備
-// ・【直接リスポーン再戦維持】リトライボタン押下時に待機室へ幽閉されず即座に戦場へ直接復帰
 // ==============================================================================
 
 import { Menu } from './menu.js';
@@ -24,8 +32,8 @@ export function updateZoomButtonsState(zoomMultiplier) {
         btnIn.classList.toggle('disabled', zoomMultiplier >= 1.48);
     }
     if (btnOut) {
-        // 下限0.20に対して0.21以下で確実にdisabledスタイルを付与
-        btnOut.classList.toggle('disabled', zoomMultiplier <= 0.21);
+        // 下限0.20に対し、浮動小数点の計算誤差を吸収して確実にdisabledスタイルを付与
+        btnOut.classList.toggle('disabled', zoomMultiplier <= 0.211);
     }
 }
 
@@ -143,12 +151,26 @@ export function initUIBindings(ctx) {
             if (overScreen) {
                 overScreen.style.display = 'none';
             }
-            // isRespawn = false により、巨大化AI・ワールド餌・プレイヤーを完全に初期化して新品の世界を生成
-            initGame(false);
+            // isRespawn = false, isExplicitRetry = true により、新品の世界を再生成
+            initGame(false, true);
         });
     }
 
-    // 5. ロビー：ソロプレイ開始ボタン（1秒連打デバウンス付＆貫通防止）
+    // 5. ★ デバッグ用：無敵シールドボタン（高速タップ対応＆貫通防止＆トグル連動）
+    const btnGodMode = document.getElementById('btn-god-mode');
+    if (btnGodMode && !btnGodMode._hasGodModeBound) {
+        btnGodMode._hasGodModeBound = true;
+
+        bindFastTap(btnGodMode, () => {
+            const p = getPlayer();
+            if (p) {
+                p.isGodMode = !p.isGodMode;
+                btnGodMode.classList.toggle('active', p.isGodMode);
+            }
+        });
+    }
+
+    // 6. ロビー：ソロプレイ開始ボタン（1秒連打デバウンス付＆貫通防止）
     const btnLobbySolo = document.getElementById('btn-lobby-solo');
     if (btnLobbySolo && !btnLobbySolo._hasSoloBound) {
         btnLobbySolo._hasSoloBound = true;
@@ -170,13 +192,13 @@ export function initUIBindings(ctx) {
             NetworkManager.isMultiplayerActive = false;
             NetworkManager.isHost = true;
             NetworkManager.mySlot = 0;
-            initGame();
+            initGame(false, true);
         };
         btnLobbySolo.addEventListener('touchend', onSoloTap, { passive: false });
         btnLobbySolo.addEventListener('click', onSoloTap);
     }
 
-    // 6. 待機室：ホスト専用ゲーム開始ボタン（1000ms連打デバウンス配備＆一斉開始連携＆貫通防止）
+    // 7. 待機室：ホスト専用ゲーム開始ボタン（1000ms連打デバウンス配備＆一斉開始連携＆貫通防止）
     const btnWaitingStart = document.getElementById('btn-waiting-start');
     if (btnWaitingStart && !btnWaitingStart._hasStartBound) {
         btnWaitingStart._hasStartBound = true;
@@ -201,14 +223,14 @@ export function initUIBindings(ctx) {
                 NetworkManager.broadcastStartGame();
             }
 
-            initGame();
+            initGame(false, true);
         };
 
         btnWaitingStart.addEventListener('touchend', onStartTap, { passive: false });
         btnWaitingStart.addEventListener('click', onStartTap);
     }
 
-    // 7. 待機室：退室ボタン（貫通防止）
+    // 8. 待機室：退室ボタン（貫通防止）
     const btnWaitingLeave = document.getElementById('btn-waiting-leave');
     if (btnWaitingLeave && !btnWaitingLeave._hasLeaveBound) {
         btnWaitingLeave._hasLeaveBound = true;
@@ -228,7 +250,7 @@ export function initUIBindings(ctx) {
         };
     }
 
-    // 8. メニュー着せ替えコールバック初期化
+    // 9. メニュー着せ替えコールバック初期化
     Menu.init((face, color) => {
         const p = getPlayer();
         if (p) {
@@ -237,7 +259,7 @@ export function initUIBindings(ctx) {
         }
     });
 
-    // 9. リザルト画面：リトライボタン（直接リスポーン再戦化＆貫通防止）
+    // 10. リザルト画面：リトライボタン（直接リスポーン再戦化＆貫通防止＆300ms適正デバウンス）
     const btnRetry = document.getElementById('btn-retry');
     if (btnRetry && !btnRetry._hasRetryBound) {
         btnRetry._hasRetryBound = true;
@@ -253,7 +275,7 @@ export function initUIBindings(ctx) {
                 e.stopPropagation();
             }
             const now = Date.now();
-            if (now - lastRetryTap < 800) return;
+            if (now - lastRetryTap < 300) return; // 300ms デバウンスへ適正化
             lastRetryTap = now;
 
             const overScreen = document.getElementById('over-screen');
@@ -261,7 +283,8 @@ export function initUIBindings(ctx) {
                 overScreen.style.display = 'none';
             }
 
-            initGame(true);
+            // isRespawn = true, isExplicitRetry = true でゲームオーバー防護を正規に解除して再開
+            initGame(true, true);
         };
 
         btnRetry.addEventListener('touchend', onRetryTap, { passive: false });

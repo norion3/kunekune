@@ -1,13 +1,15 @@
 // ==============================================================================
 // 『くねくねバトル オンライン』自律DOMマウントモジュール (dom.js)
-// v29.4.0 キュート瞳対称化＆口角アップ・製作者メッセージ調律版:
-// ・【5番目「キュート」瞳の左右対称補正】黒目が右偏向してロンパって見えていた
-// 　不整合を完全解消。白目・黒目・ハイライトを完全対称配置し、愛くるしいうるうる瞳を再現
-// ・【キュート口角の跳ね上げ強調】短く潰れていたおちょぼ口を広角アーチへ拡張。
-// 　両端の口角がキュッと上がった華やかな笑顔リップへ刷新
-// ・【製作者メッセージの表現刷新】「楽しかったら〜」から「制作意欲があがるから〜」へ変更
-// ・【カラー表記のシンプル化】「カラー（8色対応）」から「カラー」へスッキリ整理
-// ・【メニューSVG完全準拠維持】他表情パーツの黄金比、ワールドリセットボタン等の構造は100%維持
+// v30.0.0 デバッグ用無敵シールドボタン新設＆マウント最適化版:
+// ・【デバッグ用無敵シールドボタン新設(#btn-god-mode)】
+// 　左下ボタングループ（リセットボタン直上）に丸型シールドボタンを配備。
+// 　デフォルトON（activeクラス付与）としてマウントし、接触即死・外壁死を完全無効化する
+// 　無敵シールドモードのトグル操作を可能に！
+// ・【5番目「キュート」瞳の左右対称補正維持】
+// ・【キュート口角の跳ね上げ強調維持】
+// ・【製作者メッセージの表現刷新維持】
+// ・【カラー表記のシンプル化維持】
+// ・【メニューSVG完全準拠維持】
 // ==============================================================================
 
 import { SNAKE_COLORS, TOTAL_SNAKES } from './constants.js';
@@ -113,7 +115,7 @@ export function mountDOM() {
             <div class="like-guide-bubble">メニューから<br>「❤️いいね」してね！</div>
         </div>
 
-        <!-- ★ 左下ボタングループ：低頻度操作（MENU、サウンド、リセット）を縦並び配置 -->
+        <!-- ★ 左下ボタングループ：MENU、サウンド、リセット、無敵ボタンを縦並び配置 -->
         <div class="bottom-left-group">
             <button id="btn-menu" type="button" class="bottom-round-btn btn-menu-round" aria-label="Menu">
                 <svg viewBox="0 0 24 24">
@@ -131,11 +133,19 @@ export function mountDOM() {
                 </svg>
             </button>
 
-            <!-- ★ 新設：ワールドリセットボタン（ソロ専用・絵文字なし・透過SVG回転矢印） -->
+            <!-- ワールドリセットボタン（ソロ専用・絵文字なし・透過SVG回転矢印） -->
             <button id="btn-world-reset" type="button" class="bottom-round-btn btn-world-reset" aria-label="Reset World" style="display: none;">
                 <svg viewBox="0 0 24 24">
                     <path d="M17.65 6.35A7.958 7.958 0 0 0 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08A5.99 5.99 0 0 1 12 18c-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/>
                 </svg>
+            </button>
+
+            <!-- ★ デバッグ用：無敵シールドボタン（リセットボタン直上・デフォルトON: active） -->
+            <button id="btn-god-mode" type="button" class="bottom-round-btn active" aria-label="Toggle God Mode">
+                <svg viewBox="0 0 24 24">
+                    <path d="M12 1L3 5v6c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V5l-9-4zm0 10.99h7c-.53 4.12-3.28 7.79-7 8.94V12H5V6.3l7-3.11v8.8z"/>
+                </svg>
+                <span class="btn-subtext" style="color: #fde047;">GOD</span>
             </button>
         </div>
 
@@ -205,7 +215,7 @@ export function mountDOM() {
                     <div class="chat-chip">ナイス！</div>
                     <div class="chat-chip">ありがとう！</div>
                     <div class="chat-chip">ごめんね！</div>
-                    <div class="chat-chip">まってー！</div>
+                    <div class="chat-chip">まっでー！</div>
                     <div class="chat-chip">おつかれさま！</div>
                     <div class="chat-chip">ドンマイ！</div>
                     <div class="chat-chip">もう1回！</div>
@@ -274,19 +284,14 @@ export function mountDOM() {
                         <!-- 5. ★ キュート（完全左右対称・うるうる上目遣い瞳 ＆ キュッと上がった笑顔リップ） -->
                         <button class="custom-face-btn" data-face="cute" aria-label="キュート">
                             <svg viewBox="0 0 40 40">
-                                <!-- 白目（左右対称配置: x 14, 26） -->
                                 <circle cx="14" cy="19.5" r="6.8" fill="#ffffff"/>
                                 <circle cx="26" cy="19.5" r="6.8" fill="#ffffff"/>
-                                <!-- 黒目（左右均等対称配置: x 14.8, 25.2 で偏向・ロンパリ完全解消） -->
                                 <circle cx="14.8" cy="19.2" r="3.8" fill="#0f172a"/>
                                 <circle cx="25.2" cy="19.2" r="3.8" fill="#0f172a"/>
-                                <!-- 上部メインハイライト -->
                                 <circle cx="16.2" cy="17.5" r="1.6" fill="#ffffff"/>
                                 <circle cx="26.6" cy="17.5" r="1.6" fill="#ffffff"/>
-                                <!-- 側部サブハイライト（愛らしいツヤ感） -->
                                 <circle cx="13.6" cy="20.4" r="1.0" fill="#ffffff"/>
                                 <circle cx="24.0" cy="20.4" r="1.0" fill="#ffffff"/>
-                                <!-- ★ キュッと上がった広角笑顔リップ（口角アップ） -->
                                 <path d="M 16.5 26.2 A 3.5 3.5 0 0 0 23.5 26.2" fill="none" stroke="#111827" stroke-width="2.2" stroke-linecap="round"/>
                             </svg>
                         </button>
@@ -296,7 +301,6 @@ export function mountDOM() {
                         </button>
                     </div>
 
-                    <!-- ★ ラベル表記を「カラー」へシンプル化 -->
                     <div class="custom-label" style="margin-top: 8px;">カラー</div>
                     <div class="custom-colors-grid">
                         ${SNAKE_COLORS.map((col, idx) => `
@@ -309,7 +313,6 @@ export function mountDOM() {
             <div id="tab-pane-creator" class="sheet-tab-content" style="display: none;">
                 <div class="creator-notice-card">
                     遊んでくれてありがとうございます！<br>
-                    <!-- ★ 制作意欲があがるから〜 へ変更 -->
                     <strong style="color: #ffdd00;">制作意欲があがるから右上の [...] から いいね を押してね</strong><br>
                     ご意見やご要望もお気軽にどうぞ！
                 </div>

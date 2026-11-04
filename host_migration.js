@@ -1,12 +1,14 @@
 // ==============================================================================
 // 『くねくねバトル オンライン』ホスト昇格＆生態系引継ぎマネージャー (host_migration.js)
-// v1.1.0 胴体ワープ補正(shiftHistory)完全統合＆世界線シームレス引継ぎ版:
-// ・【AI胴体ワープ破綻の完全根絶】スナップショット復元時に頭部座標のみがテレポートして
-// 　胴体がマップを横断して一直線に引き伸ばされる現象を、公式API `ai.shiftHistory(dx, dy)`
-// 　による差分平行移動で完全防止。自然な体勢を保持したまま新ホスト世界線へ移行
+// v1.2.0 胴体ワープ補正(shiftHistory)完全統合＆世界線シームレス引継ぎ版:
+// ・【AI胴体ワープ破綻の完全根絶】
+// 　スナップショット復元時に頭部座標のみがテレポートして胴体がマップを横断して
+// 　一直線に引き伸ばされる現象を、公式API `ai.shiftHistory(dx, dy)` による
+// 　差分平行移動で完全防止。自然な体勢・曲線を保持したまま新ホスト世界線へ移行
 // ・【旧ホスト肉片ドロップ還元】旧ホスト切断時にその位置へ肉片クラスタを展開し、食物連鎖を保護
-// ・【通常AIスナップショット保持】既存AI（ID: 1〜94）の座標・スコア・外見を完全継承
+// ・【通常AIスナップショット保持】既存AI（ID: 1〜94）の座標・スコア・外見・角度を完全継承
 // ・【空き枠ダミーAI完全継承】ID: 95〜100 のダミーAIも記憶喪失させず、育ったスコアで完全引き継ぎ
+// ・【全スネークリスト再統合の整合性保証】重複登録・参照乖離を100%防止
 // ==============================================================================
 
 import { Snake } from './snake.js';
@@ -14,7 +16,7 @@ import { MAX_PLAYERS, MAX_AIS, MAP_SIZE, SNAKE_COLORS } from './constants.js';
 
 /**
  * ホスト切断時の自律ホスト昇格・世界線引継ぎ処理
- * @param {Object} ctx
+ * @param {Object} ctx 主要エンティティおよび更新関数群
  */
 export function handleHostMigration(ctx) {
     const {
@@ -73,11 +75,12 @@ export function handleHostMigration(ctx) {
 
     // 3. 通常AIの再初期化＆スナップショット復元（shiftHistoryによる胴体ワープ破綻防止）
     aiManager.init(MAX_AIS, player.x, player.y);
-    for (let i = 0; i < aiManager.ais.length; i++) {
+    const totalAIs = aiManager.ais.length;
+    for (let i = 0; i < totalAIs; i++) {
         const ai = aiManager.ais[i];
         const snap = oldAiSnapshots.get(ai.id);
         if (snap) {
-            // ★ 頭部だけがテレポートして胴体が引き伸ばされるのを防ぐため、移動差分で胴体履歴をシフト
+            // ★ 頭部だけがテレポートして胴体がマップ全域へ引き伸ばされるのを防ぐため、移動差分で胴体履歴をシフト
             const shiftX = snap.x - ai.x;
             const shiftY = snap.y - ai.y;
             ai.shiftHistory(shiftX, shiftY);
