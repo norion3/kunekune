@@ -1,13 +1,14 @@
 // ==============================================================================
 // 『くねくねバトル オンライン』マルチプレイ送信ループ＆アクションキュー管理 (net_broadcaster.js)
-// v28.0.0 ダミーAI空き枠偽装スロット適正化版:
-// ・【ダミーAIの偽装解除バグ（CPU 95現象）を完全解決】
-// 　ホストが空き枠ダミーAI（ID: 95〜100）の座標を送信する際、スロット番号を
-// 　そのまま 100〜105 にするのではなく、IDから逆算して本来の空きプレイヤースロット
-// 　（0〜5）へ偽装変換して送信。ゲスト画面で「CPU 95」と表示される不整合を根絶。
-// ・【餌同期データ最優先保護】パケットサイズが1KBに近づいた際の段階的フォールバック維持
-// ・【餌同期の絶対座標化】queueFoodPick のシグネチャを (x, y) で完全運用
-// ・【データ蒸発完全根絶】25ms レートリミッター接触時も全未送信データを安全に先頭へ差し戻し
+// v29.0.0 重要システムパケット優先送信＆レートリミットバイパス完全保証版:
+// ・【重要システムパケットのレートリミットバイパス】
+// 　START_GAME、KILL_ALERT、SYS_ALERT 等のルーム遷移・重要イベントパケットは、
+// 　25ms レートリミッターを完全バイパス（無条件即時送信）。定期送信の直後（25ms以内）に
+// 　ホストが「ゲーム開始」を押しても、パケットが破棄（蒸発）される不具合を完全根絶！
+// ・【ダミーAI空き枠偽装スロット適正化維持】CPU 95 現象の完全根絶
+// ・【餌同期データ最優先保護維持】1KB境界時の段階的フォールバック
+// ・【餌同期の絶対座標化維持】queueFoodPick (x, y) 運用
+// ・【通常キューの差し戻し保護維持】レートリミット接触時のデータ保護
 // ==============================================================================
 
 import {
@@ -73,7 +74,8 @@ export const NetBroadcaster = {
         
         const packet = {
             e: 'P',
-            l: [myTuple]
+            l: [myTuple],
+            immediate: true
         };
 
         this.sendCustomMessage(packet);
@@ -140,13 +142,10 @@ export const NetBroadcaster = {
                         const ai = candidates[c];
                         
                         let aiSlot;
-                        // ★ CPU 95 現象の完全修正
-                        // 空き枠に補充されたダミーAI (ID: 95〜100) は、ゲスト側で人間プレイヤー枠 (0〜5) 
-                        // として自然に偽装認識されるよう、スロット番号を対応するプレイヤー枠へ変換して送信する
+                        // 空き枠ダミーAI (ID: 95〜100) はプレイヤー枠 (0〜5) へ変換して送信
                         if (ai.id > MAX_AIS) {
-                            aiSlot = ai.id - MAX_AIS - 1; // 95 -> 0, 96 -> 1 ...
+                            aiSlot = ai.id - MAX_AIS - 1;
                         } else {
-                            // 通常AI (ID: 1〜94) は スロット 6〜99 へマッピング
                             aiSlot = MAX_PLAYERS + (ai.id - 1);
                         }
                         
@@ -206,9 +205,20 @@ export const NetBroadcaster = {
     sendCustomMessage(msgObj) {
         if (typeof window === 'undefined' || !window.AgentSDK || !window.AgentSDK.room || typeof window.AgentSDK.room.sendMessage !== 'function') return;
 
+        const eventType = msgObj ? (msgObj.e || msgObj.event) : '';
+        // ★ START_GAME や撃破・入退室通知、割り込み送信は最優先パケットとしてレートリミットをバイパス
+        const isPriorityPacket = Boolean(
+            eventType === 'START_GAME' ||
+            eventType === 'KILL_ALERT' ||
+            eventType === 'SYS_ALERT' ||
+            eventType === 'ROOM_MEMBERS_SYNC' ||
+            (msgObj && msgObj.immediate)
+        );
+
         const now = performance.now();
-        // レートリミットによる送信スキップ時のキュー安全差し戻し
-        if (now - this._lastSentTime < 25) {
+
+        // 通常パケット（定期座標更新等）のみ 25ms レートリミットを適用
+        if (!isPriorityPacket && (now - this._lastSentTime < 25)) {
             if (Array.isArray(msgObj.pk) && msgObj.pk.length > 0) {
                 this._pendingPicks.unshift(...msgObj.pk);
                 if (this._pendingPicks.length > 64) this._pendingPicks.length = 64;
@@ -237,7 +247,7 @@ export const NetBroadcaster = {
             // 1KB防衛：段階的フォールバック（餌取得データ pk を最優先死守）
             // =========================================================================
             if (byteLength >= 1010) {
-                // 1. リーダーボード情報（lb）の削除（次回送信時に再送可能）
+                // 1. リーダーボード情報（lb）の削除
                 if (msgObj.lb) {
                     delete msgObj.lb;
                     rawString = JSON.stringify(msgObj);
@@ -267,7 +277,7 @@ export const NetBroadcaster = {
                     rawString = JSON.stringify(msgObj);
                     byteLength = getUtf8ByteLength(rawString);
                 }
-                // 5. 餌取得（pk）は同期破綻を防ぐため最後まで保持。万一それでも超える場合のみ半分退避
+                // 5. 餌取得（pk）は同期破綻を防ぐため最後まで保持
                 if (byteLength >= 1010 && Array.isArray(msgObj.pk) && msgObj.pk.length > 2) {
                     const keepCount = Math.floor(msgObj.pk.length / 2);
                     const overflow = msgObj.pk.splice(keepCount);

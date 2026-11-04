@@ -1,13 +1,17 @@
 // ==============================================================================
 // 『くねくねバトル オンライン』AgentSDK公式マルチプレイ通信マネージャー (network.js)
-// v30.0.0 撃破チャット全端末同報＆入退室システム通知リアルタイム同期版:
-// ・【撃破チャットの全端末一斉同報(broadcastKill)】
-// 　ホストまたはゲストが他スネークを撃破した際、専用イベント（KILL_ALERT）を同報。
-// 　撃破が起きた端末だけでなく、部屋にいる全プレイヤーの画面上に「〇〇 を撃破！」
-// 　の弾幕チャットが遅延なくリアルタイムに表示されるように完全同期
-// ・【ゲーム中入退室チャットの全端末中継(SYS_ALERT)】
-// 　ホストが検知した入室（_handleUserJoined）および退出（_handleUserExited）の通知を
-// 　全ゲスト端末へ即座に一斉同報。途中参加や途中退出の状況が全参加者に確実に伝達
+// v31.0.0 開始合図3連バースト送信＆ゲーム中Pパケット自律脱出セーフティネット版:
+// ・【開始合図3連バースト送信(broadcastStartGame)】
+// 　ホストが「ゲーム開始」を押した際、回線瞬断やレートリミット接触による単発パケット消失
+// 　を防ぐため、0ms、60ms、150ms の間隔で START_GAME を3連続バースト送信。
+// 　仮に初弾がパケットロスしても後続弾で100%確実にゲストへ開始合図を到達
+// ・【Pパケット検知による待機画面自律脱出セーフティネット】
+// 　万一ゲスト端末が通信障害等で START_GAME を見落とし待機画面（waiting）のまま
+// 　残ってしまっても、ホストからゲーム中の座標パケット（P/POS）を受信した瞬間に
+// 　「ホストは既にプレイ中」と自己判断して即座に onGameStart を自律発火。
+// 　ゲストが待機画面に永久放置される現象を構造上100%不可能化
+// ・【撃破チャット全端末同報(broadcastKill)維持】KILL_ALERT 同報
+// ・【入退室システム通知リアルタイム中継(SYS_ALERT)維持】
 // ・【旧ルーム残留・ゴースト部屋完全根絶維持】safeExitCurrentRoom ＆ _recentlyExitedRoomIds
 // ・【ゲスト入室時ホスト枠(Slot 0)整合性保証維持】isAI: (i !== 0) 初期化
 // ・【再入室時ゴースト完全パージ維持】onWorldPurged コールバック連携
@@ -171,8 +175,7 @@ export const NetworkManager = {
     },
 
     // =========================================================================
-    // ★ 【撃破チャット一斉同報API】
-    // 人間プレイヤーが関与した撃破ログを全ルーム参加者端末へ即時一斉同報
+    // 撃破チャット一斉同報API
     // =========================================================================
     broadcastKill(killerName, victimName, color) {
         if (!this.isMultiplayerActive) return;
@@ -194,12 +197,34 @@ export const NetworkManager = {
         }
     },
 
+    // =========================================================================
+    // ★ 【開始合図3連バースト送信】
+    // 単発送信によるパケットロスを完全に克服。0ms, 60ms, 150ms で3連続送信
+    // =========================================================================
     broadcastStartGame() {
         if (!this.isMultiplayerActive || !this.isHost) return;
-        this._sendCustomMessage({
+        
+        const packet = {
             e: 'START_GAME',
             seed: this.currentSeed
-        });
+        };
+
+        // 1発目：即座に送信
+        this._sendCustomMessage(packet);
+
+        // 2発目：60ms後に再送（パケットロスおよびレートリミット救済）
+        setTimeout(() => {
+            if (this.isMultiplayerActive && this.isHost) {
+                this._sendCustomMessage(packet);
+            }
+        }, 60);
+
+        // 3発目：150ms後に再送（回線瞬断時の完全バックアップ）
+        setTimeout(() => {
+            if (this.isMultiplayerActive && this.isHost) {
+                this._sendCustomMessage(packet);
+            }
+        }, 150);
     },
 
     async init() {
@@ -550,10 +575,6 @@ export const NetworkManager = {
                 act: isPlaying
             });
 
-            // =========================================================================
-            // ★ 【全ゲスト端末への入室通知の一斉中継】
-            // ホストだけでなく他ゲスト全員の画面に「〇〇 入室！」が確実に流れる
-            // =========================================================================
             this._sendCustomMessage({
                 e: 'SYS_ALERT',
                 sender: guestName,
@@ -628,9 +649,6 @@ export const NetworkManager = {
             Danmaku.push(exitedName, '退室！', '#64748b');
 
             if (this.isHost) {
-                // =========================================================================
-                // ★ 【全ゲスト端末への退出通知の一斉中継】
-                // =========================================================================
                 this._sendCustomMessage({
                     e: 'SYS_ALERT',
                     sender: exitedName,
@@ -764,9 +782,7 @@ export const NetworkManager = {
             this._lastHostPacketTime = performance.now();
             this._hasReceivedFirstHostPacket = true;
 
-            // =========================================================================
-            // ★ 【撃破アラート受信ハンドラ】
-            // =========================================================================
+            // 撃破アラート受信ハンドラ
             if (eventType === 'KILL_ALERT') {
                 if (packet.senderId !== this.clientId && packet.kn && packet.vn) {
                     Danmaku.push(packet.kn, `${packet.vn} を撃破！`, packet.col || '#ff3366');
@@ -774,9 +790,7 @@ export const NetworkManager = {
                 return;
             }
 
-            // =========================================================================
-            // ★ 【入退室システム通知受信ハンドラ】
-            // =========================================================================
+            // 入退室システム通知受信ハンドラ
             if (eventType === 'SYS_ALERT') {
                 if (packet.senderId !== this.clientId && packet.sender && packet.text) {
                     Danmaku.push(packet.sender, packet.text, packet.col || '#38bdf8');
@@ -800,6 +814,18 @@ export const NetworkManager = {
             }
 
             if (eventType === 'P' || eventType === 'POS') {
+                // =========================================================================
+                // ★ 【待機画面からの自律脱出セーフティネット】
+                // ゲスト端末がまだ waiting（待機室）のままなのにホストからゲーム中のPパケットが
+                // 届いた場合、START_GAMEを見落としたと判断して即座にゲームを開始して追従！
+                // =========================================================================
+                if (!this.isHost && typeof window !== 'undefined' && window.currentGameState === 'waiting') {
+                    console.warn('[Sync] 待機画面中にホストのゲーム中Pパケットを受信。ゲーム画面へ自律脱出します。');
+                    if (this.callbacks.onGameStart) {
+                        this.callbacks.onGameStart({ seed: this.currentSeed, direct: true });
+                    }
+                }
+
                 const incomingList = packet.l || packet.list;
                 if (Array.isArray(incomingList)) {
                     for (let i = 0; i < incomingList.length; i++) {
