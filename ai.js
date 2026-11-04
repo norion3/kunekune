@@ -1,16 +1,19 @@
 // ==============================================================================
 // 『くねくねバトル オンライン』スネーク.io型 自律生態系AIマネージャー (ai.js)
-// v35.0.0 ホストカメラ描画フラグ分離＆画面外AI自律思考完全保証版:
-// ・【ホストカメラ依存(!isVisible)スキップの完全撤廃】
-// 　_rebuildSpatialGrid および think ルーチン内のターゲット走査（AMBUSH, HUNTER, TIMID）
-// 　において、ホストカメラ画面外フラグ(!isVisible)によるスキップ判定を撤廃！
-// 　ホストの画面外であっても全スネークの胴体を空間グリッドに漏れなく登録し、
-// 　遠隔ゲストや他AIとの回避・追跡・狩猟思考を常時100%正確にシミュレーション
+// v38.0.0 生態系ピラミッド型AI成長キャップ版:
+// ・【画面外AIの生態系ピラミッド型仮想成長キャップ】
+// 　一律3,000pt制限を撤廃し、性格別キャップ（ボス級cruiser: 12,000pt、
+// 　中堅hunter/harasser/ambusher: 5,000pt、一般forager/timid: 2,200pt）へ最適化！
+// 　全体の平均ノード数・描画負荷を完全に維持したまま、終盤の巨大怪獣決戦と
+// 　ジャイアントキリングを負荷ゼロで実現
+// ・【思考用空間グリッドのactiveCells管理＆完全ゼロアロケーション化維持】
+// ・【思考用空間グリッドの毎フレーム確実クリアによるメモリリーク根絶維持】
+// ・【AI思考走査グリッドの動的探索半径化維持】超巨大スネークへの自爆特攻完全防止
+// ・【ホストカメラ依存(!isVisible)スキップの完全撤廃維持】
 // ・【空間ハッシュマイナス座標ビット崩壊完全防護維持】((gx + 10) << 16) | (gy + 10)
 // ・【整数ビット演算ハッシュによる文字列アロケーション完全根絶維持】
 // ・【空間ハッシュ局所グリッド走査(O(1))維持】
 // ・【AI行動タイマー実時間同期維持】毎フレーム実時間（timeScale）一括減算
-// ・【画面外AI成長キャップ維持】MAX_VIRTUAL_AI_SCORE = 3,000pt
 // ・【開幕ピラミッド配分維持】小型85%、中堅12%、ボス3%
 // ・【全行動ステート完全保持】カミカゼ暗殺(AMBUSH)、包囲コイリング(HUNTER)、
 // 　ちょっかい(HARASS)、ハイエナ(SCAVENGER)、ビビり(PANIC)、大回遊(CRUISING)、
@@ -31,8 +34,13 @@ const AI_STATE = {
     AMBUSH: 6      // カミカゼ特攻（巨大スネークの首元へ捨て身の突進）
 };
 
-// 画面外AIの仮想成長上限スコア（過度なインフレ・理不尽リスポーン即死を防止）
-const MAX_VIRTUAL_AI_SCORE = 3000;
+// ★ 画面外AIの生態系ピラミッド型仮想成長上限スコア（性格別上限で総負荷を相殺しつつ怪獣決戦を実現）
+const MAX_VIRTUAL_SCORE_BOSS = 12000;    // ボス級（cruiser等: 体長約78〜85節）
+const MAX_VIRTUAL_SCORE_MID = 5000;      // 中堅好戦型（hunter, harasser, ambusher: 体長約52〜56節）
+const MAX_VIRTUAL_SCORE_DEFAULT = 2200;  // 一般・主食（forager, timid等: 体長約32〜38節）
+
+// セル再利用プール上限
+const MAX_AI_CELL_POOL = 2048;
 
 export class AIManager {
     constructor() {
@@ -50,9 +58,35 @@ export class AIManager {
         this.bodySpatialGrid = new Map();
         this.nodePool = [];
         this.nodePoolIndex = 0;
+
+        // ★ イテレータ生成排除用アクティブセル追跡配列＆セルプール
+        this.activeCells = [];
+        this.cellPool = [];
+    }
+
+    clear() {
+        // セルの回収とプール返却
+        const activeCount = this.activeCells.length;
+        for (let i = 0; i < activeCount; i++) {
+            const cell = this.activeCells[i];
+            cell.length = 0;
+            if (this.cellPool.length < MAX_AI_CELL_POOL) {
+                this.cellPool.push(cell);
+            }
+        }
+        this.activeCells.length = 0;
+        this.bodySpatialGrid.clear();
+
+        // ノードの参照解放
+        const limit = Math.min(this.nodePoolIndex, this.nodePool.length);
+        for (let i = 0; i < limit; i++) {
+            this.nodePool[i].snake = null;
+        }
+        this.nodePoolIndex = 0;
     }
 
     init(count, playerX, playerY) {
+        this.clear();
         this.ais = [];
         this.aiMeta = [];
 
@@ -109,6 +143,16 @@ export class AIManager {
     }
 
     /**
+     * セル配列取得ヘルパー（ゼロアロケーション）
+     */
+    _obtainCell() {
+        if (this.cellPool.length > 0) {
+            return this.cellPool.pop();
+        }
+        return [];
+    }
+
+    /**
      * 思考走査専用グリッドのノード確保ヘルパー（ゼロアロケーション）
      */
     _obtainGridNode(snake, x, y, radius) {
@@ -129,10 +173,27 @@ export class AIManager {
 
     /**
      * 思考走査専用グリッドの構築（全スネークの胴体を画面内外問わずO(1)走査用にマッピング）
+     * ★ Map.values() のイテレータ生成を排除し、毎フレーム確実に Map を初期化してメモリリークを完全防止
      */
     _rebuildSpatialGrid(allSnakes) {
-        for (const cell of this.bodySpatialGrid.values()) {
+        // 1. アクティブセルをプールへ返却（イテレータアロケーション完全ゼロ）
+        const activeCount = this.activeCells.length;
+        for (let i = 0; i < activeCount; i++) {
+            const cell = this.activeCells[i];
             cell.length = 0;
+            if (this.cellPool.length < MAX_AI_CELL_POOL) {
+                this.cellPool.push(cell);
+            }
+        }
+        this.activeCells.length = 0;
+
+        // 2. Map をクリアして遠隔移動時のキー無限増殖（メモリリーク）を遮断
+        this.bodySpatialGrid.clear();
+
+        // 3. ノード参照の解放とポインタ初期化
+        const limit = Math.min(this.nodePoolIndex, this.nodePool.length);
+        for (let i = 0; i < limit; i++) {
+            this.nodePool[i].snake = null;
         }
         this.nodePoolIndex = 0;
 
@@ -159,8 +220,9 @@ export class AIManager {
 
                 let cell = this.bodySpatialGrid.get(key);
                 if (!cell) {
-                    cell = [];
+                    cell = this._obtainCell();
                     this.bodySpatialGrid.set(key, cell);
+                    this.activeCells.push(cell);
                 }
                 cell.push(this._obtainGridNode(s, pt.x, pt.y, radius));
             }
@@ -181,7 +243,7 @@ export class AIManager {
         const safeDt = (typeof dtSec === 'number' && dtSec > 0) ? Math.min(dtSec, 0.1) : (1 / 60);
         const timeScale = Math.max(0.1, Math.min(3.0, safeDt * 60));
 
-        // 1. 【画面外AIの仮想バックグラウンド成長】（上限キャップ付き健全成長）
+        // 1. 【画面外AIの仮想バックグラウンド成長】（生態系ピラミッド型上限キャップ対応）
         this._virtualGrowthTimer += safeDt;
         if (this._virtualGrowthTimer >= 0.5) {
             const growthInterval = this._virtualGrowthTimer;
@@ -194,8 +256,15 @@ export class AIManager {
                 const meta = this.aiMeta[i];
                 if (!meta) continue;
 
-                // 上限キャップ判定：3,000pt を超えたAIは画面外での自動成長をストップし過剰インフレを防止
-                if (ai.score < MAX_VIRTUAL_AI_SCORE) {
+                // ★ 性格に応じた生態系ピラミッド型上限キャップを判定
+                let scoreCap = MAX_VIRTUAL_SCORE_DEFAULT;
+                if (meta.persona === 'cruiser') {
+                    scoreCap = MAX_VIRTUAL_SCORE_BOSS;
+                } else if (meta.persona === 'hunter' || meta.persona === 'harasser' || meta.persona === 'ambusher') {
+                    scoreCap = MAX_VIRTUAL_SCORE_MID;
+                }
+
+                if (ai.score < scoreCap) {
                     let gainRate = 6;
                     if (meta.persona === 'hunter' || meta.persona === 'cruiser') gainRate = 12;
                     if (meta.persona === 'forager') gainRate = 8;
@@ -310,7 +379,7 @@ export class AIManager {
     }
 
     /**
-     * AI思考ルーチン（空間ハッシュ局所走査・カミカゼ特攻・包囲狩猟・O(1)リングバッファ）
+     * AI思考ルーチン（空間ハッシュ局所走査・動的探索半径・カミカゼ特攻・包囲狩猟・O(1)リングバッファ）
      */
     think(ai, meta, player, allSnakes, activeDrops) {
         // 1. 【最優先】外壁激突回避
@@ -323,14 +392,17 @@ export class AIManager {
 
         // =========================================================================
         // 2. 【最重要・空間ハッシュ局所グリッド走査(O(1))】胴体激突回避
-        // 周囲9マスのみをピンポイント走査し、毎フレーム数十万回の総当たり距離計算を根絶！
+        // 自機サイズに応じた動的探索半径により、超巨大スネークの見落とし自爆を根絶！
         // =========================================================================
         let threatFound = false;
         const gx = Math.floor(ai.x / GRID_SIZE);
         const gy = Math.floor(ai.y / GRID_SIZE);
 
-        for (let ox = -1; ox <= 1 && !threatFound; ox++) {
-            for (let oy = -1; oy <= 1 && !threatFound; oy++) {
+        // ★ 自機サイズに連動した動的探索半径（combat.js の設計と完全整合）
+        const searchRange = Math.max(1, Math.min(3, Math.ceil(ai.size / GRID_SIZE)));
+
+        for (let ox = -searchRange; ox <= searchRange && !threatFound; ox++) {
+            for (let oy = -searchRange; oy <= searchRange && !threatFound; oy++) {
                 // 整数ビット演算ハッシュ（負の座標によるビット崩壊を防ぐ正のオフセット +10 適用）
                 const key = ((gx + ox + 10) << 16) | (gy + oy + 10);
                 const cell = this.bodySpatialGrid.get(key);

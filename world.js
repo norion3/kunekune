@@ -1,10 +1,13 @@
 // ==============================================================================
 // 『くねくねバトル オンライン』ワールド・動的チャンク餌・決定論的シード生成 (world.js)
-// v40.0.0 肉片ドロップFIFO上限キャップ＆O(N^2)処理落ち完全防護版:
-// ・【肉片ドロップFIFO上限キャップによるO(N^2)処理落ち完全防護】
-// 　画面外でのAI乱戦・大量撃破時に dropFoods 配列が無制限に肥大化し、
-// 　全スネークの毎フレーム距離判定が O(N^2) 爆発を起こしてFPSが急降下する問題を
-// 　MAX_DROP_FOODS = 400 のハードキャップと古い肉片から削除するFIFOリング管理で根絶！
+// v42.0.0 パーティクルFIFOハードキャップ＆Canvas描画飽和完全防止版:
+// ・【パーティクル配列のFIFOハードキャップ防護】
+// 　大量撃破時にパーティクルが過密蓄積して Canvas API の ctx.arc 描画負荷で
+// 　FPSが一桁へ急降下する事象を防ぐため、MAX_PARTICLES = 300 のハードキャップを配備！
+// 　超過したパーティクルは古いものから安全に particlePool へ返却して切り捨てることで、
+// 　ゼロアロケーションを維持したまま描画パフォーマンスを安全域に死守
+// ・【パーティクル完全オブジェクトプール化維持】particlePool（最大512個）
+// ・【肉片ドロップFIFO上限キャップによるO(N^2)処理落ち完全防護維持】MAX_DROP_FOODS = 400
 // ・【餌捕食判定への連続衝突判定(CCD)統合維持】高速ブースト時のフード・トンネリング完全防止
 // ・【無限餌増殖(ボーダーダンス)の完全根絶維持】FIFOリングバッファ管理(最大4,096件)
 // ・【整数ビット演算ハッシュによる文字列アロケーション完全根絶維持】
@@ -27,8 +30,14 @@ const MAX_CONSUMED_CACHE_SIZE = 4096;
 // CCD変位上限二乗値（ワープ時や長距離移動時の誤爆防止リミッター）
 const MAX_CCD_DISPLACEMENT_SQ = 160000;
 
-// ★ 肉片ドロップ最大保持上限（乱戦・大量撃破時の計算量爆発・FPS崩壊を物理防護）
+// 肉片ドロップ最大保持上限（乱戦・大量撃破時の計算量爆発・FPS崩壊を物理防護）
 const MAX_DROP_FOODS = 400;
+
+// ★ パーティクルオブジェクトプールの最大保持上限
+const MAX_PARTICLE_POOL = 512;
+
+// ★ パーティクル配列の最大保持上限（描画飽和・FPS急降下防止）
+const MAX_PARTICLES = 300;
 
 export class WorldManager {
     constructor() {
@@ -36,6 +45,9 @@ export class WorldManager {
         this.generatedChunks = new Set();
         this.dropFoods = [];
         this.particles = [];
+
+        // ★ パーティクル再利用バッファ（ヒープ新規生成根絶用）
+        this.particlePool = [];
 
         // ★ チャンクアンロード後も捕食履歴を保持し続ける軽量ビットマスクキャッシュ（FIFOリング制限付き）
         // キー: チャンクキー ((gx + 10) << 16) | (gy + 10), 値: 32bitビットマスク (Bit i = 餌インデックス i が消費済みか)
@@ -51,10 +63,38 @@ export class WorldManager {
         this.foodGrid.clear();
         this.generatedChunks.clear();
         this.dropFoods = [];
-        this.particles = [];
+
+        // 使用中パーティクルをプールへ返却してクリア
+        const pLen = this.particles.length;
+        for (let i = 0; i < pLen; i++) {
+            if (this.particlePool.length < MAX_PARTICLE_POOL) {
+                this.particlePool.push(this.particles[i]);
+            }
+        }
+        this.particles.length = 0;
+
         this.consumedFoodBits.clear();
         this.batchBuckets.clear();
         this.bigAuraBuffer.length = 0;
+    }
+
+    /**
+     * パーティクル取得ヘルパー（オブジェクトプール再利用）
+     */
+    _obtainParticle(x, y, vx, vy, life, color) {
+        let p;
+        if (this.particlePool.length > 0) {
+            p = this.particlePool.pop();
+            p.x = x;
+            p.y = y;
+            p.vx = vx;
+            p.vy = vy;
+            p.life = life;
+            p.color = color;
+        } else {
+            p = { x, y, vx, vy, life, color };
+        }
+        return p;
     }
 
     /**
@@ -148,7 +188,7 @@ export class WorldManager {
         const chunkCenterX = gx * GRID_SIZE + GRID_SIZE / 2;
         const chunkCenterY = gy * GRID_SIZE + GRID_SIZE / 2;
         const mapCenterX = MAP_SIZE / 2;
-        const mapCenterY = MAP_SIZE / 2;
+        const mapCenterY = mapCenterX;
 
         const dxCenter = chunkCenterX - mapCenterX;
         const dyCenter = chunkCenterY - mapCenterY;
@@ -246,7 +286,7 @@ export class WorldManager {
         this.foodGrid.set(chunkIntKey, list);
     }
 
-    // 撃破されたスネークの肉片ドロップ（TTLタイムスタンプ付き ＆ 外壁内安全クランプ ＆ ハードキャップ管理）
+    // 撃破されたスネークの肉片ドロップ（TTLタイムスタンプ付き ＆ 外壁内安全クランプ ＆ ハードキャップ管理 ＆ パーティクルプール化）
     spawnDeathDrop(snake) {
         const histLen = snake.historyLength || 0;
         const now = performance.now();
@@ -285,15 +325,34 @@ export class WorldManager {
             this.dropFoods.splice(0, overflow);
         }
 
+        // =========================================================================
+        // ★ 【パーティクル完全オブジェクトプール化（ゼロアロケーション完遂）】
+        // =========================================================================
         for (let p = 0; p < 18; p++) {
-            this.particles.push({
-                x: snake.x,
-                y: snake.y,
-                vx: (Math.random() - 0.5) * 8,
-                vy: (Math.random() - 0.5) * 8,
-                life: 1.0,
-                color: snake.color
-            });
+            this.particles.push(this._obtainParticle(
+                snake.x,
+                snake.y,
+                (Math.random() - 0.5) * 8,
+                (Math.random() - 0.5) * 8,
+                1.0,
+                snake.color
+            ));
+        }
+
+        // =========================================================================
+        // ★ 【パーティクルFIFOハードキャップ防護（Canvas API描画飽和防止）】
+        // 乱戦時の連続撃破で particles 配列が過密になった場合、超過分を古いものから
+        // 安全に particlePool へ返却して切り捨て
+        // =========================================================================
+        if (this.particles.length > MAX_PARTICLES) {
+            const overflowCount = this.particles.length - MAX_PARTICLES;
+            for (let i = 0; i < overflowCount; i++) {
+                const oldParticle = this.particles[i];
+                if (this.particlePool.length < MAX_PARTICLE_POOL) {
+                    this.particlePool.push(oldParticle);
+                }
+            }
+            this.particles.splice(0, overflowCount);
         }
     }
 
@@ -453,6 +512,10 @@ export class WorldManager {
             p.y += p.vy;
             p.life -= 0.04;
             if (p.life <= 0) {
+                // ★ 寿命を迎えたパーティクルをプールへ安全に返却（ゼロアロケーション）
+                if (this.particlePool.length < MAX_PARTICLE_POOL) {
+                    this.particlePool.push(p);
+                }
                 this.particles[i] = this.particles[this.particles.length - 1];
                 this.particles.pop();
             }

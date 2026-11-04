@@ -1,24 +1,25 @@
 // ==============================================================================
 // 『くねくねバトル オンライン』リモートパケット受信反映ハンドラ (net_handlers.js)
-// v37.0.0 ランキング同期デッドロック完全解消＆顔・色リアルタイム同期版:
-// ・【ランキング同期デッドロックの完全解消】
-// 　onLeaderboardSync 内にあった非表示ガード（listEl.parentElement.style.display !== 'none'）
-// 　を完全撤廃！非表示中であっても DOM 内の innerHTML を常に最新の順位リストへ構築し、
-// 　ユーザーがトロフィーボタンでパネルを開いた瞬間に100%確実に上位リストを表示
-// ・【リーダーボードキャッシュのリセット機構】
-// 　ワールドパージ時（onWorldPurged）に lastLeaderboardSignature を空文字リセットし、
-// 　入退室やホスト切り替えを繰り返しても古いキャッシュ判定でリスト生成が停止する不具合を根絶
+// v38.0.0 ランキング人間プレイヤー個別カスタムカラー＆色変更即時反映版:
+// ・【ランキング文字色の個別カスタムカラー化】
+// 　ゲスト側のランキングDOM生成部において、自機（myPlayer.color）および他人間プレイヤー
+// 　（NetworkManager.slots[slot].color）にそれぞれのカスタムカラーを適用。AIスネークは白（#ffffff）を維持
+// ・【色変更検知シグネチャ連動による0ms即時再描画】
+// 　差分検知シグネチャ（lastLeaderboardSignature）に各プレイヤーの色情報を含めることで、
+// 　スコア変動がなくてもメニューで色を変更した瞬間に即座にランキングDOMを再構築
+// ・【ランキング同期デッドロックの完全解消維持】
+// ・【リーダーボードキャッシュのリセット機構維持】
 // ・【相手顔タイプ・マイアイコン(face/faceIdx)リアルタイム同期維持】
-// ・【相手走者アイコン枠線(淵)リアルタイム連動維持】Menu.updateParticipants 連動
-// ・【onGameStart ゲームオーバー中完全遮断維持】リザルト画面誤消去完全防止
+// ・【相手走者アイコン枠線(淵)リアルタイム連動維持】
+// ・【onGameStart ゲームオーバー中完全遮断維持】
 // ・【ホスト(Slot 0)人間走者フラグ(isHumanPlayer)の完全刻印維持】
-// ・【人間走者厳格フラグ(isHumanPlayer)刻印維持】矢印二重描画根絶
+// ・【人間走者厳格フラグ(isHumanPlayer)刻印維持】
 // ・【ランキング順位番号と名前の完全頭出し整列維持】
-// ・【スコア省略フォーマッター維持】6桁フル表示、7桁目小数3桁固定（X.XXXM）
+// ・【スコア省略フォーマッター維持】
 // ・【長いGRAVITYユーザー名の安全な省略保証維持】
 // ・【AI表情・デザインの完全同期維持】
 // ・【空き枠ダミーAI整合性保証維持】
-// ・【リモート死亡時肉片還元＆胴体シフトAPI維持】shiftHistory完全統合
+// ・【リモート死亡時肉片還元＆胴体シフトAPI維持】
 // ==============================================================================
 
 import { Snake } from './snake.js';
@@ -323,15 +324,24 @@ export function setupNetworkHandlers(ctx) {
             if (valRank) valRank.innerText = myRank;
             if (valTotal) valTotal.innerText = totalAlive;
 
-            // 差分検知シグネチャ（名前・スコア・順位の文字列化）
-            const newSignature = topList.slice(0, 8).map(item => `${item.name}:${item.score}`).join('|') + `_me:${myScore}_rank:${myRank}`;
+            // 差分検知シグネチャ（名前・スコア・順位および各プレイヤーの色文字列化）
+            const newSignature = topList.slice(0, 8).map(item => {
+                let col = '#ffffff';
+                if (item.slot === NetworkManager.mySlot && myPlayer) {
+                    col = myPlayer.color || '#ffffff';
+                } else if (item.slot < MAX_PLAYERS && NetworkManager.slots[item.slot] && !NetworkManager.slots[item.slot].isAI) {
+                    col = NetworkManager.slots[item.slot].color || '#ffffff';
+                }
+                return `${item.name}:${item.score}:${col}`;
+            }).join('|') + `_me:${myScore}_rank:${myRank}`;
+
             if (newSignature === lastLeaderboardSignature) {
                 return;
             }
             lastLeaderboardSignature = newSignature;
 
             // =========================================================================
-            // ★ 【非表示スキップの撤廃（デッドロックの完全解消）】
+            // ★ 【ゲスト端末側ランキング表示：人間プレイヤーはカスタムカラー / AIは白】
             // パネルが閉じている時でも常に最新の innerHTML を構築しておくことで、
             // ユーザーがトロフィーボタンを押した瞬間に100%確実にリストが表示される！
             // =========================================================================
@@ -339,8 +349,16 @@ export function setupNetworkHandlers(ctx) {
             if (listEl) {
                 listEl.innerHTML = topList.slice(0, 8).map((item, idx) => {
                     const isMe = item.slot === NetworkManager.mySlot;
+                    let textColor = '#ffffff';
+
+                    if (isMe && myPlayer) {
+                        textColor = myPlayer.color || '#ffffff';
+                    } else if (item.slot < MAX_PLAYERS && NetworkManager.slots[item.slot] && !NetworkManager.slots[item.slot].isAI) {
+                        textColor = NetworkManager.slots[item.slot].color || '#ffffff';
+                    }
+
                     return `
-                        <div style="display:flex; justify-content:space-between; align-items:center; color:${isMe ? '#ffdd00' : '#ffffff'}; font-weight:${isMe ? 'bold' : 'normal'}; font-size:12px; gap:6px;">
+                        <div style="display:flex; justify-content:space-between; align-items:center; color:${textColor}; font-weight:${isMe ? 'bold' : 'normal'}; font-size:12px; gap:6px;">
                             <div style="display:flex; align-items:center; min-width:0; flex:1; overflow:hidden;">
                                 <span style="display:inline-block; width:18px; flex-shrink:0; font-feature-settings:'tnum'; text-align:left;">${idx + 1}.</span>
                                 <span style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap; flex:1;">${item.name}</span>

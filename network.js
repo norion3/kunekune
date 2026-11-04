@@ -1,11 +1,16 @@
 // ==============================================================================
 // 『くねくねバトル オンライン』AgentSDK公式マルチプレイ通信マネージャー (network.js)
-// v37.0.0 スプリットブレイン降格時送信ロックアウト＆スロット競合完全防止版:
-// ・【スプリットブレイン降格時送信ロックアウト機構】
+// v38.0.0 ホスト昇格時Slot 0競合タイブレーカー＆スロット競合完全防止版:
+// ・【ホスト昇格時Slot 0競合タイブレーカー（Host Duelデッドロック完全根絶）】
+// 　旧ホスト退出時に複数ゲストがほぼ同時にタイムアウトを検知して promoteToHost() を
+// 　実行した場合でも、clientId（または senderId）の確定的辞書順比較（タイブレーカー）により、
+// 　どちらか一方が必ずサレンダーして NetBroadcaster を即時停止・新ホストのスロット同期待機へ移行！
+// 　双方が Slot 0 を名乗り続けて世界線が分岐し続けるスプリットブレインデッドロックを100%物理根絶
+// ・【スプリットブレイン降格時送信ロックアウト機構維持】
 // 　ホストがゲストへサレンダー降格した瞬間、パケット送信（NetBroadcaster）を即時停止！
 // 　新ホストから ROOM_MEMBERS_SYNC を受信して自機の新スロット番号が正式確定するまでの間、
 // 　古いスロット番号でパケットを送り続けて世界線を破壊するID競合バグを100%物理根絶
-// ・【新スロット番号確定時の送信自律復帰】ROOM_MEMBERS_SYNC 受信時に安全に送信再開
+// ・【新スロット番号確定時の送信自律復帰維持】ROOM_MEMBERS_SYNC 受信時に安全に送信再開
 // ・【空き枠ダミーAIのCPU完全統一命名維持】CPU 96〜100
 // ・【ホスト昇格時のSlot 0引越し＆元スロット解放維持】
 // ・【START_GAME ゲームオーバー中完全遮断維持】
@@ -905,16 +910,32 @@ export const NetworkManager = {
                     for (let i = 0; i < incomingList.length; i++) {
                         const decoded = decodeTupleToSnake(incomingList[i]);
                         if (decoded) {
-                            if (this.isHost && decoded.isHost && decoded.slot !== this.mySlot) {
-                                if (this.mySlot > decoded.slot) {
-                                    console.warn(`[NetworkManager] スプリットブレイン検知: スロット優先度によりゲストへサレンダーします (My: ${this.mySlot} > Remote: ${decoded.slot})`);
-                                    this.isHost = false;
-                                    if(this.slots[this.mySlot]) this.slots[this.mySlot].isHost = false;
+                            // =========================================================================
+                            // ★ 【ホスト昇格時Slot 0競合タイブレーカー ＆ スプリットブレイン降格処理】
+                            // =========================================================================
+                            if (this.isHost && decoded.isHost) {
+                                let shouldSurrender = false;
 
-                                    // =========================================================================
-                                    // ★ 【サレンダー降格時の送信一時停止（スロット競合バグ完全防護）】
-                                    // 新ホストから ROOM_MEMBERS_SYNC で自機の新スロットが確定するまで送信をサスペンド
-                                    // =========================================================================
+                                if (decoded.slot !== this.mySlot) {
+                                    if (this.mySlot > decoded.slot) {
+                                        shouldSurrender = true;
+                                        console.warn(`[NetworkManager] スプリットブレイン検知: スロット優先度によりゲストへサレンダーします (My: ${this.mySlot} > Remote: ${decoded.slot})`);
+                                    }
+                                } else {
+                                    // 双方とも同じスロット（特にSlot 0）を主張してホスト昇格したエッジケース
+                                    // 辞書順比較による確定的タイブレーカーを実施
+                                    const remoteId = packet.senderId || '';
+                                    if (remoteId && this.clientId > remoteId) {
+                                        shouldSurrender = true;
+                                        console.warn(`[NetworkManager] ホスト昇格競合検知(Slot ${this.mySlot}衝突): clientId辞書順比較(${this.clientId} > ${remoteId})によりゲストへサレンダーします`);
+                                    }
+                                }
+
+                                if (shouldSurrender) {
+                                    this.isHost = false;
+                                    if (this.slots[this.mySlot]) this.slots[this.mySlot].isHost = false;
+
+                                    // サレンダー降格時の送信一時停止（スロット競合バグ完全防護）
                                     this._isSurrenderLocked = true;
                                     NetBroadcaster.stop();
                                     this._startHostWatchdog();
@@ -972,6 +993,27 @@ export const NetworkManager = {
 
             if (eventType === 'ROOM_MEMBERS_SYNC' || eventType === 'SYNC_MEMBERS') {
                 if (Array.isArray(packet.slots)) {
+                    // =========================================================================
+                    // ★ 【ROOM_MEMBERS_SYNC によるホスト競合タイブレーカー】
+                    // 自身がホストの時に他ホストからメンバー同期パケットを受信した場合の確定解決
+                    // =========================================================================
+                    if (this.isHost && packet.slots[0]) {
+                        const remoteHost = packet.slots[0];
+                        if (remoteHost.clientId && remoteHost.clientId !== this.clientId) {
+                            if (this.clientId > remoteHost.clientId) {
+                                console.warn(`[NetworkManager] ROOM_MEMBERS_SYNC ホスト競合検知: clientId辞書順比較(${this.clientId} > ${remoteHost.clientId})によりゲストへサレンダーします`);
+                                this.isHost = false;
+                                if (this.slots[this.mySlot]) this.slots[this.mySlot].isHost = false;
+                                this._isSurrenderLocked = true;
+                                NetBroadcaster.stop();
+                                this._startHostWatchdog();
+                                if (this.callbacks.onSurrenderedAsHost) {
+                                    this.callbacks.onSurrenderedAsHost();
+                                }
+                            }
+                        }
+                    }
+
                     this.slots = packet.slots;
 
                     const mySlotData = this.slots.find(s => 

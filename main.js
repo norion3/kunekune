@@ -1,15 +1,12 @@
 // ==============================================================================
 // 『くねくねバトル オンライン』Phase 7 マスター統合オーケストレーター (main.js)
-// v42.0.0 ホストランキング非表示デッドロック解消＆ダミーAI CPU完全統一版:
-// ・【ホスト端末側ランキング非表示デッドロックの完全解消】
-// 　ホスト側のランキングDOM生成部から非表示ガード（style.display !== 'none'）を撤廃！
-// 　非表示時でも常に最新のHTMLを構築・保持しておくことで、ホスト側でもトロフィーボタン
-// 　を押した瞬間に100%確実に上位ランキングが点灯するよう完全防護
-// ・【空き枠ダミーAIフォールバック名のCPU統一（名前重複完全根絶）】
-// 　initGame および onUserExited 内の空き枠ダミーAI生成時、通常AIと重複する `CPU ${i + 1}`
-// 　ではなく `CPU ${dummyId}`（例: CPU 96〜100）へ完全統一し、名前重複バグを物理根絶！
-// ・【待機室(マッチング画面)空き枠表記の統一】
-// 　待機室スロットの空き枠バッジを「+」、名前を「プレイヤ X (空き枠)」へ統一
+// v43.0.0 ランキング人間プレイヤー個別カスタムカラー＆AIホワイト描画版:
+// ・【ランキング文字色の個別カスタムカラー化】
+// 　ホスト側のランキングDOM生成部において、自機（player.color）およびリモートの人間プレイヤー
+// 　（s.color）にそれぞれのカスタムカラーを適用。AIスネークは従来どおり白（#ffffff）を維持
+// ・【ホスト端末側ランキング非表示デッドロックの完全解消維持】
+// ・【空き枠ダミーAIフォールバック名のCPU統一（名前重複完全根絶）維持】
+// ・【待機室(マッチング画面)空き枠表記の統一維持】
 // ・【撃破判定(isDead)の論理的矛盾完全解決維持】
 // ・【リザルト画面強制消去の完全遮断維持】
 // ・【空き枠ダミーAI撃破スロットID完全マッピング維持】
@@ -851,21 +848,36 @@ function gameLoop() {
                 }
 
                 // =========================================================================
-                // ★ 【ホスト端末側ランキング非表示デッドロックの完全解消】
+                // ★ 【ホスト端末側ランキング表示：人間プレイヤーはカスタムカラー / AIは白】
                 // 非表示中であっても常に最新の innerHTML を構築しておくことで、
                 // トロフィーボタンを押した瞬間にホスト側でも100%確実にリストが表示される！
                 // =========================================================================
                 const listEl = document.getElementById('leaderboard-list');
                 if (listEl) {
-                    listEl.innerHTML = topList.map((s, idx) => `
-                        <div style="display:flex; justify-content:space-between; align-items:center; color:${s === player ? '#ffdd00' : '#ffffff'}; font-weight:${s === player ? 'bold' : 'normal'}; font-size:12px; gap:6px;">
+                    listEl.innerHTML = topList.map((s, idx) => {
+                        let textColor = '#ffffff';
+                        if (s === player) {
+                            textColor = player.color || '#ffdd00';
+                        } else {
+                            const isRemoteHuman = Boolean(
+                                s.isHumanPlayer ||
+                                (NetworkManager.isMultiplayerActive && s.id !== undefined && s.id < MAX_PLAYERS && NetworkManager.slots[s.id] && !NetworkManager.slots[s.id].isAI)
+                            );
+                            if (isRemoteHuman) {
+                                textColor = s.color || '#ffffff';
+                            }
+                        }
+
+                        return `
+                        <div style="display:flex; justify-content:space-between; align-items:center; color:${textColor}; font-weight:${s === player ? 'bold' : 'normal'}; font-size:12px; gap:6px;">
                             <div style="display:flex; align-items:center; min-width:0; flex:1; overflow:hidden;">
                                 <span style="display:inline-block; width:18px; flex-shrink:0; font-feature-settings:'tnum'; text-align:left;">${idx + 1}.</span>
                                 <span style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap; flex:1;">${s.name}</span>
                             </div>
                             <span style="font-feature-settings:'tnum'; text-align:right; font-weight:700; flex-shrink:0; margin-left:6px;">${formatScore(s.score)}</span>
                         </div>
-                    `).join('');
+                    `;
+                    }).join('');
                 }
             }
         }
