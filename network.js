@@ -1,21 +1,21 @@
 // ==============================================================================
 // 『くねくねバトル オンライン』AgentSDK公式マルチプレイ通信マネージャー (network.js)
-// v29.0.0 旧ルーム残留・ゴースト部屋完全根絶＆確実退室保証版:
-// ・【旧ルーム残留（ゴースト部屋）の完全根絶】
-// 　safeExitCurrentRoom における型判定バグ（数値型 room_id や roomId の見落としによる
-// 　早期リターン）を根絶。getRoomId の成否に関わらず、退室・作成時には必ず
-// 　window.AgentSDK.room.exit() を確実に発火させてサーバー上で部屋を完全解散
-// ・【直前退出ルームの動的フィルタリング】_recentlyExitedRoomIds キャッシュを新設。
-// 　ホストがロビーへ戻った直後、サーバー側クローズ処理にタイムラグが生じても、
-// 　getPublicRooms で自身が直前に退出・作成した古い部屋を100%除外して一覧表示
-// ・【退室待機シークエンスの確実化】exitRoom 時に safeExitCurrentRoom を確実に完了待ち
-// ・【ゲスト入室時ホスト枠(Slot 0)整合性保証維持】isAI: (i !== 0) 初期化維持
-// ・【再入室時ゴースト完全パージ維持】onWorldPurged コールバック連携維持
+// v30.0.0 撃破チャット全端末同報＆入退室システム通知リアルタイム同期版:
+// ・【撃破チャットの全端末一斉同報(broadcastKill)】
+// 　ホストまたはゲストが他スネークを撃破した際、専用イベント（KILL_ALERT）を同報。
+// 　撃破が起きた端末だけでなく、部屋にいる全プレイヤーの画面上に「〇〇 を撃破！」
+// 　の弾幕チャットが遅延なくリアルタイムに表示されるように完全同期
+// ・【ゲーム中入退室チャットの全端末中継(SYS_ALERT)】
+// 　ホストが検知した入室（_handleUserJoined）および退出（_handleUserExited）の通知を
+// 　全ゲスト端末へ即座に一斉同報。途中参加や途中退出の状況が全参加者に確実に伝達
+// ・【旧ルーム残留・ゴースト部屋完全根絶維持】safeExitCurrentRoom ＆ _recentlyExitedRoomIds
+// ・【ゲスト入室時ホスト枠(Slot 0)整合性保証維持】isAI: (i !== 0) 初期化
+// ・【再入室時ゴースト完全パージ維持】onWorldPurged コールバック連携
 // ・【ホスト昇格後Slot0再利用維持】ホスト切断・昇格後のスロット整合性保証
-// ・【自律ホスト昇格時の同期強化維持】promoteToHost 一斉同報維持
-// ・【餌同期の絶対座標化維持】queueFoodPick (x, y) 運用維持
-// ・【スプリットブレイン自律サレンダー維持】通信衝突調停維持
-// ・【絵文字文字化け修正維持】queueChat のサロゲートペア分断防止維持
+// ・【自律ホスト昇格時の同期強化維持】promoteToHost 一斉同報
+// ・【餌同期の絶対座標化維持】queueFoodPick (x, y) 運用
+// ・【スプリットブレイン自律サレンダー維持】通信衝突調停
+// ・【絵文字文字化け修正維持】queueChat のサロゲートペア分断防止
 // ==============================================================================
 
 import {
@@ -170,6 +170,21 @@ export const NetworkManager = {
         }
     },
 
+    // =========================================================================
+    // ★ 【撃破チャット一斉同報API】
+    // 人間プレイヤーが関与した撃破ログを全ルーム参加者端末へ即時一斉同報
+    // =========================================================================
+    broadcastKill(killerName, victimName, color) {
+        if (!this.isMultiplayerActive) return;
+        this._sendCustomMessage({
+            e: 'KILL_ALERT',
+            kn: killerName,
+            vn: victimName,
+            col: color,
+            senderId: this.clientId
+        });
+    },
+
     /**
      * ブースト状態変化やリスポーン時の即時割り込み送信（Event-driven）
      */
@@ -276,7 +291,6 @@ export const NetworkManager = {
         try {
             await this.init();
             
-            // 以前の部屋が存在する場合は確実に退出・解散してキャッシュ登録
             if (this.currentRoomId) {
                 _recentlyExitedRoomIds.add(String(this.currentRoomId));
             }
@@ -318,7 +332,6 @@ export const NetworkManager = {
             }
 
             this.currentRoomId = createdRoomId;
-            // 新しく作成した有効な部屋は除外キャッシュから削除
             _recentlyExitedRoomIds.delete(String(createdRoomId));
 
             this.clientId = generateClientId();
@@ -421,7 +434,6 @@ export const NetworkManager = {
                 ? window.GRAVITY_USER_NAME
                 : this.myUser.name;
 
-            // スロット 0 は部屋のオーナー（ホスト）であるため、isAI: false（人間枠）として初期化
             for (let i = 0; i < MAX_PLAYERS; i++) {
                 this.slots[i] = {
                     slot: i,
@@ -483,7 +495,6 @@ export const NetworkManager = {
                 else if (Array.isArray(res.list)) list = res.list;
             }
             if (Array.isArray(list)) {
-                // 有効人数判定に加えて、直前に退出・解散したゴースト部屋および現在滞在中の部屋を完全除外
                 return list.filter(r => {
                     const rId = String(r.room_id ?? r.roomId ?? '');
                     if (!rId) return false;
@@ -508,7 +519,6 @@ export const NetworkManager = {
         const guestPortrait = data.portrait || data.portait || data.avatar || '';
         let targetSlot = this.slots.findIndex(s => s.userId && String(s.userId) === userId);
 
-        // Slot 0 を含む全枠から空きAIスロットを探索（ホスト自身のスロットは保護）
         if (targetSlot === -1) {
             for (let i = 0; i < this.slots.length; i++) {
                 if (i === this.mySlot) continue;
@@ -538,6 +548,18 @@ export const NetworkManager = {
                 slots: this.slots,
                 seed: this.currentSeed,
                 act: isPlaying
+            });
+
+            // =========================================================================
+            // ★ 【全ゲスト端末への入室通知の一斉中継】
+            // ホストだけでなく他ゲスト全員の画面に「〇〇 入室！」が確実に流れる
+            // =========================================================================
+            this._sendCustomMessage({
+                e: 'SYS_ALERT',
+                sender: guestName,
+                text: '入室！',
+                col: this.slots[targetSlot].color,
+                senderId: this.clientId
             });
 
             if (isPlaying) {
@@ -605,6 +627,26 @@ export const NetworkManager = {
 
             Danmaku.push(exitedName, '退室！', '#64748b');
 
+            if (this.isHost) {
+                // =========================================================================
+                // ★ 【全ゲスト端末への退出通知の一斉中継】
+                // =========================================================================
+                this._sendCustomMessage({
+                    e: 'SYS_ALERT',
+                    sender: exitedName,
+                    text: '退室！',
+                    col: '#64748b',
+                    senderId: this.clientId
+                });
+
+                this._sendCustomMessage({
+                    e: 'ROOM_MEMBERS_SYNC',
+                    slots: this.slots,
+                    seed: this.currentSeed,
+                    act: isPlaying
+                });
+            }
+
             if (typeof window !== 'undefined' && window.UIController && typeof window.UIController.updateWaitingMembersList === 'function') {
                 window.UIController.updateWaitingMembersList();
             }
@@ -614,13 +656,6 @@ export const NetworkManager = {
             if (isHostExited) {
                 console.warn('[NetworkManager] ホストが退出しました。自律ホスト昇格を実行します。');
                 this.promoteToHost();
-            } else if (this.isHost) {
-                this._sendCustomMessage({
-                    e: 'ROOM_MEMBERS_SYNC',
-                    slots: this.slots,
-                    seed: this.currentSeed,
-                    act: isPlaying
-                });
             }
         }
     },
@@ -728,6 +763,26 @@ export const NetworkManager = {
             const eventType = packet.e || packet.event;
             this._lastHostPacketTime = performance.now();
             this._hasReceivedFirstHostPacket = true;
+
+            // =========================================================================
+            // ★ 【撃破アラート受信ハンドラ】
+            // =========================================================================
+            if (eventType === 'KILL_ALERT') {
+                if (packet.senderId !== this.clientId && packet.kn && packet.vn) {
+                    Danmaku.push(packet.kn, `${packet.vn} を撃破！`, packet.col || '#ff3366');
+                }
+                return;
+            }
+
+            // =========================================================================
+            // ★ 【入退室システム通知受信ハンドラ】
+            // =========================================================================
+            if (eventType === 'SYS_ALERT') {
+                if (packet.senderId !== this.clientId && packet.sender && packet.text) {
+                    Danmaku.push(packet.sender, packet.text, packet.col || '#38bdf8');
+                }
+                return;
+            }
 
             if (eventType === 'START_GAME') {
                 if (packet.seed && packet.seed !== this.currentSeed) {
@@ -868,7 +923,6 @@ export const NetworkManager = {
     },
 
     async exitRoom() {
-        // 退室対象のルームIDを直前退出キャッシュへ退避
         if (this.currentRoomId) {
             _recentlyExitedRoomIds.add(String(this.currentRoomId));
         }

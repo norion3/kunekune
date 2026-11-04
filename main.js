@@ -1,20 +1,22 @@
 // ==============================================================================
 // 『くねくねバトル オンライン』Phase 7 マスター統合オーケストレーター (main.js)
-// v35.0.0 ゲスト側リモート走者完全マージ＆配列参照乖離バグ根本根絶版:
-// ・【配列参照乖離バグの完全根絶】initGame における allSnakes = [player] という
-// 　再代入を撤廃し、allSnakes.length = 0; allSnakes.push(player); のインプレース
-// 　更新へ統一。net_handlers.js との参照乖離を根本から根絶
-// ・【ゲスト側リモート走者常時マージ】gameLoop において、ホストだけでなくゲスト端末でも
-// 　remoteSnakes（ホスト、他ゲスト、通常AI）を確実に allSnakes へ自動統合。
-// 　これにより、ゲスト画面のレーダー（sortedSnakes）にホストが100%確実に渡され、
-// 　遠くのホストを指すシアン色（水色）の方向ポインター（▲）が確実に点灯！
-// ・【通常AIおよびホストのゴースト誤パージ完全防止】gameLoop のゴーストパージ処理を
-// 　slotIdx < MAX_PLAYERS かつ slotIdx !== 0 に限定。スロット配列外の通常AI(6〜99)
-// 　およびホスト枠(Slot 0)が誤って消去される不具合を完全解決
-// ・【自機player.idの適正同期】initGame で player.id = NetworkManager.mySlot を設定し、
-// 　ゲスト自機とホスト(id: 0)のID衝突を解消
+// v36.0.0 撃破重複多重発火完全根絶＆リザルト前即時同期フラッシュ版:
+// ・【撃破判定・重複チャット多重発火の完全根絶】
+// 　スネークの関節同時接触等で checkHeadCollisions が同一フレーム・連続フレームで
+// 　多重発火していた不具合を解消。victim._hasBeenKilled フラグおよび isDead 厳格チェック
+// 　により、同一スネークに対する撃破処理を1回のみに完全限定。「撃破！」チャットの連投を100%排除
+// ・【リザルト画面表示前の即時パケットフラッシュ】
+// 　プレイヤーが倒された際（handleGameOver）、リザルト表示処理に入る前に即座に
+// 　player.isDead = true を確定し、NetworkManager.forceImmediateSync() を発動。
+// 　他端末（ホスト・他ゲスト）へ遅延なく死亡状態と撃破確定を割り込み送信
+// ・【撃破チャット同報連携】人間関与の撃破発生時、NetworkManager.broadcastKill を呼出し
+// 　全ルーム参加者の画面へ「〇〇 を撃破！」弾幕を確実に中継
+// ・【配列参照乖離バグの完全根絶維持】allSnakes.length = 0 インプレース更新維持
+// ・【ゲスト側リモート走者常時マージ維持】remoteSnakes の allSnakes 自動統合維持
+// ・【ホスト(Slot 0)および通常AIのゴースト誤パージ完全防止維持】
+// ・【自機player.id適正同期維持】ID衝突防止維持
 // ・【スコア省略フォーマッター維持】6桁フル表示、7桁目小数3桁固定（X.XXXM）
-// ・【ランキング順位番号と名前の完全頭出し整列維持】順位番号の独立固定幅ブロック
+// ・【ランキング順位番号と名前の完全頭出し整列維持】
 // ==============================================================================
 
 import { injectStyles } from './style.js';
@@ -55,10 +57,8 @@ import { runBootSequence } from './boot.js';
 export function formatScore(val) {
     const s = Math.floor(val || 0);
     if (s >= 1000000) {
-        // 1,000pt単位の変化がリアルタイムに伝わる小数3桁固定表示（例: 1.000M, 1.234M）
         return (s / 1000000).toFixed(3) + 'M';
     }
-    // 999,999 まではカンマ区切りでそのままフル表示
     return s.toLocaleString();
 }
 
@@ -98,7 +98,6 @@ function updateLayout() {
     }
 }
 
-// 画面回転・リサイズ時の二重計測ガード
 let resizeDebounceTimer = null;
 window.addEventListener('resize', () => {
     updateLayout();
@@ -273,6 +272,7 @@ export function initGame(isRespawn = false) {
     const spawnX = MAP_SIZE / 2 + (Math.random() - 0.5) * 8000;
     const spawnY = MAP_SIZE / 2 + (Math.random() - 0.5) * 8000;
     player.reset(spawnX, spawnY);
+    player._hasBeenKilled = false;
     camera.reset(spawnX, spawnY);
 
     const resolvedPlayerName = (typeof window !== 'undefined' && window.GRAVITY_USER_NAME)
@@ -281,7 +281,6 @@ export function initGame(isRespawn = false) {
 
     player.name = resolvedPlayerName;
     player.color = SNAKE_COLORS[NetworkManager.mySlot % SNAKE_COLORS.length];
-    // ★ 自機IDを自身のスロット番号（ゲストなら1〜5、ホストなら0）に適正同期し、ホストとのID重複を解消
     player.id = NetworkManager.mySlot;
 
     if (!NetworkManager.isMultiplayerActive) {
@@ -296,8 +295,6 @@ export function initGame(isRespawn = false) {
         world.clear();
         collisionEngine.clear();
 
-        // ★ 【配列参照破壊の完全根絶】
-        // allSnakes = [player] という再代入を撤廃し、setupNetworkHandlers に渡した既存の配列をインプレース更新
         allSnakes.length = 0;
         allSnakes.push(player);
 
@@ -316,6 +313,7 @@ export function initGame(isRespawn = false) {
                     const sx = Math.max(400, Math.min(MAP_SIZE - 400, player.x + Math.cos(angle) * dist));
                     const sy = Math.max(400, Math.min(MAP_SIZE - 400, player.y + Math.sin(angle) * dist));
                     aiSnake.reset(sx, sy);
+                    aiSnake._hasBeenKilled = false;
                     
                     aiManager.ais.push(aiSnake);
                     aiManager.aiMeta.push({
@@ -410,7 +408,6 @@ NetworkManager.setCallbacks({
             if (sIdx !== -1) sortedSnakes.splice(sIdx, 1);
         }
 
-        // 退出した人間スロットへ即座にダミーAIを補充し、過疎化・定員割れを防止
         if (NetworkManager.isHost && NetworkManager.isMultiplayerActive && slotIdx < MAX_PLAYERS && slotIdx !== NetworkManager.mySlot) {
             const dummyId = MAX_AIS + slotIdx + 1;
             const existingFake = allSnakes.find(s => !s.isPlayer && s.id === dummyId);
@@ -425,6 +422,7 @@ NetworkManager.setCallbacks({
                 const sx = Math.max(400, Math.min(MAP_SIZE - 400, player.x + Math.cos(angle) * dist));
                 const sy = Math.max(400, Math.min(MAP_SIZE - 400, player.y + Math.sin(angle) * dist));
                 newDummyAI.reset(sx, sy);
+                newDummyAI._hasBeenKilled = false;
 
                 aiManager.ais.push(newDummyAI);
                 aiManager.aiMeta.push({
@@ -448,7 +446,6 @@ NetworkManager.setCallbacks({
         }
     },
 
-    // 再入室・ルーム遷移時のゴースト走者完全パージハンドラ
     onWorldPurged() {
         remoteSnakes.clear();
         if (allSnakes && player) {
@@ -473,8 +470,18 @@ initUIBindings({
 function handleGameOver(killer) {
     gameState = 'gameover';
     window.currentGameState = gameState;
+    player.isDead = true;
+    player._hasBeenKilled = true;
     Sound.stopBoostSound();
     Sound.playCrash();
+
+    // =========================================================================
+    // ★ 【リザルト画面前の即時パケットフラッシュ】
+    // 自分が倒されたことを他端末へ遅延なく一刻も早く割り込み送信！
+    // =========================================================================
+    if (NetworkManager && NetworkManager.isMultiplayerActive) {
+        NetworkManager.forceImmediateSync();
+    }
 
     updateResetButtonVisibility();
 
@@ -533,13 +540,10 @@ function gameLoop() {
             if (remote.isDead) return;
 
             if (NetworkManager.isMultiplayerActive) {
-                // ★ スロットがプレイヤースロット（0〜5）の場合のみ切断・退室判定を行う
-                // スロット 6〜99（通常AI）は slots 配列に存在しないためパージ対象外！
                 if (slotIdx < MAX_PLAYERS) {
                     const isHostSlot = (slotIdx === 0);
                     const slotData = NetworkManager.slots[slotIdx];
                     
-                    // ホスト枠（Slot 0）はゲスト端末で絶対にパージしない！
                     if (!isHostSlot && (!slotData || slotData.isAI)) {
                         console.warn(`[Sync] 退出検知: スロット ${slotIdx} の残留エンティティをパージ`);
                         remoteSnakes.delete(slotIdx);
@@ -586,11 +590,6 @@ function gameLoop() {
             remote.updatePhysics(dtSec, remote.targetAngle, remote.isBoosting);
         });
 
-        // =========================================================================
-        // ★ 【ゲスト側リモート走者（ホストおよび全走者）常時マージ】
-        // ホストだけでなくゲスト端末でも、remoteSnakes の全スネークを確実に allSnakes へ登録！
-        // これにより、ゲスト画面のレーダー（sortedSnakes）にホストが確実に反映される！
-        // =========================================================================
         if (NetworkManager.isMultiplayerActive) {
             remoteSnakes.forEach((remote) => {
                 if (!remote.isDead && !allSnakes.includes(remote)) {
@@ -662,6 +661,15 @@ function gameLoop() {
 
         collisionEngine.registerBodies(allSnakes);
         collisionEngine.checkHeadCollisions(allSnakes, (killer, victim) => {
+            // =========================================================================
+            // ★ 【撃破判定の多重発火防止ガード】
+            // 同一スネークが複数関節と接触した際でも、撃破処理は厳格に1回のみ実行！
+            // =========================================================================
+            if (!victim || victim.isDead || victim._hasBeenKilled) {
+                return;
+            }
+            victim._hasBeenKilled = true;
+
             if (NetworkManager.isMultiplayerActive && !NetworkManager.isHost && !victim.isPlayer) {
                 return;
             }
@@ -690,15 +698,25 @@ function gameLoop() {
                 const isKillerHuman = killer.isPlayer || (NetworkManager.isMultiplayerActive && killer.id !== undefined && killer.id < MAX_PLAYERS && NetworkManager.slots[killer.id] && !NetworkManager.slots[killer.id].isAI);
                 const isVictimHuman = victim.isPlayer || (NetworkManager.isMultiplayerActive && victim.id !== undefined && victim.id < MAX_PLAYERS && NetworkManager.slots[victim.id] && !NetworkManager.slots[victim.id].isAI);
 
+                // 人間参加者が関与する撃破のみ通知
                 if (isKillerHuman || isVictimHuman) {
-                    Danmaku.push(killer.name, `${victim.name} を撃破！`, killer.color || '#ff3366');
+                    const killColor = killer.color || '#ff3366';
+                    Danmaku.push(killer.name, `${victim.name} を撃破！`, killColor);
+
+                    // ★ 全端末へ撃破チャットを一斉同報（ホストまたは自機キル時）
+                    if (NetworkManager.isMultiplayerActive && typeof NetworkManager.broadcastKill === 'function') {
+                        NetworkManager.broadcastKill(killer.name, victim.name, killColor);
+                    }
                 }
             }
 
             if (victim.isPlayer) {
                 handleGameOver(killer);
-            } else if (killer.isPlayer) {
-                Sound.playCrash();
+            } else {
+                victim.die();
+                if (killer && killer.isPlayer) {
+                    Sound.playCrash();
+                }
             }
         });
 
