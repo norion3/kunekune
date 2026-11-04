@@ -1,27 +1,21 @@
 // ==============================================================================
 // 『くねくねバトル オンライン』AgentSDK公式マルチプレイ通信マネージャー (network.js)
-// v34.0.0 リザルト画面絶対死守＆メモリリーク完全防止版:
-// ・【START_GAME ゲームオーバー中完全遮断】
-// 　START_GAME パケット受信時、自端末が gameover 中であれば即座に return。
-// 　リザルト画面表示中にホストからの開始合図や再送バーストで画面が吹き飛ぶ現象を根絶
-// ・【メモリリーク完全防止】
-// 　_recentlyExitedRoomIds の Set に最大保持件数（20件）の上限ローテーション破棄を導入。
-// 　長時間プレイや入退室の繰り返しによるメモリ肥大化を完全防止
-// ・【被撃破判定同期(victimSlot)】
-// 　broadcastKill に被害者スロット番号（victimSlot）を同封。
-// 　撃破パケット（KILL_ALERT）の packet.vs === mySlot を検知して即座に onPlayerKilled を発火
-// ・【リザルト画面の誤リセット完全遮断】
-// 　途中参加やPパケット検知時の開始処理を window.currentGameState === 'waiting'
-// 　（待機室にいる場合のみ）に厳格限定
+// v35.0.0 ホスト昇格時Slot0引越し＆スプリットブレイン完全根絶版:
+// ・【ホスト昇格時のSlot 0引越し＆元スロット解放】
+// 　旧ホスト退室による自律ホスト昇格時（promoteToHost）、新ホストのデータを
+// 　Slot 0 へ正式にコピー移行し、元いたスロット（Slot 1等）を空き枠(isAI: true)として解放！
+// 　mySlot および window.localPlayerInstance.id を 0 に即時更新することで、
+// 　退室と再入室を繰り返してもホスト表示・権限がねじれる現象を100%完全根絶
+// ・【START_GAME ゲームオーバー中完全遮断維持】
+// ・【メモリリーク完全防止維持】_recentlyExitedRoomIds の20件ローテーション破棄
+// ・【被撃破判定同期(victimSlot)維持】broadcastKill 同期
+// ・【リザルト画面の誤リセット完全遮断維持】waiting 状態限定
 // ・【開始合図3連バースト送信維持】0ms, 60ms, 150ms 冗長送信
 // ・【待機室誤脱出完全防止維持】packet.act === true 厳格判定
 // ・【旧ルーム残留・ゴースト部屋完全根絶維持】safeExitCurrentRoom
 // ・【ゲスト入室時ホスト枠(Slot 0)整合性保証維持】isAI: (i !== 0) 初期化
 // ・【再入室時ゴースト完全パージ維持】onWorldPurged コールバック連携
-// ・【ホスト昇格後Slot0再利用維持】ホスト切断・昇格後のスロット整合性保証
-// ・【自律ホスト昇格時の同期強化維持】promoteToHost 一斉同報
 // ・【餌同期の絶対座標化維持】queueFoodPick (x, y) 運用
-// ・【スプリットブレイン自律サレンダー維持】通信衝突調停
 // ・【絵文字文字化け修正維持】queueChat のサロゲートペア分断防止
 // ==============================================================================
 
@@ -728,6 +722,9 @@ export const NetworkManager = {
         }
     },
 
+    // =========================================================================
+    // ★ 【自律ホスト昇格（Slot 0 引越し＆スロットねじれ完全防止）】
+    // =========================================================================
     promoteToHost() {
         if (this._isPromoting || this.isHost) return;
         this._isPromoting = true;
@@ -735,19 +732,46 @@ export const NetworkManager = {
 
         this.isHost = true;
 
-        this.slots[0] = {
-            slot: 0,
-            clientId: null,
-            userId: null,
-            name: 'プレイヤー 1',
+        const oldSlot = this.mySlot;
+
+        // 1. 新ホスト（自分）のデータを Slot 0 へ正式に引越しコピー
+        const myData = this.slots[oldSlot] || {
+            name: this.myUser.name || 'ホスト',
             color: SNAKE_COLORS[0],
-            portrait: '',
-            isAI: true,
-            joinTime: 0
+            portrait: this.myUser.portrait || ''
         };
 
-        if (this.slots[this.mySlot]) {
-            this.slots[this.mySlot].isAI = false;
+        this.slots[0] = {
+            slot: 0,
+            clientId: this.clientId,
+            userId: this.myUser.user_id,
+            name: myData.name,
+            color: myData.color || SNAKE_COLORS[0],
+            portrait: myData.portrait || '',
+            isAI: false,
+            joinTime: myData.joinTime || performance.now()
+        };
+
+        // 2. 元いたスロット（Slot 1 等）を空き枠（AI枠）として解放
+        if (oldSlot !== 0 && this.slots[oldSlot]) {
+            this.slots[oldSlot] = {
+                slot: oldSlot,
+                clientId: null,
+                userId: null,
+                name: `プレイヤー ${oldSlot + 1}`,
+                color: SNAKE_COLORS[oldSlot % SNAKE_COLORS.length],
+                portrait: '',
+                isAI: true,
+                joinTime: 0
+            };
+        }
+
+        // 3. 自機スロット番号を 0 に更新
+        this.mySlot = 0;
+
+        // 4. メインループ側の自機インスタンスIDも 0 に更新して世界線を統一
+        if (typeof window !== 'undefined' && window.localPlayerInstance) {
+            window.localPlayerInstance.id = 0;
         }
 
         const startBtn = document.getElementById('btn-waiting-start');
