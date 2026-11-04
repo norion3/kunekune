@@ -1,27 +1,24 @@
 // ==============================================================================
 // 『くねくねバトル オンライン』リモートパケット受信反映ハンドラ (net_handlers.js)
-// v34.0.0 リザルト画面死守(onGameStart遮断)＆ホスト(Slot 0)人間走者刻印版:
-// ・【onGameStart ゲームオーバー中完全遮断】
-// 　ホストからのゲーム開始合図・途中参加（immediate）パケットを受信した際、
-// 　自端末が gameover 中またはリザルトモーダル（#over-screen）が表示されていれば
-// 　initGame() の呼び出しを無条件でスキップ。リザルト画面の誤消去・誤リセットを完全遮断！
-// ・【ホスト(Slot 0)人間走者フラグ(isHumanPlayer)の完全刻印】
-// 　ゲスト端末がホストからデータを受信する際、data.slot === 0 を無条件で人間走者
-// 　（isHumanPlayer = true）として明示刻印。スロット情報受領の遅延やタイミングのズレ
-// 　に一切左右されず、ゲスト画面上でも遠くのホストの方向ポインター（▲）が100%点灯
-// ・【人間走者厳格フラグ(isHumanPlayer)刻印維持】
-// 　ホスト側で CPU 1 (AI ID: 1) と ゲスト (Slot 1) のID重複による矢印二重描画を根絶
-// ・【他ユーザーカラーリアルタイム即時同期維持】相手の色変更を毎フレーム即座に反映
-// ・【ランキング順位番号と名前の完全頭出し整列維持】順位番号の独立固定幅ブロック
+// v35.0.0 相手走者アイコン枠線(淵)リアルタイム連動＆ホスト刻印版:
+// ・【相手走者アイコン枠線(淵)リアルタイム連動】
+// 　onRemoteSnakeUpdate で相手の colorIdx 変更を検知した際、スロット色を更新すると同時に
+// 　Menu.updateParticipants() を即時発火！相手端末でカスタム色変更が行われた瞬間に
+// 　自画面のメニュー走者リスト内のアバター枠線（淵）も0msで新色へ即時同期
+// ・【onGameStart ゲームオーバー中完全遮断維持】リザルト画面誤消去完全防止
+// ・【ホスト(Slot 0)人間走者フラグ(isHumanPlayer)の完全刻印維持】
+// ・【人間走者厳格フラグ(isHumanPlayer)刻印維持】矢印二重描画根絶
+// ・【ランキング順位番号と名前の完全頭出し整列維持】
 // ・【スコア省略フォーマッター維持】6桁フル表示、7桁目小数3桁固定（X.XXXM）
-// ・【長いGRAVITYユーザー名の安全な省略保証維持】min-width: 0 と ellipsis
-// ・【AI表情・デザインの完全同期維持】通常AI(Slot 6〜99)の5種表情・カラー復元維持
-// ・【空き枠ダミーAI整合性保証維持】偽装ダミーAIと人間プレイヤーの区別維持
-// ・【リモート死亡時肉片還元＆胴体シフトAPI維持】食物連鎖保護＆shiftHistory完全統合
+// ・【長いGRAVITYユーザー名の安全な省略保証維持】
+// ・【AI表情・デザインの完全同期維持】
+// ・【空き枠ダミーAI整合性保証維持】
+// ・【リモート死亡時肉片還元＆胴体シフトAPI維持】shiftHistory完全統合
 // ==============================================================================
 
 import { Snake } from './snake.js';
 import { NetworkManager } from './network.js';
+import { Menu } from './menu.js';
 import { SNAKE_COLORS, TOTAL_SNAKES, MAX_PLAYERS } from './constants.js';
 
 // 表情タイプの同期用定義（ai.js と完全一致）
@@ -137,17 +134,28 @@ export function setupNetworkHandlers(ctx) {
             }
 
             // =========================================================================
-            // ★ 【他ユーザーカラーリアルタイム同期】
+            // ★ 【他ユーザーカラーリアルタイム同期＆走者リスト淵即時再描画】
             // 相手がメニューで色を変更した際、毎フレーム届く colorIdx を即座に反映！
-            // スネーク本体・HUDの方向ポインター（▲）・レーダー二重リングの色が完全連動
+            // スネーク本体・HUDレーダーに加え、メニュー走者リストのアイコン枠線も即時連動
             // =========================================================================
             if (data.colorIdx !== undefined) {
                 const newColor = SNAKE_COLORS[data.colorIdx % SNAKE_COLORS.length];
+                let colorChanged = false;
+
                 if (remote.color !== newColor) {
                     remote.color = newColor;
+                    colorChanged = true;
                 }
                 if (data.slot < MAX_PLAYERS && NetworkManager.slots[data.slot]) {
-                    NetworkManager.slots[data.slot].color = newColor;
+                    if (NetworkManager.slots[data.slot].color !== newColor) {
+                        NetworkManager.slots[data.slot].color = newColor;
+                        colorChanged = true;
+                    }
+                }
+
+                // 相手の色が変わった場合、メニューの走者一覧も即時更新してアイコンの淵を切り替え
+                if (colorChanged && Menu && typeof Menu.updateParticipants === 'function') {
+                    Menu.updateParticipants(NetworkManager.slots.filter(s => !s.isAI));
                 }
             }
 
