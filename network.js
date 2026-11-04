@@ -1,15 +1,14 @@
 // ==============================================================================
 // 『くねくねバトル オンライン』AgentSDK公式マルチプレイ通信マネージャー (network.js)
-// v31.0.0 開始合図3連バースト送信＆ゲーム中Pパケット自律脱出セーフティネット版:
-// ・【開始合図3連バースト送信(broadcastStartGame)】
-// 　ホストが「ゲーム開始」を押した際、回線瞬断やレートリミット接触による単発パケット消失
-// 　を防ぐため、0ms、60ms、150ms の間隔で START_GAME を3連続バースト送信。
-// 　仮に初弾がパケットロスしても後続弾で100%確実にゲストへ開始合図を到達
-// ・【Pパケット検知による待機画面自律脱出セーフティネット】
-// 　万一ゲスト端末が通信障害等で START_GAME を見落とし待機画面（waiting）のまま
-// 　残ってしまっても、ホストからゲーム中の座標パケット（P/POS）を受信した瞬間に
-// 　「ホストは既にプレイ中」と自己判断して即座に onGameStart を自律発火。
-// 　ゲストが待機画面に永久放置される現象を構造上100%不可能化
+// v32.0.0 待機室誤脱出完全防止＆実プレイ中厳格検知(act: true)自律脱出版:
+// ・【待機室でのPパケット誤爆完全防止】
+// 　ホストが待機室にいる間でも裏で定期送信される P パケットにより、ゲストが入室直後に
+// 　勝手にゲーム画面へ誤突入してしまう不具合を完全解消。ホストが実際にプレイ中である
+// 　ことを示す `packet.act === true` を必須条件とし、ホストが開始ボタンを押すまで待機室を完全維持
+// ・【自律脱出時の正規ゲーム起動(initGame(false))】
+// 　自律脱出時に direct: true（isRespawn扱い）で呼ばれたことで描画ループが起動せず
+// 　画面が真っ暗になる問題を根絶。direct: false として完全な正規ループを起動
+// ・【開始合図3連バースト送信維持】0ms, 60ms, 150ms の冗長送信維持
 // ・【撃破チャット全端末同報(broadcastKill)維持】KILL_ALERT 同報
 // ・【入退室システム通知リアルタイム中継(SYS_ALERT)維持】
 // ・【旧ルーム残留・ゴースト部屋完全根絶維持】safeExitCurrentRoom ＆ _recentlyExitedRoomIds
@@ -815,14 +814,15 @@ export const NetworkManager = {
 
             if (eventType === 'P' || eventType === 'POS') {
                 // =========================================================================
-                // ★ 【待機画面からの自律脱出セーフティネット】
-                // ゲスト端末がまだ waiting（待機室）のままなのにホストからゲーム中のPパケットが
-                // 届いた場合、START_GAMEを見落としたと判断して即座にゲームを開始して追従！
+                // ★ 【待機画面からの自律脱出セーフティネット（誤爆完全防止強化版）】
+                // ホストが実際にゲーム中（packet.act === true）である場合のみ自律脱出を発火！
+                // 待機室にいる間の通常定期パケットでは絶対に誤脱出しないように厳格保護。
+                // さらに、自律脱出時は direct: false（isRespawn = false）として正規の描画ループを起動
                 // =========================================================================
-                if (!this.isHost && typeof window !== 'undefined' && window.currentGameState === 'waiting') {
-                    console.warn('[Sync] 待機画面中にホストのゲーム中Pパケットを受信。ゲーム画面へ自律脱出します。');
+                if (!this.isHost && typeof window !== 'undefined' && window.currentGameState === 'waiting' && packet.act === true) {
+                    console.warn('[Sync] ホストが対戦中(act: true)であることを検知。ゲーム画面へ安全に自律脱出します。');
                     if (this.callbacks.onGameStart) {
-                        this.callbacks.onGameStart({ seed: this.currentSeed, direct: true });
+                        this.callbacks.onGameStart({ seed: this.currentSeed, direct: false });
                     }
                 }
 
@@ -914,10 +914,11 @@ export const NetworkManager = {
                     if (this.callbacks.onSeedReceived) this.callbacks.onSeedReceived(packet.seed);
                 }
 
+                // ホストが対戦中のルームに途中参加した場合の即時開始
                 if (packet.act === true && !this.isHost) {
                     if (typeof window !== 'undefined' && window.currentGameState !== 'playing') {
                         if (this.callbacks.onGameStart) {
-                            this.callbacks.onGameStart({ seed: this.currentSeed, direct: true });
+                            this.callbacks.onGameStart({ seed: this.currentSeed, direct: false });
                         }
                     }
                 }

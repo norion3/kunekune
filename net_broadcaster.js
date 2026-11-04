@@ -1,10 +1,13 @@
 // ==============================================================================
 // 『くねくねバトル オンライン』マルチプレイ送信ループ＆アクションキュー管理 (net_broadcaster.js)
-// v29.0.0 重要システムパケット優先送信＆レートリミットバイパス完全保証版:
-// ・【重要システムパケットのレートリミットバイパス】
-// 　START_GAME、KILL_ALERT、SYS_ALERT 等のルーム遷移・重要イベントパケットは、
-// 　25ms レートリミッターを完全バイパス（無条件即時送信）。定期送信の直後（25ms以内）に
-// 　ホストが「ゲーム開始」を押しても、パケットが破棄（蒸発）される不具合を完全根絶！
+// v30.0.0 ホスト実プレイ中(act: true)状態同期＆待機室誤脱出完全防止版:
+// ・【ホスト実プレイ中(act: true)状態同期】
+// 　ホスト端末の定期送信ループにおいて、実際にゲーム中（currentGameState === 'playing'）
+// 　である場合のみ packet.act = true を付与。待機室（waiting）にいる間は act を
+// 　付与しないことで、ゲスト端末が入室直後にゲーム中と誤認して画面が真っ暗になる誤脱出を完全防止！
+// ・【重要システムパケットのレートリミットバイパス維持】
+// 　START_GAME、KILL_ALERT、SYS_ALERT、ROOM_MEMBERS_SYNC 等の重要パケットは
+// 　25ms レートリミッターを完全バイパス（無条件即時送信）
 // ・【ダミーAI空き枠偽装スロット適正化維持】CPU 95 現象の完全根絶
 // ・【餌同期データ最優先保護維持】1KB境界時の段階的フォールバック
 // ・【餌同期の絶対座標化維持】queueFoodPick (x, y) 運用
@@ -72,9 +75,12 @@ export const NetBroadcaster = {
         const mySnake = window.localPlayerInstance;
         const myTuple = encodeSnakeToTuple(mySnake, netManager.mySlot, netManager.isHost);
         
+        const isPlaying = (typeof window !== 'undefined' && window.currentGameState === 'playing');
+
         const packet = {
             e: 'P',
             l: [myTuple],
+            act: isPlaying,
             immediate: true
         };
 
@@ -154,9 +160,13 @@ export const NetBroadcaster = {
                 }
             }
 
+            // ホストが実際にプレイ中（currentGameState === 'playing'）であるか判定
+            const isPlaying = (typeof window !== 'undefined' && window.currentGameState === 'playing');
+
             const packet = {
                 e: 'P',
-                l: tuplesList
+                l: tuplesList,
+                act: isPlaying
             };
 
             this._lbThrottleCount++;
@@ -206,7 +216,7 @@ export const NetBroadcaster = {
         if (typeof window === 'undefined' || !window.AgentSDK || !window.AgentSDK.room || typeof window.AgentSDK.room.sendMessage !== 'function') return;
 
         const eventType = msgObj ? (msgObj.e || msgObj.event) : '';
-        // ★ START_GAME や撃破・入退室通知、割り込み送信は最優先パケットとしてレートリミットをバイパス
+        // START_GAME や撃破・入退室通知、割り込み送信は最優先パケットとしてレートリミットをバイパス
         const isPriorityPacket = Boolean(
             eventType === 'START_GAME' ||
             eventType === 'KILL_ALERT' ||
