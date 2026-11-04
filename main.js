@@ -1,22 +1,23 @@
 // ==============================================================================
 // 『くねくねバトル オンライン』Phase 7 マスター統合オーケストレーター (main.js)
-// v44.0.0 リモート人間プレイヤースロット番号死守＆ワープ閾値適正化版:
-// ・【リーダーボードパケットのリモート人間プレイヤースロット番号死守】
-// 　ホスト側のパケット生成部において、リモート人間プレイヤー（s.isHumanPlayer または
-// 　s.id < MAX_PLAYERS かつ !isAI）のスロット番号をAIスロット（6以降）へ変換せず、
-// 　本来のスロットID（s.id）をそのままパケットへ格納！
-// 　これにより、ゲスト端末側で自機スロット番号との一致判定が100%成功し、
-// 　ゲスト側でも自分の色が確実にランキングに反映されるよう完全修正
-// ・【リモート追従ワープ判定閾値の適正化】
-// 　パケット追従のワープ判定閾値を 1,000px（1,000,000）から 250px（62,500）へ適正化。
-// 　パケットの遅延や急変時に過剰なlerpで胴体が引き裂かれる現象を抑止
-// ・【ホスト端末側ランキング表示：人間プレイヤーはカスタムカラー / AIは白】
+// v45.0.0 人間撃破判定厳格化＆AIキル誤チャット・誤爆即死完全根絶版:
+// ・【人間撃破判定の厳格化による誤チャット完全根絶】
+// 　撃破判定部における人間判定（isKillerHuman / isVictimHuman）を、スネーク自身の
+// 　実体属性（isPlayer または isHumanPlayer === true）による直接判定へ刷新！
+// 　通常AI（CPU 1〜5）のIDが人間スロット（1〜5）と重複している場合でも、
+// 　AI同士の撃破を人間と誤認してチャット送信してしまう不具合を100%物理根絶
+// ・【AI撃破時の他プレイヤー誤爆即死（身代わりキル）完全根絶】
+// 　キル同報パケットの被害者スロット（victimSlot）送信において、被害者が実際に
+// 　人間プレイヤー（自機または isHumanPlayer）である場合のみスロット番号を渡し、
+// 　通常AI撃破時は null を送信することで無関係な人間ゲストが即死するバグを完全解消
+// ・【リーダーボードパケットのリモート人間プレイヤースロット番号死守維持】
+// ・【リモート追従ワープ判定閾値の適正化維持】250px（62,500）
+// ・【ホスト端末側ランキング表示：人間プレイヤーはカスタムカラー / AIは白維持】
 // ・【ホスト端末側ランキング非表示デッドロックの完全解消維持】
 // ・【空き枠ダミーAIフォールバック名のCPU統一（名前重複完全根絶）維持】
 // ・【待機室(マッチング画面)空き枠表記の統一維持】
 // ・【撃破判定(isDead)の論理的矛盾完全解決維持】
 // ・【リザルト画面強制消去の完全遮断維持】
-// ・【空き枠ダミーAI撃破スロットID完全マッピング維持】
 // ・【外壁激突死のゲームオーバー連携維持】
 // ・【リザルト画面表示例外完全防護維持】
 // ・【被撃破宣告(onPlayerKilled)確実発火維持】
@@ -766,8 +767,13 @@ function gameLoop() {
                 const absorbedScore = Math.max(120, Math.floor(victim.score * 0.18));
                 killer.addScore(absorbedScore);
 
-                const isKillerHuman = killer.isPlayer || (NetworkManager.isMultiplayerActive && killer.id !== undefined && killer.id < MAX_PLAYERS && NetworkManager.slots[killer.id] && !NetworkManager.slots[killer.id].isAI);
-                const isVictimHuman = victim.isPlayer || (NetworkManager.isMultiplayerActive && victim.id !== undefined && victim.id < MAX_PLAYERS && NetworkManager.slots[victim.id] && !NetworkManager.slots[victim.id].isAI);
+                // =========================================================================
+                // ★ 【人間撃破判定の厳格化（実体属性による直接判定）】
+                // 通常AI（CPU 1〜5）のID数値（1〜5）が人間スロットと一致していても、
+                // AIである限り人間と誤判定しないようスネークの実体属性で完全識別
+                // =========================================================================
+                const isKillerHuman = Boolean(killer.isPlayer || killer.isHumanPlayer === true);
+                const isVictimHuman = Boolean(victim.isPlayer || victim.isHumanPlayer === true);
 
                 // 人間参加者が関与する撃破のみ通知
                 if (isKillerHuman || isVictimHuman) {
@@ -775,15 +781,21 @@ function gameLoop() {
                     Danmaku.push(killer.name, `${victim.name} を撃破！`, killColor);
 
                     // =========================================================================
-                    // ★ 【撃破同報への被害者スロット(victimSlot)数値同期＆空き枠ダミーID変換】
-                    // 空き枠ダミーAI (ID: 95〜100) はプレイヤー枠 (0〜5) へ変換して相手端末へ直通
+                    // ★ 【撃破同報への被害者スロット(victimSlot)数値同期＆誤爆即死完全防止】
+                    // 被害者が人間プレイヤーである場合のみ確実なスロット番号を送信し、
+                    // 通常AI撃破時に無関係な人間ゲストが即死するバグを物理根絶
                     // =========================================================================
                     if (NetworkManager.isMultiplayerActive && typeof NetworkManager.broadcastKill === 'function') {
-                        let victimSlot = victim.isPlayer ? NetworkManager.mySlot : victim.id;
-                        if (!victim.isPlayer && victim.id !== undefined && victim.id > MAX_AIS) {
+                        let victimSlot = null;
+                        if (victim.isPlayer) {
+                            victimSlot = NetworkManager.mySlot;
+                        } else if (victim.isHumanPlayer === true) {
+                            victimSlot = victim.id;
+                        } else if (victim.id !== undefined && victim.id > MAX_AIS) {
+                            // 空き枠ダミーAI
                             victimSlot = victim.id - MAX_AIS - 1;
                         }
-                        NetworkManager.broadcastKill(killer.name, victim.name, killColor, Number(victimSlot));
+                        NetworkManager.broadcastKill(killer.name, victim.name, killColor, victimSlot !== null ? Number(victimSlot) : null);
                     }
                 }
             }
