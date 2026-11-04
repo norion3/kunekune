@@ -1,17 +1,14 @@
 // ==============================================================================
 // 『くねくねバトル オンライン』スネークエンティティクラス (snake.js)
-// v33.0.0 デバッグ用無敵シールド(isGodMode)＆ブースト肉片ドロップ・巨大化旋回慣性版:
-// ・【デバッグ用無敵シールド(isGodMode)】
-// 　isGodMode（デフォルトtrue）を新設。有効時は常に無敵扱いとなり、
-// 　外壁激突死を安全にスキップして跳ね返り、敵との接触時も絶対に死なない
-// ・【ブースト肉片ドロップの復元】
-// 　ブースト時にスコアを消費する際、自身の尾の部分からフィールドへ肉片をドロップ！
-// 　「身を削って加速し、その軌跡にハイエナが群がる」スネーク.io本来の駆け引きを完全復活
-// ・【巨大化時の旋回慣性（ジャイアントキリング）】
-// 　体が大きくなる（sizeが増加する）につれて、旋回速度（turnSpeed）に慣性がかかり
-// 　緩やかになるロジックを追加。巨大化時の圧倒的な重厚感と、小型スネークが
-// 　懐に飛び込んで一発逆転を狙うスリルを両立！
-// ・【外壁激突即死判定】isGodMode無効時かつ無敵時間外での境界即死(die)判定
+// v34.0.0 相手マイアイコン顔(user_avatar)Canvas完全描画＆無敵シールド版:
+// ・【相手マイアイコン顔(user_avatar)のCanvas完全描画】
+// 　リモート走者がマイアイコン顔を選択した際、手元のスロット情報（NetworkManager.slots）
+// 　にある相手の portrait URL から動的に Image オブジェクトを遅延生成・キャッシュ（avatarImg）。
+// 　ホスト・ゲスト双方の頭部へ相手自身のアバターアイコンを真円クリップで100%確実に描画！
+// ・【デバッグ用無敵シールド(isGodMode)維持】外壁死スキップ＆不死身判定
+// ・【ブースト肉片ドロップの復元維持】身を削る加速と餌散布
+// ・【巨大化時の旋回慣性（ジャイアントキリング）維持】
+// ・【外壁激突即死判定維持】
 // ・【とぐろ立体感＆生体ウロコ重なりレイヤード描画維持】
 // ・【中心コアハイライトライン維持】
 // ・【ゼロ負荷設計＆生体テーパーウェーブ完全維持】
@@ -84,6 +81,10 @@ export class Snake {
         this._cachedBadgeScore = -1;
         this._cachedBadgeName = '';
         this._cachedBadgeWidth = 60;
+
+        // ★ リモート走者のマイアイコン顔（user_avatar）用画像キャッシュ
+        this.avatarImg = null;
+        this._lastAvatarUrl = '';
     }
 
     reset(spawnX, spawnY) {
@@ -420,21 +421,63 @@ export class Snake {
         ctx.translate(this.x, this.y);
         ctx.rotate(this.angle);
 
-        // GRAVITYユーザーアバター顔スキンの場合
-        if (this.face === 'user_avatar' && window.userAvatarImgInstance && window.userAvatarImgInstance.complete) {
-            ctx.save();
-            ctx.beginPath();
-            ctx.arc(0, 0, this.size, 0, Math.PI * 2);
-            ctx.clip();
-            ctx.rotate(Math.PI / 2);
-            ctx.drawImage(window.userAvatarImgInstance, -this.size, -this.size, this.size * 2, this.size * 2);
-            ctx.restore();
+        // =========================================================================
+        // ★ 【GRAVITYユーザーアバター顔スキン（自機＆リモート走者完全対応）】
+        // =========================================================================
+        if (this.face === 'user_avatar') {
+            let targetAvatarImg = null;
 
-            ctx.strokeStyle = this.color;
-            ctx.lineWidth = 1.8;
-            ctx.beginPath();
-            ctx.arc(0, 0, this.size, 0, Math.PI * 2);
-            ctx.stroke();
+            if (this.isPlayer) {
+                targetAvatarImg = (window.userAvatarImgInstance && window.userAvatarImgInstance.complete)
+                    ? window.userAvatarImgInstance
+                    : null;
+            } else {
+                // リモート走者：手元のスロット情報（portrait）から Image を遅延ロード・キャッシュ
+                const netMgr = (typeof window !== 'undefined' && window.NetworkManager) ? window.NetworkManager : null;
+                const slotData = (netMgr && netMgr.slots) ? netMgr.slots[this.id] : null;
+                const portraitUrl = (slotData && slotData.portrait) ? slotData.portrait : '';
+
+                if (portraitUrl) {
+                    if (this._lastAvatarUrl !== portraitUrl || !this.avatarImg) {
+                        this._lastAvatarUrl = portraitUrl;
+                        const img = new Image();
+                        img.crossOrigin = 'anonymous';
+                        img.src = portraitUrl;
+                        this.avatarImg = img;
+                    }
+                    if (this.avatarImg && this.avatarImg.complete && this.avatarImg.naturalWidth > 0) {
+                        targetAvatarImg = this.avatarImg;
+                    }
+                }
+            }
+
+            if (targetAvatarImg) {
+                ctx.save();
+                ctx.beginPath();
+                ctx.arc(0, 0, this.size, 0, Math.PI * 2);
+                ctx.clip();
+                ctx.rotate(Math.PI / 2);
+                ctx.drawImage(targetAvatarImg, -this.size, -this.size, this.size * 2, this.size * 2);
+                ctx.restore();
+
+                ctx.strokeStyle = this.color;
+                ctx.lineWidth = 1.8;
+                ctx.beginPath();
+                ctx.arc(0, 0, this.size, 0, Math.PI * 2);
+                ctx.stroke();
+            } else {
+                // 画像ロード中または未設定時は通常の顔にフォールバック
+                ctx.fillStyle = this.color;
+                ctx.beginPath();
+                ctx.arc(0, 0, this.size, 0, Math.PI * 2);
+                ctx.fill();
+
+                ctx.strokeStyle = 'rgba(0, 0, 0, 0.25)';
+                ctx.lineWidth = 1.4;
+                ctx.stroke();
+
+                drawSnakeFace(ctx, 'normal', this.size);
+            }
         } else {
             ctx.fillStyle = this.color;
             ctx.beginPath();
