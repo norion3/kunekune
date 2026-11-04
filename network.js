@@ -1,16 +1,21 @@
 // ==============================================================================
 // 『くねくねバトル オンライン』AgentSDK公式マルチプレイ通信マネージャー (network.js)
-// v28.0.0 ゲスト側ホストスロット整合性保証＆レーダー追従完全復旧版:
-// ・【ゲスト入室時ホスト枠(Slot 0)整合性保証】joinRoom 時に slots[0] が誤って isAI: true
-// 　（AI扱い）で一括初期化されていた不具合を完全解消。ホスト枠を isAI: false（人間枠）
-// 　として初期化することで、ゲスト端末側でもホストが最初から人間プレイヤーとして正しく
-// 　認識され、ミニマップの画面外方向ポインター（▲）が100%点灯
-// ・【再入室時ゴースト完全パージ維持】onWorldPurged コールバックによる残留走者完全消去
+// v29.0.0 旧ルーム残留・ゴースト部屋完全根絶＆確実退室保証版:
+// ・【旧ルーム残留（ゴースト部屋）の完全根絶】
+// 　safeExitCurrentRoom における型判定バグ（数値型 room_id や roomId の見落としによる
+// 　早期リターン）を根絶。getRoomId の成否に関わらず、退室・作成時には必ず
+// 　window.AgentSDK.room.exit() を確実に発火させてサーバー上で部屋を完全解散
+// ・【直前退出ルームの動的フィルタリング】_recentlyExitedRoomIds キャッシュを新設。
+// 　ホストがロビーへ戻った直後、サーバー側クローズ処理にタイムラグが生じても、
+// 　getPublicRooms で自身が直前に退出・作成した古い部屋を100%除外して一覧表示
+// ・【退室待機シークエンスの確実化】exitRoom 時に safeExitCurrentRoom を確実に完了待ち
+// ・【ゲスト入室時ホスト枠(Slot 0)整合性保証維持】isAI: (i !== 0) 初期化維持
+// ・【再入室時ゴースト完全パージ維持】onWorldPurged コールバック連携維持
 // ・【ホスト昇格後Slot0再利用維持】ホスト切断・昇格後のスロット整合性保証
-// ・【自律ホスト昇格時の同期強化維持】promoteToHost 一斉同報
-// ・【餌同期の絶対座標化維持】queueFoodPick (x, y) 運用
-// ・【スプリットブレイン自律サレンダー維持】通信瞬断時の衝突調停
-// ・【絵文字文字化け修正維持】queueChat のサロゲートペア分断防止
+// ・【自律ホスト昇格時の同期強化維持】promoteToHost 一斉同報維持
+// ・【餌同期の絶対座標化維持】queueFoodPick (x, y) 運用維持
+// ・【スプリットブレイン自律サレンダー維持】通信衝突調停維持
+// ・【絵文字文字化け修正維持】queueChat のサロゲートペア分断防止維持
 // ==============================================================================
 
 import {
@@ -28,28 +33,53 @@ import { updateLobbyGreeting } from './dom.js';
 import { SNAKE_COLORS, MAX_PLAYERS } from './constants.js';
 
 /**
- * 未入室時の exit() による無限保留（Promiseハング）および本命ルーム誤退室を防ぐ安全退出ヘルパー
+ * 直前に退出・解散したルームIDのキャッシュ（ゴースト部屋表示防止用）
+ */
+const _recentlyExitedRoomIds = new Set();
+
+/**
+ * 安全かつ確実に現在ルームを脱出・解散するヘルパー
+ * 型揺らぎ（string / number / camelCase）に対応し、確実に room.exit() を完了させる
  */
 async function safeExitCurrentRoom(targetRoomId = null) {
     if (typeof window === 'undefined' || !window.AgentSDK || !window.AgentSDK.room) return;
+    
     try {
-        if (typeof window.AgentSDK.room.getRoomId === 'function') {
-            const res = await window.AgentSDK.room.getRoomId();
-            const activeRoomId = (res && typeof res.room_id === 'string')
-                ? res.room_id
-                : (res && res.data && res.data.room_id ? res.data.room_id : '');
-            
-            if (!activeRoomId || activeRoomId === '') return;
+        let activeRoomId = null;
 
-            if (targetRoomId && String(activeRoomId) === String(targetRoomId)) {
-                console.log(`[network.js] Already in target room #${activeRoomId}. Skipping redundant exit().`);
-                return;
+        // 1. 現在参加中ルームIDの取得試行（型の揺らぎを完全吸収）
+        if (typeof window.AgentSDK.room.getRoomId === 'function') {
+            try {
+                const res = await window.AgentSDK.room.getRoomId();
+                const rawId = (res && (res.room_id ?? res.roomId)) 
+                    ?? (res && res.data && (res.data.room_id ?? res.data.roomId));
+                if (rawId !== undefined && rawId !== null && String(rawId).trim() !== '') {
+                    activeRoomId = String(rawId).trim();
+                }
+            } catch (idErr) {
+                console.warn('[network.js] getRoomId query error:', idErr);
             }
         }
-        const exitPromise = window.AgentSDK.room.exit();
-        const timeoutPromise = new Promise(resolve => setTimeout(() => resolve({ timeout: true }), 700));
-        await Promise.race([exitPromise, timeoutPromise]);
-        await new Promise(r => setTimeout(r, 200));
+
+        // 目的の部屋に既にいる場合は無駄なexitをスキップ
+        if (targetRoomId && activeRoomId && String(activeRoomId) === String(targetRoomId)) {
+            console.log(`[network.js] Already in target room #${activeRoomId}. Skipping redundant exit().`);
+            return;
+        }
+
+        // 直前の部屋IDをキャッシュに記録（一覧からのゴースト除外用）
+        if (activeRoomId) {
+            _recentlyExitedRoomIds.add(String(activeRoomId));
+        }
+
+        // 2. 確実に room.exit() を発火して完了を待機
+        if (typeof window.AgentSDK.room.exit === 'function') {
+            const exitPromise = window.AgentSDK.room.exit();
+            const timeoutPromise = new Promise(resolve => setTimeout(() => resolve({ timeout: true }), 800));
+            await Promise.race([exitPromise, timeoutPromise]);
+            // サーバー側でのルーム解散・リスト除外ラグを吸収するための安定ウェイト
+            await new Promise(r => setTimeout(r, 250));
+        }
     } catch (e) {
         console.warn('[network.js] safeExitCurrentRoom caught:', e);
     }
@@ -245,6 +275,11 @@ export const NetworkManager = {
 
         try {
             await this.init();
+            
+            // 以前の部屋が存在する場合は確実に退出・解散してキャッシュ登録
+            if (this.currentRoomId) {
+                _recentlyExitedRoomIds.add(String(this.currentRoomId));
+            }
             await safeExitCurrentRoom(null);
             this.purgeLocalWorldState();
 
@@ -283,6 +318,9 @@ export const NetworkManager = {
             }
 
             this.currentRoomId = createdRoomId;
+            // 新しく作成した有効な部屋は除外キャッシュから削除
+            _recentlyExitedRoomIds.delete(String(createdRoomId));
+
             this.clientId = generateClientId();
             this.ensureMessageListener();
 
@@ -346,6 +384,9 @@ export const NetworkManager = {
 
         try {
             await this.init();
+            if (this.currentRoomId && String(this.currentRoomId) !== safeRoomId) {
+                _recentlyExitedRoomIds.add(String(this.currentRoomId));
+            }
             await safeExitCurrentRoom(safeRoomId);
             this.purgeLocalWorldState();
 
@@ -368,6 +409,7 @@ export const NetworkManager = {
             }
 
             this.currentRoomId = safeRoomId;
+            _recentlyExitedRoomIds.delete(safeRoomId);
             this.clientId = generateClientId();
             this.ensureMessageListener();
 
@@ -379,8 +421,7 @@ export const NetworkManager = {
                 ? window.GRAVITY_USER_NAME
                 : this.myUser.name;
 
-            // ★ スロット 0 は部屋のオーナー（ホスト）であるため、isAI: false（人間枠）として初期化！
-            // これによりゲスト端末でもホストが最初から人間走者として正しく判定され、方向ポインターが点灯する
+            // スロット 0 は部屋のオーナー（ホスト）であるため、isAI: false（人間枠）として初期化
             for (let i = 0; i < MAX_PLAYERS; i++) {
                 this.slots[i] = {
                     slot: i,
@@ -389,7 +430,7 @@ export const NetworkManager = {
                     name: i === 0 ? 'ホスト' : `プレイヤー ${i + 1}`,
                     color: SNAKE_COLORS[i % SNAKE_COLORS.length],
                     portrait: '',
-                    isAI: (i !== 0), // 0番スロット（ホスト）は false、その他未アサイン枠は true
+                    isAI: (i !== 0),
                     joinTime: 0
                 };
             }
@@ -442,7 +483,15 @@ export const NetworkManager = {
                 else if (Array.isArray(res.list)) list = res.list;
             }
             if (Array.isArray(list)) {
-                return list.filter(r => (Number(r.gamer_num) || 0) > 0 && (Number(r.gamer_num) || 0) < MAX_PLAYERS);
+                // 有効人数判定に加えて、直前に退出・解散したゴースト部屋および現在滞在中の部屋を完全除外
+                return list.filter(r => {
+                    const rId = String(r.room_id ?? r.roomId ?? '');
+                    if (!rId) return false;
+                    if (_recentlyExitedRoomIds.has(rId)) return false;
+                    if (this.currentRoomId && String(this.currentRoomId) === rId) return false;
+                    const num = Number(r.gamer_num ?? r.gamerNum ?? 0);
+                    return num > 0 && num < MAX_PLAYERS;
+                });
             }
         } catch (err) {
             console.warn('[NetworkManager] Failed to get public room list:', err);
@@ -819,8 +868,14 @@ export const NetworkManager = {
     },
 
     async exitRoom() {
+        // 退室対象のルームIDを直前退出キャッシュへ退避
+        if (this.currentRoomId) {
+            _recentlyExitedRoomIds.add(String(this.currentRoomId));
+        }
+        
         this.purgeLocalWorldState();
         await safeExitCurrentRoom(null);
+        
         this.currentRoomId = null;
         this.isHost = false;
         this.isMultiplayerActive = false;
