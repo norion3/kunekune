@@ -1,16 +1,17 @@
 // ==============================================================================
 // 『くねくねバトル オンライン』AgentSDK公式マルチプレイ通信マネージャー (network.js)
-// v32.0.0 待機室誤脱出完全防止＆実プレイ中厳格検知(act: true)自律脱出版:
-// ・【待機室でのPパケット誤爆完全防止】
-// 　ホストが待機室にいる間でも裏で定期送信される P パケットにより、ゲストが入室直後に
-// 　勝手にゲーム画面へ誤突入してしまう不具合を完全解消。ホストが実際にプレイ中である
-// 　ことを示す `packet.act === true` を必須条件とし、ホストが開始ボタンを押すまで待機室を完全維持
-// ・【自律脱出時の正規ゲーム起動(initGame(false))】
-// 　自律脱出時に direct: true（isRespawn扱い）で呼ばれたことで描画ループが起動せず
-// 　画面が真っ暗になる問題を根絶。direct: false として完全な正規ループを起動
-// ・【開始合図3連バースト送信維持】0ms, 60ms, 150ms の冗長送信維持
-// ・【撃破チャット全端末同報(broadcastKill)維持】KILL_ALERT 同報
-// ・【入退室システム通知リアルタイム中継(SYS_ALERT)維持】
+// v33.0.0 被撃破判定同期(victimSlot)＆リザルト画面誤閉塞完全防止版:
+// ・【被撃破判定同期(victimSlot)】
+// 　broadcastKill に被害者スロット番号（victimSlot）を同封。
+// 　倒された側の端末が通信ラグ等でローカル衝突判定に至っていない場合でも、
+// 　撃破パケット（KILL_ALERT）の packet.vs === mySlot を検知して即座に onPlayerKilled を発火！
+// 　ホスト・ゲスト双方が相手に倒された際、100%確実にリトライ画面が表示されるよう完全保証
+// ・【リザルト画面の誤リセット完全遮断】
+// 　途中参加やPパケット検知時の開始処理を window.currentGameState === 'waiting'
+// 　（待機室にいる場合のみ）に厳格限定。gameover 中にパケットを受信してもリトライ画面が
+// 　勝手に非表示（display: none）にされて消え去る不具合を物理的に根絶！
+// ・【開始合図3連バースト送信維持】0ms, 60ms, 150ms 冗長送信
+// ・【待機室誤脱出完全防止維持】packet.act === true 厳格判定
 // ・【旧ルーム残留・ゴースト部屋完全根絶維持】safeExitCurrentRoom ＆ _recentlyExitedRoomIds
 // ・【ゲスト入室時ホスト枠(Slot 0)整合性保証維持】isAI: (i !== 0) 初期化
 // ・【再入室時ゴースト完全パージ維持】onWorldPurged コールバック連携
@@ -130,7 +131,8 @@ export const NetworkManager = {
         onHostPromoted: null,
         onUserExited: null,
         onSurrenderedAsHost: null, // スプリットブレイン降格時のAIパージ用コールバック
-        onWorldPurged: null        // 再入室・ルーム遷移時のローカルゴースト走者完全消去コールバック
+        onWorldPurged: null,       // 再入室・ルーム遷移時のローカルゴースト走者完全消去コールバック
+        onPlayerKilled: null       // 被撃破検知（相手端末によるキル確定）コールバック
     },
 
     setCallbacks(cb) {
@@ -174,15 +176,16 @@ export const NetworkManager = {
     },
 
     // =========================================================================
-    // 撃破チャット一斉同報API
+    // ★ 【撃破チャット一斉同報API（被害者スロット同期対応）】
     // =========================================================================
-    broadcastKill(killerName, victimName, color) {
+    broadcastKill(killerName, victimName, color, victimSlot = null) {
         if (!this.isMultiplayerActive) return;
         this._sendCustomMessage({
             e: 'KILL_ALERT',
             kn: killerName,
             vn: victimName,
             col: color,
+            vs: victimSlot,
             senderId: this.clientId
         });
     },
@@ -781,10 +784,21 @@ export const NetworkManager = {
             this._lastHostPacketTime = performance.now();
             this._hasReceivedFirstHostPacket = true;
 
-            // 撃破アラート受信ハンドラ
+            // =========================================================================
+            // ★ 【撃破アラート受信ハンドラ（被撃破判定完全同期）】
+            // 相手端末の判定で自分が倒された場合、即座に onPlayerKilled を発火！
+            // =========================================================================
             if (eventType === 'KILL_ALERT') {
                 if (packet.senderId !== this.clientId && packet.kn && packet.vn) {
                     Danmaku.push(packet.kn, `${packet.vn} を撃破！`, packet.col || '#ff3366');
+                }
+
+                // 被撃破判定：被害者スロット（vs）が自分自身（mySlot）であればゲームオーバーを即座に起動
+                if (packet.vs !== undefined && packet.vs !== null && packet.vs === this.mySlot) {
+                    console.warn(`[Sync] 撃破パケット検知: スロット ${packet.vs} (自機) の撃破宣告を受信しました。ゲームオーバー処理を実行します。`);
+                    if (this.callbacks.onPlayerKilled) {
+                        this.callbacks.onPlayerKilled(packet.kn);
+                    }
                 }
                 return;
             }
@@ -815,9 +829,8 @@ export const NetworkManager = {
             if (eventType === 'P' || eventType === 'POS') {
                 // =========================================================================
                 // ★ 【待機画面からの自律脱出セーフティネット（誤爆完全防止強化版）】
-                // ホストが実際にゲーム中（packet.act === true）である場合のみ自律脱出を発火！
-                // 待機室にいる間の通常定期パケットでは絶対に誤脱出しないように厳格保護。
-                // さらに、自律脱出時は direct: false（isRespawn = false）として正規の描画ループを起動
+                // ホストが実際にゲーム中（packet.act === true）かつ、自機が待機室（waiting）に
+                // いる場合のみ自律脱出を発火！
                 // =========================================================================
                 if (!this.isHost && typeof window !== 'undefined' && window.currentGameState === 'waiting' && packet.act === true) {
                     console.warn('[Sync] ホストが対戦中(act: true)であることを検知。ゲーム画面へ安全に自律脱出します。');
@@ -914,9 +927,13 @@ export const NetworkManager = {
                     if (this.callbacks.onSeedReceived) this.callbacks.onSeedReceived(packet.seed);
                 }
 
-                // ホストが対戦中のルームに途中参加した場合の即時開始
+                // =========================================================================
+                // ★ 【リザルト画面誤リセットの完全遮断】
+                // 従来の !== 'playing' では 'gameover' 中も合致してしまいリザルト画面が
+                // 勝手に消去されていたため、=== 'waiting'（待機室中）にのみ限定！
+                // =========================================================================
                 if (packet.act === true && !this.isHost) {
-                    if (typeof window !== 'undefined' && window.currentGameState !== 'playing') {
+                    if (typeof window !== 'undefined' && window.currentGameState === 'waiting') {
                         if (this.callbacks.onGameStart) {
                             this.callbacks.onGameStart({ seed: this.currentSeed, direct: false });
                         }

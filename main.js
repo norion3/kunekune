@@ -1,15 +1,17 @@
 // ==============================================================================
 // 『くねくねバトル オンライン』Phase 7 マスター統合オーケストレーター (main.js)
-// v37.0.0 描画ループ未起動ブラックアウト完全防止フェイルセーフ版:
-// ・【描画ループ未起動ブラックアウト完全防止フェイルセーフ】
-// 　initGame が isRespawn = true で呼び出された際でも、メイン描画ループ（animFrameId）
-// 　が停止していれば無条件で requestAnimationFrame(gameLoop) を即座に起動。
-// 　「HTMLアイコンボタンだけが表示され、Canvas画面が真っ暗（未描画）になる」不具合を100%根絶！
-// ・【撃破判定・重複チャット多重発火完全根絶維持】
-// 　victim._hasBeenKilled フラグおよび isDead 厳格チェックにより同一撃破を1回に限定
-// ・【リザルト画面表示前の即時パケットフラッシュ維持】
-// 　handleGameOver 突入時に即座に player.isDead = true を確定し forceImmediateSync() 送信
-// ・【撃破チャット同報連携維持】NetworkManager.broadcastKill による全端末弾幕中継
+// v38.0.0 被撃破判定双方向完全同期＆リトライ画面100%点灯保証版:
+// ・【被撃破宣告(onPlayerKilled)コールバック連携】
+// 　相手端末で自機が撃破されたと判定された際、通信ラグで自機ローカルの衝突判定が
+// 　まだ成立していなくても、受信した死亡宣告パケットにより即座に handleGameOver() を発火！
+// 　ホスト・ゲスト双方が相手に倒された際、100%確実にリトライ画面が表示されるよう完全保証
+// ・【撃破同報への被害者スロット(victimSlot)連携】
+// 　checkHeadCollisions で敵を撃破した際、NetworkManager.broadcastKill に被害者スロット
+// 　（victim.id または mySlot）を引数として確実に渡し、倒された相手端末へ死亡を直接通告
+// ・【描画ループ未起動ブラックアウト完全防止フェイルセーフ維持】
+// 　initGame 突入時に animFrameId が停止していれば無条件で requestAnimationFrame(gameLoop) 起動
+// ・【撃破重複判定多重発火完全根絶維持】victim._hasBeenKilled フラグによる単発キル限定
+// ・【リザルト画面前の即時パケットフラッシュ維持】handleGameOver 突入時の forceImmediateSync()
 // ・【配列参照乖離バグの完全根絶維持】allSnakes.length = 0 インプレース更新
 // ・【ゲスト側リモート走者常時マージ維持】remoteSnakes の allSnakes 自動統合
 // ・【ホスト(Slot 0)および通常AIのゴースト誤パージ完全防止維持】
@@ -352,7 +354,6 @@ export function initGame(isRespawn = false) {
     // ★ 【描画ループ未起動ブラックアウト完全防止フェイルセーフ】
     // いかなるルート（isRespawn=true 等）でゲーム画面に入った場合でも、
     // メイン描画ループ（gameLoop）が停止していれば無条件で起動！
-    // 画面が真っ暗なままボタンだけが表示される現象を構造上100%防止
     // =========================================================================
     if (!animFrameId) {
         animFrameId = requestAnimationFrame(gameLoop);
@@ -462,6 +463,17 @@ NetworkManager.setCallbacks({
             allSnakes.push(player, ...(aiManager && Array.isArray(aiManager.ais) ? aiManager.ais : []));
             sortedSnakes = [...allSnakes];
         }
+    },
+
+    // =========================================================================
+    // ★ 【相手端末からの被撃破宣告(onPlayerKilled)受信ハンドラ】
+    // 相手端末の判定で自機が倒された際、即座にゲームオーバー（リトライ画面）を発火！
+    // =========================================================================
+    onPlayerKilled(killerName) {
+        if (!player.isDead) {
+            console.warn(`[Sync] 相手端末からの死亡通告を受信: キラー「${killerName || '敵スネーク'}」により撃破確定。リトライ画面を表示します。`);
+            handleGameOver({ name: killerName || '敵スネーク', isDead: false });
+        }
     }
 });
 
@@ -477,6 +489,8 @@ initUIBindings({
 });
 
 function handleGameOver(killer) {
+    if (gameState === 'gameover' && player.isDead) return;
+
     gameState = 'gameover';
     window.currentGameState = gameState;
     player.isDead = true;
@@ -712,9 +726,10 @@ function gameLoop() {
                     const killColor = killer.color || '#ff3366';
                     Danmaku.push(killer.name, `${victim.name} を撃破！`, killColor);
 
-                    // ★ 全端末へ撃破チャットを一斉同報（ホストまたは自機キル時）
+                    // ★ 被害者スロット番号を同封して全端末へ撃破チャットを一斉同報（被撃破判定同期）
                     if (NetworkManager.isMultiplayerActive && typeof NetworkManager.broadcastKill === 'function') {
-                        NetworkManager.broadcastKill(killer.name, victim.name, killColor);
+                        const victimSlot = victim.isPlayer ? NetworkManager.mySlot : victim.id;
+                        NetworkManager.broadcastKill(killer.name, victim.name, killColor, victimSlot);
                     }
                 }
             }
