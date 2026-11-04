@@ -1,15 +1,15 @@
 // ==============================================================================
 // 『くねくねバトル オンライン』マルチプレイ送信ループ＆アクションキュー管理 (net_broadcaster.js)
-// v31.0.0 60,000px広域索敵対応＆プレイヤー枠無制限完全同期版:
-// ・【プレイヤー枠(Slot 0〜5)無制限完全同期】
-// 　広大な 60,000px マップにおいて、遠く離れたプレイヤー枠（空き枠ダミーAI ID: 95〜100 含む）
-// 　が近接カリング（3,500px）によって通信パケットから間引かれ、ズームアウト索敵や
-// 　HUDレーダーから消失（ゴースト隔離）していた不具合を完全根絶！
-// 　プレイヤー枠は距離に関わらず最優先で常にタプル化して全端末へ常時同報
-// ・【ホスト実プレイ中(act: true)状態同期維持】待機室誤脱出完全防止
+// v32.0.0 ランキングパケット最優先死守＆ゲスト同期遅延完全根絶版:
+// ・【ランキングパケット(lb)最優先死守】
+// 　1KB制限防衛（byteLength >= 1010）において、これまで真っ先に丸ごと破棄されていた
+// 　`msgObj.lb` の削除処理を完全撤廃！ランキングを最優先保護データとし、
+// 　1KB超過時はチャット・肉片・遠隔AIタプル側を優先的に間引くことで、
+// 　ゲスト端末へ最新の順位・スコア情報が遅延なく100%確実に届くよう直通配信を保証
+// ・【プレイヤー枠(Slot 0〜5)無制限完全同期維持】
+// ・【ホスト実プレイ中(act: true)状態同期維持】
 // ・【重要システムパケットのレートリミットバイパス維持】
-// 　START_GAME、KILL_ALERT、SYS_ALERT、ROOM_MEMBERS_SYNC 等の即時送信
-// ・【餌同期データ最優先保護維持】1KB境界時の段階的フォールバック
+// ・【餌同期データ最優先保護維持】
 // ・【餌同期の絶対座標化維持】queueFoodPick (x, y) 運用
 // ・【通常キューの差し戻し保護維持】レートリミット接触時のデータ保護
 // ==============================================================================
@@ -278,24 +278,18 @@ export const NetBroadcaster = {
             let byteLength = getUtf8ByteLength(rawString);
 
             // =========================================================================
-            // 1KB防衛：段階的フォールバック（餌取得データ pk を最優先死守）
+            // 1KB防衛：段階的フォールバック（ランキング lb ＆ 餌取得 pk を最優先死守）
             // =========================================================================
             if (byteLength >= 1010) {
-                // 1. リーダーボード情報（lb）の削除
-                if (msgObj.lb) {
-                    delete msgObj.lb;
-                    rawString = JSON.stringify(msgObj);
-                    byteLength = getUtf8ByteLength(rawString);
-                }
-                // 2. チャット（ch）の差し戻し
-                if (byteLength >= 1010 && msgObj.ch) {
+                // 1. チャット（ch）の差し戻し
+                if (msgObj.ch) {
                     this._pendingChats.unshift(...msgObj.ch);
                     if (this._pendingChats.length > 10) this._pendingChats.length = 10;
                     delete msgObj.ch;
                     rawString = JSON.stringify(msgObj);
                     byteLength = getUtf8ByteLength(rawString);
                 }
-                // 3. 肉片クラスタ（dc）の差し戻し
+                // 2. 肉片クラスタ（dc）の差し戻し
                 if (byteLength >= 1010 && msgObj.dc) {
                     this._pendingClusters.unshift(...msgObj.dc);
                     if (this._pendingClusters.length > 12) this._pendingClusters.length = 12;
@@ -303,7 +297,7 @@ export const NetBroadcaster = {
                     rawString = JSON.stringify(msgObj);
                     byteLength = getUtf8ByteLength(rawString);
                 }
-                // 4. 肉片単体（dp）の差し戻し
+                // 3. 肉片単体（dp）の差し戻し
                 if (byteLength >= 1010 && msgObj.dp) {
                     this._pendingDrops.unshift(...msgObj.dp);
                     if (this._pendingDrops.length > 48) this._pendingDrops.length = 48;
@@ -311,7 +305,26 @@ export const NetBroadcaster = {
                     rawString = JSON.stringify(msgObj);
                     byteLength = getUtf8ByteLength(rawString);
                 }
-                // 5. 餌取得（pk）は同期破綻を防ぐため最後まで保持
+                // 4. 遠隔通常AIタプルの間引き（プレイヤー枠 slot < MAX_PLAYERS と自機は死守）
+                if (byteLength >= 1010 && Array.isArray(msgObj.l) && msgObj.l.length > 2) {
+                    const criticalList = [];
+                    const pruneList = [];
+                    for (let i = 0; i < msgObj.l.length; i++) {
+                        const tuple = msgObj.l[i];
+                        const slotNum = tuple[0];
+                        if (slotNum < MAX_PLAYERS) {
+                            criticalList.push(tuple);
+                        } else {
+                            pruneList.push(tuple);
+                        }
+                    }
+                    // 通常AIを半分に減らしてサイズ圧縮
+                    const keepAiCount = Math.floor(pruneList.length / 2);
+                    msgObj.l = criticalList.concat(pruneList.slice(0, keepAiCount));
+                    rawString = JSON.stringify(msgObj);
+                    byteLength = getUtf8ByteLength(rawString);
+                }
+                // 5. 餌取得（pk）の間引き（同期保護のため半分保持）
                 if (byteLength >= 1010 && Array.isArray(msgObj.pk) && msgObj.pk.length > 2) {
                     const keepCount = Math.floor(msgObj.pk.length / 2);
                     const overflow = msgObj.pk.splice(keepCount);

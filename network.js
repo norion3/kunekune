@@ -1,11 +1,12 @@
 // ==============================================================================
 // 『くねくねバトル オンライン』AgentSDK公式マルチプレイ通信マネージャー (network.js)
-// v35.0.0 ホスト昇格時Slot0引越し＆スプリットブレイン完全根絶版:
-// ・【ホスト昇格時のSlot 0引越し＆元スロット解放】
-// 　旧ホスト退室による自律ホスト昇格時（promoteToHost）、新ホストのデータを
-// 　Slot 0 へ正式にコピー移行し、元いたスロット（Slot 1等）を空き枠(isAI: true)として解放！
-// 　mySlot および window.localPlayerInstance.id を 0 に即時更新することで、
-// 　退室と再入室を繰り返してもホスト表示・権限がねじれる現象を100%完全根絶
+// v36.0.0 空き枠ダミーAIのCPU完全統一命名＆幽霊プレイヤー根絶版:
+// ・【空き枠ダミーAIのCPU完全統一命名】
+// 　初期スロット、退室時スロット、ホスト昇格時の解放スロット名を「プレイヤー X」から
+// 　`CPU ${MAX_AIS + i + 1}`（例: CPU 96〜100）へと完全統一！
+// 　空き枠ダミーAIがゲーム内で成長してもランキングに「プレイヤー 4」「プレイヤー 5」などの
+// 　謎のプレイヤー名が載る現象を100%物理根絶
+// ・【ホスト昇格時のSlot 0引越し＆元スロット解放維持】
 // ・【START_GAME ゲームオーバー中完全遮断維持】
 // ・【メモリリーク完全防止維持】_recentlyExitedRoomIds の20件ローテーション破棄
 // ・【被撃破判定同期(victimSlot)維持】broadcastKill 同期
@@ -31,7 +32,7 @@ import { NetBroadcaster } from './net_broadcaster.js';
 import { Danmaku } from './danmaku.js';
 import { Menu } from './menu.js';
 import { updateLobbyGreeting } from './dom.js';
-import { SNAKE_COLORS, MAX_PLAYERS } from './constants.js';
+import { SNAKE_COLORS, MAX_PLAYERS, MAX_AIS } from './constants.js';
 
 /**
  * 直前に退出・解散したルームIDのキャッシュ（ゴースト部屋表示防止用）
@@ -109,11 +110,12 @@ export const NetworkManager = {
     clientId: generateClientId(),
     myUser: { name: 'あなた', user_id: 'local_user', portrait: '' },
 
+    // ★ 空き枠スロットの名前を「プレイヤー X」ではなく通常AIと同じ「CPU ${MAX_AIS + i + 1}」として初期化
     slots: Array.from({ length: MAX_PLAYERS }, (_, i) => ({
         slot: i,
         clientId: null,
         userId: null,
-        name: i === 0 ? 'ホスト' : `プレイヤー ${i + 1}`,
+        name: i === 0 ? 'ホスト' : `CPU ${MAX_AIS + i + 1}`,
         color: SNAKE_COLORS[i % SNAKE_COLORS.length],
         portrait: '',
         isAI: i !== 0,
@@ -403,7 +405,7 @@ export const NetworkManager = {
                     slot: i,
                     clientId: null,
                     userId: null,
-                    name: `プレイヤー ${i + 1}`,
+                    name: `CPU ${MAX_AIS + i + 1}`,
                     color: SNAKE_COLORS[i % SNAKE_COLORS.length],
                     portrait: '',
                     isAI: true,
@@ -480,7 +482,7 @@ export const NetworkManager = {
                     slot: i,
                     clientId: null,
                     userId: null,
-                    name: i === 0 ? 'ホスト' : `プレイヤー ${i + 1}`,
+                    name: i === 0 ? 'ホスト' : `CPU ${MAX_AIS + i + 1}`,
                     color: SNAKE_COLORS[i % SNAKE_COLORS.length],
                     portrait: '',
                     isAI: (i !== 0),
@@ -647,11 +649,12 @@ export const NetworkManager = {
                 }
             }
 
+            // ★ 途中退室時も「プレイヤー X」ではなく通常AIと同じ「CPU ${MAX_AIS + slotIdx + 1}」として安全リセット
             this.slots[slotIdx] = {
                 slot: slotIdx,
                 clientId: null,
                 userId: null,
-                name: `プレイヤー ${slotIdx + 1}`,
+                name: `CPU ${MAX_AIS + slotIdx + 1}`,
                 color: SNAKE_COLORS[slotIdx % SNAKE_COLORS.length],
                 portrait: '',
                 isAI: true,
@@ -752,13 +755,13 @@ export const NetworkManager = {
             joinTime: myData.joinTime || performance.now()
         };
 
-        // 2. 元いたスロット（Slot 1 等）を空き枠（AI枠）として解放
+        // 2. 元いたスロット（Slot 1 等）を空き枠（AI枠）として解放（通常AI命名に統一）
         if (oldSlot !== 0 && this.slots[oldSlot]) {
             this.slots[oldSlot] = {
                 slot: oldSlot,
                 clientId: null,
                 userId: null,
-                name: `プレイヤー ${oldSlot + 1}`,
+                name: `CPU ${MAX_AIS + oldSlot + 1}`,
                 color: SNAKE_COLORS[oldSlot % SNAKE_COLORS.length],
                 portrait: '',
                 isAI: true,

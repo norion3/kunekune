@@ -1,28 +1,23 @@
 // ==============================================================================
 // 『くねくねバトル オンライン』Phase 7 マスター統合オーケストレーター (main.js)
-// v41.0.0 撃破コールバック論理矛盾修正・全死亡イベント確実発火版:
-// ・【撃破判定(isDead)の論理的矛盾を完全解決】
-// 　combat.js でキル成立時に victim.isDead = true にされた直後のコールバックを
-// 　受け取る際、誤って `victim.isDead` をガード条件にしていた論理矛盾を削除。
-// 　これにより、ソロ・マルチ・AI戦の「すべての死亡イベント」でリザルト画面が
-// 　100%確実に表示されるようになり、マルチプレイ時のキルパケットも確実に送信されます！
-// ・【リザルト画面強制消去の完全遮断】
-// 　handleGameOver 発火後、モーダル（#over-screen）が表示されている間は外部の
-// 　途中参加・開始バースト等による initGame() を物理遮断。ユーザーの手動リトライタップ
-// 　以外でリザルト画面が消去される現象を100%根絶
-// ・【空き枠ダミーAI撃破スロットID完全マッピング】
-// 　ホスト側で空き枠ダミーAI (ID: 95〜100) と判定されている走者を撃破した際、
-// 　victim.id - MAX_AIS - 1 でゲスト正規スロット (0〜5) へ変換して broadcastKill を送信。
-// 　相手端末での victimSlot 照合不一致による被撃破判定スルーを完全根絶
-// ・【外壁激突死のゲームオーバー連携】
-// 　updatePhysics 内で外壁接触により player.isDead がセットされた際、即座に
-// 　handleGameOver({ name: '外壁 (MAP境界)' }) を発火してリザルト画面へ直行
-// ・【リザルト画面表示例外完全防護】
-// 　統計計算および DOM 代入処理全体を try-catch で厳格防護（100%点灯保証）
-// ・【被撃破宣告(onPlayerKilled)確実発火】
-// 　gameState !== 'gameover' であれば相手端末からの死亡通告により即座に起動
-// ・【撃破重複判定多重発火完全根絶】victim._hasBeenKilled フラグ制御
-// ・【リザルト画面前の即時パケットフラッシュ】forceImmediateSync()
+// v42.0.0 ホストランキング非表示デッドロック解消＆ダミーAI CPU完全統一版:
+// ・【ホスト端末側ランキング非表示デッドロックの完全解消】
+// 　ホスト側のランキングDOM生成部から非表示ガード（style.display !== 'none'）を撤廃！
+// 　非表示時でも常に最新のHTMLを構築・保持しておくことで、ホスト側でもトロフィーボタン
+// 　を押した瞬間に100%確実に上位ランキングが点灯するよう完全防護
+// ・【空き枠ダミーAIフォールバック名のCPU統一（名前重複完全根絶）】
+// 　initGame および onUserExited 内の空き枠ダミーAI生成時、通常AIと重複する `CPU ${i + 1}`
+// 　ではなく `CPU ${dummyId}`（例: CPU 96〜100）へ完全統一し、名前重複バグを物理根絶！
+// ・【待機室(マッチング画面)空き枠表記の統一】
+// 　待機室スロットの空き枠バッジを「+」、名前を「プレイヤ X (空き枠)」へ統一
+// ・【撃破判定(isDead)の論理的矛盾完全解決維持】
+// ・【リザルト画面強制消去の完全遮断維持】
+// ・【空き枠ダミーAI撃破スロットID完全マッピング維持】
+// ・【外壁激突死のゲームオーバー連携維持】
+// ・【リザルト画面表示例外完全防護維持】
+// ・【被撃破宣告(onPlayerKilled)確実発火維持】
+// ・【撃破重複判定多重発火完全根絶維持】
+// ・【リザルト画面前の即時パケットフラッシュ維持】forceImmediateSync()
 // ==============================================================================
 
 import { injectStyles } from './style.js';
@@ -239,17 +234,19 @@ export const UIController = {
                 }
             }
 
-            const badgeText = isMe ? 'YOU' : (s.isAI ? 'CPU' : `P${s.slot + 1}`);
+            // ★ 待機枠表記の統一：空き枠は「+」バッジ、名前は「プレイヤ X (空き枠)」
+            const badgeText = isMe ? 'YOU' : (s.isAI ? '+' : `P${s.slot + 1}`);
+            const displayName = s.isAI ? `プレイヤ ${s.slot + 1} (空き枠)` : (s.name || `プレイヤ ${s.slot + 1}`);
             
             const avatarHtml = (s.portrait && !s.isAI)
                 ? `<img src="${s.portrait}" alt="avatar" style="width: 24px; height: 24px; border-radius: 50%; object-fit: cover; border: 1.5px solid ${s.color};">`
-                : `<div class="waiting-slot-badge" style="background-color: ${s.color};">${badgeText}</div>`;
+                : `<div class="waiting-slot-badge" style="background-color: ${s.isAI ? 'rgba(56, 189, 248, 0.2)' : s.color}; border: 1.5px solid ${s.isAI ? 'rgba(56, 189, 248, 0.4)' : s.color}; color: ${s.isAI ? '#38bdf8' : '#ffffff'}; font-size: ${s.isAI ? '14px' : '10px'}; font-weight: 800;">${badgeText}</div>`;
 
             return `
-                <div class="waiting-slot">
+                <div class="waiting-slot" style="${s.isAI ? 'opacity: 0.65;' : ''}">
                     <div class="waiting-slot-left">
                         ${avatarHtml}
-                        <div class="waiting-slot-name">${s.name} ${isMe ? '(あなた)' : ''}</div>
+                        <div class="waiting-slot-name" style="color: ${s.isAI ? '#94a3b8' : '#ffffff'};">${displayName} ${isMe ? '(あなた)' : ''}</div>
                     </div>
                     ${isCurrentHost ? '<div class="waiting-slot-host">HOST</div>' : ''}
                 </div>
@@ -332,7 +329,9 @@ export function initGame(isRespawn = false, isExplicitRetry = false) {
                 const slotData = NetworkManager.slots[i];
                 if (slotData && slotData.isAI) {
                     const dummyId = MAX_AIS + i + 1;
-                    const aiSnake = new Snake(false, dummyId, slotData.name || `CPU ${i + 1}`, slotData.color, 'normal');
+                    // ★ 空き枠ダミーAIの名前を通常AIと完全統一された CPU ${dummyId}（例: CPU 96〜100）へ安全フォールバック
+                    const dummyName = (slotData.name && slotData.name.startsWith('CPU ')) ? slotData.name : `CPU ${dummyId}`;
+                    const aiSnake = new Snake(false, dummyId, dummyName, slotData.color, 'normal');
                     const angle = Math.random() * Math.PI * 2;
                     const dist = 1500 + Math.random() * 22000;
                     const sx = Math.max(400, Math.min(MAP_SIZE - 400, player.x + Math.cos(angle) * dist));
@@ -446,7 +445,8 @@ NetworkManager.setCallbacks({
             if (!existingFake) {
                 const slotData = NetworkManager.slots[slotIdx];
                 const aiColor = (slotData && slotData.color) ? slotData.color : SNAKE_COLORS[slotIdx % SNAKE_COLORS.length];
-                const aiName = (slotData && slotData.name) ? slotData.name : `CPU ${slotIdx + 1}`;
+                // ★ 途中退室時のダミーAIも通常AIと完全統一された CPU ${dummyId}（例: CPU 96〜100）へ命名
+                const aiName = (slotData && slotData.name && slotData.name.startsWith('CPU ')) ? slotData.name : `CPU ${dummyId}`;
                 
                 const newDummyAI = new Snake(false, dummyId, aiName, aiColor, 'normal');
                 const angle = Math.random() * Math.PI * 2;
@@ -850,8 +850,13 @@ function gameLoop() {
                     });
                 }
 
+                // =========================================================================
+                // ★ 【ホスト端末側ランキング非表示デッドロックの完全解消】
+                // 非表示中であっても常に最新の innerHTML を構築しておくことで、
+                // トロフィーボタンを押した瞬間にホスト側でも100%確実にリストが表示される！
+                // =========================================================================
                 const listEl = document.getElementById('leaderboard-list');
-                if (listEl && listEl.parentElement && listEl.parentElement.style.display !== 'none') {
+                if (listEl) {
                     listEl.innerHTML = topList.map((s, idx) => `
                         <div style="display:flex; justify-content:space-between; align-items:center; color:${s === player ? '#ffdd00' : '#ffffff'}; font-weight:${s === player ? 'bold' : 'normal'}; font-size:12px; gap:6px;">
                             <div style="display:flex; align-items:center; min-width:0; flex:1; overflow:hidden;">
