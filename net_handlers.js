@@ -1,10 +1,12 @@
 // ==============================================================================
 // 『くねくねバトル オンライン』リモートパケット受信反映ハンドラ (net_handlers.js)
-// v35.0.0 相手走者アイコン枠線(淵)リアルタイム連動＆ホスト刻印版:
-// ・【相手走者アイコン枠線(淵)リアルタイム連動】
-// 　onRemoteSnakeUpdate で相手の colorIdx 変更を検知した際、スロット色を更新すると同時に
-// 　Menu.updateParticipants() を即時発火！相手端末でカスタム色変更が行われた瞬間に
-// 　自画面のメニュー走者リスト内のアバター枠線（淵）も0msで新色へ即時同期
+// v36.0.0 相手顔タイプ・マイアイコン(face/faceIdx)リアルタイム同期版:
+// ・【相手顔タイプ・マイアイコン(face/faceIdx)リアルタイム同期】
+// 　onRemoteSnakeUpdate 内で、相手端末から届いたタプルの顔情報（data.face / data.faceIdx）
+// 　を毎フレーム検知し、remote.face を即座に更新！
+// 　さらに NetworkManager.slots[data.slot].face にも即時反映させ、
+// 　snake.js の avatarImg キャッシュ機構と連動して相手のマイアイコン顔・表情を100%リアルタイム同期！
+// ・【相手走者アイコン枠線(淵)リアルタイム連動維持】Menu.updateParticipants 連動
 // ・【onGameStart ゲームオーバー中完全遮断維持】リザルト画面誤消去完全防止
 // ・【ホスト(Slot 0)人間走者フラグ(isHumanPlayer)の完全刻印維持】
 // ・【人間走者厳格フラグ(isHumanPlayer)刻印維持】矢印二重描画根絶
@@ -19,6 +21,7 @@
 import { Snake } from './snake.js';
 import { NetworkManager } from './network.js';
 import { Menu } from './menu.js';
+import { FACE_TYPES } from './net_protocol.js';
 import { SNAKE_COLORS, TOTAL_SNAKES, MAX_PLAYERS } from './constants.js';
 
 // 表情タイプの同期用定義（ai.js と完全一致）
@@ -98,7 +101,17 @@ export function setupNetworkHandlers(ctx) {
                     resolvedName = (slotData && slotData.name)
                         ? slotData.name 
                         : (data.isAI ? `CPU ${data.slot + 1}` : `P${data.slot + 1}`);
-                    face = 'normal';
+
+                    // パケットまたはスロットデータから顔タイプを復元
+                    if (data.face) {
+                        face = data.face;
+                    } else if (data.faceIdx !== undefined && FACE_TYPES[data.faceIdx]) {
+                        face = FACE_TYPES[data.faceIdx];
+                    } else if (slotData && slotData.face) {
+                        face = slotData.face;
+                    } else {
+                        face = 'normal';
+                    }
                     
                     // ★ ホスト枠（Slot 0）または AIフラグが立っていない枠を無条件で人間走者と判定！
                     if (data.slot === 0 || (slotData && !slotData.isAI)) {
@@ -156,6 +169,29 @@ export function setupNetworkHandlers(ctx) {
                 // 相手の色が変わった場合、メニューの走者一覧も即時更新してアイコンの淵を切り替え
                 if (colorChanged && Menu && typeof Menu.updateParticipants === 'function') {
                     Menu.updateParticipants(NetworkManager.slots.filter(s => !s.isAI));
+                }
+            }
+
+            // =========================================================================
+            // ★ 【他ユーザー顔タイプ・マイアイコン(face/faceIdx)リアルタイム同期】
+            // 相手がメニューで表情やマイアイコンを変更した際、届いた顔情報を即時反映！
+            // snake.js の avatarImg キャッシュ機構と連動して相手の頭部へ即時描画
+            // =========================================================================
+            let targetFace = null;
+            if (data.face) {
+                targetFace = data.face;
+            } else if (data.faceIdx !== undefined && FACE_TYPES[data.faceIdx]) {
+                targetFace = FACE_TYPES[data.faceIdx];
+            }
+
+            if (targetFace) {
+                if (remote.face !== targetFace) {
+                    remote.face = targetFace;
+                }
+                if (data.slot < MAX_PLAYERS && NetworkManager.slots[data.slot]) {
+                    if (NetworkManager.slots[data.slot].face !== targetFace) {
+                        NetworkManager.slots[data.slot].face = targetFace;
+                    }
                 }
             }
 
