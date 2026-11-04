@@ -1,10 +1,12 @@
 // ==============================================================================
 // 『くねくねバトル オンライン』リモートパケット受信反映ハンドラ (net_handlers.js)
-// v32.0.0 人間走者厳格フラグ(isHumanPlayer)刻印＆AI混同物理遮断版:
-// ・【人間走者厳格フラグ(isHumanPlayer)刻印】
-// 　ホスト側で CPU 1 (AI ID: 1) と ゲスト (Slot 1) のIDが重複してAIにも矢印が
-// 　出てしまう問題を根絶するため、受信生成時に remote.isHumanPlayer = true/false を明示。
-// 　スロット情報（!isAI）およびホスト枠（Slot 0）を厳密に照合し、人間のみにフラグを付与
+// v33.0.0 ホスト(Slot 0)人間走者完全刻印＆配列直接統合・レーダー同期確定版:
+// ・【ホスト(Slot 0)人間走者フラグ(isHumanPlayer)の完全刻印】
+// 　ゲスト端末がホストからデータを受信する際、data.slot === 0 を無条件で人間走者
+// 　（isHumanPlayer = true）として明示刻印。スロット情報受領の遅延やタイミングのズレ
+// 　に一切左右されず、ゲスト画面上でも遠くのホストの方向ポインター（▲）が100%点灯
+// ・【人間走者厳格フラグ(isHumanPlayer)刻印維持】
+// 　ホスト側で CPU 1 (AI ID: 1) と ゲスト (Slot 1) のID重複による矢印二重描画を根絶
 // ・【他ユーザーカラーリアルタイム即時同期維持】相手の色変更を毎フレーム即座に反映
 // ・【ランキング順位番号と名前の完全頭出し整列維持】順位番号の独立固定幅ブロック
 // ・【スコア省略フォーマッター維持】6桁フル表示、7桁目小数3桁固定（X.XXXM）
@@ -86,7 +88,7 @@ export function setupNetworkHandlers(ctx) {
                         : (data.isAI ? `CPU ${data.slot + 1}` : `P${data.slot + 1}`);
                     face = 'normal';
                     
-                    // ホスト枠（Slot 0）または AIフラグが立っていない枠を人間走者と判定
+                    // ★ ホスト枠（Slot 0）または AIフラグが立っていない枠を無条件で人間走者と判定！
                     if (data.slot === 0 || (slotData && !slotData.isAI)) {
                         isRealHuman = true;
                     }
@@ -134,16 +136,14 @@ export function setupNetworkHandlers(ctx) {
                 }
             }
 
-            // ★ 名前同期保証 ＆ 人間フラグの追従確定
+            // ★ 名前同期保証 ＆ 人間フラグの追従確定（Slot 0はゲスト端末で常時人間判定）
             if (data.slot < MAX_PLAYERS) {
                 const curSlot = NetworkManager.slots[data.slot];
-                if (curSlot) {
-                    if (data.slot === 0 || !curSlot.isAI) {
-                        remote.isHumanPlayer = true;
-                    }
-                    if (curSlot.name && !curSlot.isAI && remote.name !== curSlot.name) {
-                        remote.name = curSlot.name;
-                    }
+                if (data.slot === 0 || (curSlot && !curSlot.isAI)) {
+                    remote.isHumanPlayer = true;
+                }
+                if (curSlot && curSlot.name && !curSlot.isAI && remote.name !== curSlot.name) {
+                    remote.name = curSlot.name;
                 }
             }
 

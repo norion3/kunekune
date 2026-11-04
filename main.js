@@ -1,16 +1,20 @@
 // ==============================================================================
 // 『くねくねバトル オンライン』Phase 7 マスター統合オーケストレーター (main.js)
-// v33.0.0 ホスト枠(Slot 0)ゴーストパージ保護ガード＆ゲスト側追従完全復旧版:
-// ・【ホスト枠(Slot 0)ゴーストパージ保護ガード】
-// 　ゲスト端末の gameLoop において、ホスト枠（slotIdx === 0）が通信ラグや初期化ズレ
-// 　によって slots[0].isAI と判定されても、誤って remoteSnakes から削除されないよう
-// 　例外保護ガードを追加。ゲスト画面上でもホストのスネーク実体が100%保持され、
-// 　レーダー外周の方向ポインター（▲）および二重パルスリングが確実に点灯！
+// v35.0.0 ゲスト側リモート走者完全マージ＆配列参照乖離バグ根本根絶版:
+// ・【配列参照乖離バグの完全根絶】initGame における allSnakes = [player] という
+// 　再代入を撤廃し、allSnakes.length = 0; allSnakes.push(player); のインプレース
+// 　更新へ統一。net_handlers.js との参照乖離を根本から根絶
+// ・【ゲスト側リモート走者常時マージ】gameLoop において、ホストだけでなくゲスト端末でも
+// 　remoteSnakes（ホスト、他ゲスト、通常AI）を確実に allSnakes へ自動統合。
+// 　これにより、ゲスト画面のレーダー（sortedSnakes）にホストが100%確実に渡され、
+// 　遠くのホストを指すシアン色（水色）の方向ポインター（▲）が確実に点灯！
+// ・【通常AIおよびホストのゴースト誤パージ完全防止】gameLoop のゴーストパージ処理を
+// 　slotIdx < MAX_PLAYERS かつ slotIdx !== 0 に限定。スロット配列外の通常AI(6〜99)
+// 　およびホスト枠(Slot 0)が誤って消去される不具合を完全解決
+// ・【自機player.idの適正同期】initGame で player.id = NetworkManager.mySlot を設定し、
+// 　ゲスト自機とホスト(id: 0)のID衝突を解消
 // ・【スコア省略フォーマッター維持】6桁フル表示、7桁目小数3桁固定（X.XXXM）
 // ・【ランキング順位番号と名前の完全頭出し整列維持】順位番号の独立固定幅ブロック
-// ・【長いGRAVITYユーザー名の安全な省略保証維持】min-width: 0 と ellipsis
-// ・【リーダーボードスロットID完全同期維持】通常AI(6〜99)およびダミーAI(0〜5)の整合性維持
-// ・【再入室ゴーストパージ連携維持】NetworkManager.callbacks.onWorldPurged 実装維持
 // ==============================================================================
 
 import { injectStyles } from './style.js';
@@ -277,6 +281,8 @@ export function initGame(isRespawn = false) {
 
     player.name = resolvedPlayerName;
     player.color = SNAKE_COLORS[NetworkManager.mySlot % SNAKE_COLORS.length];
+    // ★ 自機IDを自身のスロット番号（ゲストなら1〜5、ホストなら0）に適正同期し、ホストとのID重複を解消
+    player.id = NetworkManager.mySlot;
 
     if (!NetworkManager.isMultiplayerActive) {
         NetworkManager.slots[0].userId = NetworkManager.myUser.user_id;
@@ -289,6 +295,11 @@ export function initGame(isRespawn = false) {
         remoteSnakes.clear();
         world.clear();
         collisionEngine.clear();
+
+        // ★ 【配列参照破壊の完全根絶】
+        // allSnakes = [player] という再代入を撤廃し、setupNetworkHandlers に渡した既存の配列をインプレース更新
+        allSnakes.length = 0;
+        allSnakes.push(player);
 
         const isGuest = NetworkManager.isMultiplayerActive && !NetworkManager.isHost;
         if (!isGuest) {
@@ -322,11 +333,10 @@ export function initGame(isRespawn = false) {
             }
 
             window.allAISnakesInstance = aiManager.ais;
-            allSnakes = [player, ...aiManager.ais];
+            allSnakes.push(...aiManager.ais);
         } else {
             aiManager.ais = [];
             window.allAISnakesInstance = [];
-            allSnakes = [player];
         }
 
         sortedSnakes = [...allSnakes];
@@ -366,7 +376,10 @@ NetworkManager.setCallbacks({
                 get list() { return sortedSnakes; },
                 set list(v) { sortedSnakes = v; }
             },
-            setAllSnakes: (list) => { allSnakes = list; },
+            setAllSnakes: (list) => {
+                allSnakes.length = 0;
+                allSnakes.push(...list);
+            },
             aiManager,
             player,
             NetworkManager,
@@ -380,7 +393,8 @@ NetworkManager.setCallbacks({
         aiManager.aiMeta = [];
         window.allAISnakesInstance = [];
         const currentRemotes = Array.from(remoteSnakes.values());
-        allSnakes = [player, ...currentRemotes];
+        allSnakes.length = 0;
+        allSnakes.push(player, ...currentRemotes);
         sortedSnakes = [...allSnakes];
 
         updateResetButtonVisibility();
@@ -438,7 +452,8 @@ NetworkManager.setCallbacks({
     onWorldPurged() {
         remoteSnakes.clear();
         if (allSnakes && player) {
-            allSnakes = [player, ...(aiManager && Array.isArray(aiManager.ais) ? aiManager.ais : [])];
+            allSnakes.length = 0;
+            allSnakes.push(player, ...(aiManager && Array.isArray(aiManager.ais) ? aiManager.ais : []));
             sortedSnakes = [...allSnakes];
         }
     }
@@ -518,19 +533,22 @@ function gameLoop() {
             if (remote.isDead) return;
 
             if (NetworkManager.isMultiplayerActive) {
-                // ★ ホスト枠（slotIdx === 0）はゲスト端末で絶対にパージしない保護ガード！
-                // 通信ラグでスロット情報が同期途上であっても、ホストの実体を確実に生かしておく
-                const isHostSlot = (slotIdx === 0);
-                const slotData = NetworkManager.slots[slotIdx];
-                
-                if (!isHostSlot && (!slotData || slotData.isAI)) {
-                    console.warn(`[Sync] ゴースト検知: 切断されたスロット ${slotIdx} の残留エンティティを完全パージします。`);
-                    remoteSnakes.delete(slotIdx);
-                    const aIdx = allSnakes.indexOf(remote);
-                    if (aIdx !== -1) allSnakes.splice(aIdx, 1);
-                    const sIdx = sortedSnakes.indexOf(remote);
-                    if (sIdx !== -1) sortedSnakes.splice(sIdx, 1);
-                    return;
+                // ★ スロットがプレイヤースロット（0〜5）の場合のみ切断・退室判定を行う
+                // スロット 6〜99（通常AI）は slots 配列に存在しないためパージ対象外！
+                if (slotIdx < MAX_PLAYERS) {
+                    const isHostSlot = (slotIdx === 0);
+                    const slotData = NetworkManager.slots[slotIdx];
+                    
+                    // ホスト枠（Slot 0）はゲスト端末で絶対にパージしない！
+                    if (!isHostSlot && (!slotData || slotData.isAI)) {
+                        console.warn(`[Sync] 退出検知: スロット ${slotIdx} の残留エンティティをパージ`);
+                        remoteSnakes.delete(slotIdx);
+                        const aIdx = allSnakes.indexOf(remote);
+                        if (aIdx !== -1) allSnakes.splice(aIdx, 1);
+                        const sIdx = sortedSnakes.indexOf(remote);
+                        if (sIdx !== -1) sortedSnakes.splice(sIdx, 1);
+                        return;
+                    }
                 }
             }
 
@@ -567,6 +585,19 @@ function gameLoop() {
             
             remote.updatePhysics(dtSec, remote.targetAngle, remote.isBoosting);
         });
+
+        // =========================================================================
+        // ★ 【ゲスト側リモート走者（ホストおよび全走者）常時マージ】
+        // ホストだけでなくゲスト端末でも、remoteSnakes の全スネークを確実に allSnakes へ登録！
+        // これにより、ゲスト画面のレーダー（sortedSnakes）にホストが確実に反映される！
+        // =========================================================================
+        if (NetworkManager.isMultiplayerActive) {
+            remoteSnakes.forEach((remote) => {
+                if (!remote.isDead && !allSnakes.includes(remote)) {
+                    allSnakes.push(remote);
+                }
+            });
+        }
 
         if (!NetworkManager.isMultiplayerActive || NetworkManager.isHost) {
             if (NetworkManager.isHost && NetworkManager.isMultiplayerActive) {
@@ -714,9 +745,9 @@ function gameLoop() {
                                 slotNum = NetworkManager.mySlot;
                             } else if (!s.isPlayer && s.id !== undefined) {
                                 if (s.id > MAX_AIS) {
-                                    slotNum = s.id - MAX_AIS - 1; // 空き枠ダミーAI (0〜5)
+                                    slotNum = s.id - MAX_AIS - 1;
                                 } else {
-                                    slotNum = MAX_PLAYERS + (s.id - 1); // 通常AI (6〜99)
+                                    slotNum = MAX_PLAYERS + (s.id - 1);
                                 }
                             }
                             return {
