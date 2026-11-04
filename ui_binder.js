@@ -1,13 +1,13 @@
 // ==============================================================================
 // 『くねくねバトル オンライン』UIイベントバインダーモジュール (ui_binder.js)
-// v30.0.0 カスタムカラー即時マルチ同期＆無敵シールド・リトライ完全調和版:
-// ・【カスタムカラー即時マルチ同期】
-// 　Menu.init コールバック内で色変更が行われた際、自機 player.color だけでなく
-// 　NetworkManager.slots[mySlot].color を即時更新！
+// v31.0.0 顔・マイアイコン即時マルチ同期＆カラー・無敵シールド完全調和版:
+// ・【顔・マイアイコン即時マルチ同期】
+// 　Menu.init コールバック内で顔や色の変更が行われた際、自機 player.face / color
+// 　だけでなく NetworkManager.slots[mySlot].face / color を即時更新！
 // 　ホスト時は ROOM_MEMBERS_SYNC を一斉同報し、ホスト・ゲスト問わず
-// 　forceImmediateSync() を即座に発火して相手画面へ新色を0msで同期
-// ・【待機室＆メニュー走者リスト即時連動】UIController.updateWaitingMembersList()
-// 　と Menu.updateParticipants() を直ちに呼び、待機室アイコン色も瞬時に連動
+// 　forceImmediateSync() を即座に発火して相手画面へ新表情・新アイコンを0msで同期
+// ・【カスタムカラー即時マルチ同期維持】
+// ・【待機室＆メニュー走者リスト即時連動維持】
 // ・【デバッグ用無敵シールドボタン(#btn-god-mode)イベントバインド維持】
 // ・【リトライ明示連携(isExplicitRetry)維持】initGame(true, true)
 // ・【リトライタップ反応性向上維持】300ms デバウンス
@@ -248,9 +248,9 @@ export function initUIBindings(ctx) {
     }
 
     // =========================================================================
-    // 9. ★ 【メニュー着せ替えコールバック（リアルタイムマルチ同期完全対応）】
-    // 色変更時に自機の player.color だけでなく、NetworkManager.slots を更新し、
-    // 即時パケット送信(forceImmediateSync)およびスロット同期を相手へ伝達
+    // 9. ★ 【メニュー着せ替えコールバック（顔・アイコン＆カラー即時マルチ同期）】
+    // 顔や色の変更時に自機 player だけでなく、NetworkManager.slots の face と color
+    // を即座に更新し、即時パケット送信(forceImmediateSync)とスロット同期を相手へ伝達
     // =========================================================================
     Menu.init((face, color) => {
         const p = getPlayer();
@@ -263,6 +263,7 @@ export function initUIBindings(ctx) {
             const mySlot = NetworkManager.mySlot;
             if (NetworkManager.slots && NetworkManager.slots[mySlot]) {
                 NetworkManager.slots[mySlot].color = color;
+                NetworkManager.slots[mySlot].face = face;
             }
 
             // マルチプレイ中の即時反映処理
