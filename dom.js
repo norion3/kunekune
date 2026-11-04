@@ -1,10 +1,13 @@
 // ==============================================================================
 // 『くねくねバトル オンライン』自律DOMマウントモジュール (dom.js)
-// v30.0.0 デバッグ用無敵シールドボタン新設＆マウント最適化版:
-// ・【デバッグ用無敵シールドボタン新設(#btn-god-mode)】
-// 　左下ボタングループ（リセットボタン直上）に丸型シールドボタンを配備。
-// 　デフォルトON（activeクラス付与）としてマウントし、接触即死・外壁死を完全無効化する
-// 　無敵シールドモードのトグル操作を可能に！
+// v31.0.0 プレイヤ表記＆タブ幅最適化マウント版:
+// ・【「プレイヤ」タブ表記への刷新＆初期マウント整合化】
+// 　ボトムシートメニューのタブを「👥 プレイヤ (1/1)」としてマウント！
+// 　menu.js のソロ/マルチ動的切り替えロジックと完全に連動
+// ・【スマホ画面幅でのタブ1行表示最適化】
+// 　各タブボタンに white-space: nowrap と適正パディング・フォントサイズを設定し、
+// 　画面幅の狭い端末でもタブ文字の折り返しやはみ出しを物理排除
+// ・【デバッグ用無敵シールドボタン(#btn-god-mode)維持】
 // ・【5番目「キュート」瞳の左右対称補正維持】
 // ・【キュート口角の跳ね上げ強調維持】
 // ・【製作者メッセージの表現刷新維持】
@@ -201,11 +204,12 @@ export function mountDOM() {
                 <div id="btn-close-menu" class="sheet-close-btn">✕</div>
             </div>
 
+            <!-- ★ タブバー：スマホ画面幅で絶対に折り返さない 1行最適化スタイル ＆「👥 プレイヤ」表記 -->
             <div class="sheet-tabs">
-                <button class="sheet-tab-btn active" data-tab="chat">💬 CHAT</button>
-                <button class="sheet-tab-btn" data-tab="players">👥 走者 <span id="players-tab-count">(1/6)</span></button>
-                <button class="sheet-tab-btn" data-tab="custom">🎨 CUSTOM</button>
-                <button class="sheet-tab-btn" data-tab="creator">+ 製作者</button>
+                <button class="sheet-tab-btn active" data-tab="chat" style="white-space: nowrap; padding: 8px 4px; font-size: 11px;">💬 CHAT</button>
+                <button class="sheet-tab-btn" data-tab="players" style="white-space: nowrap; padding: 8px 4px; font-size: 11px;">👥 プレイヤ <span id="players-tab-count">(1/1)</span></button>
+                <button class="sheet-tab-btn" data-tab="custom" style="white-space: nowrap; padding: 8px 4px; font-size: 11px;">🎨 CUSTOM</button>
+                <button class="sheet-tab-btn" data-tab="creator" style="white-space: nowrap; padding: 8px 4px; font-size: 11px;">+ 製作者</button>
             </div>
 
             <div id="tab-pane-chat" class="sheet-tab-content">

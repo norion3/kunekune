@@ -1,18 +1,20 @@
 /**
  * ==============================================================================
  * 『くねくねバトル オンライン』ボトムシートメニュー (menu.js)
- * v28.0.0 走者アイコン淵（枠線）カスタムカラー完全連動版:
- * ・【走者アイコン枠線(淵)のカスタムカラー完全連動】
- * 　走者リスト描画のキャッシュシグネチャ（signature）に各走者の最新カラー（s.color）
- * 　を統合！色変更時にキャッシュ破棄され、アバター画像の border および
- * 　文字バッジの淵が、選択したカスタムカラーへ即座かつ鮮明に切り替わります
- * ・【自機カスタムカラーの即時優先反映】
- * 　自機スロットの描画時、localPlayerInstance.color を優先参照して0msで枠線色を更新
+ * v29.0.0 プレイヤ表記＆ソロ・マルチ表示完全切り分け版:
+ * ・【「プレイヤ」表記への刷新＆ソロ・マルチ表示完全切り分け】
+ * 　1人で遊ぶ場合（ソロプレイ）はタブを「👥 プレイヤ (1/1)」とし、自機1行のみを
+ * 　スマートに表示（他人がいないためHOSTバッジおよび空き枠は全非表示）
+ * 　マルチプレイ時は全6枠を表示し、空き枠を「プレイヤ X (空き枠)」「+」「○ 募集中」
+ * 　へ刷新してゲーム世界観と完全調和
+ * ・【スマホ画面でのタブ幅1行保持】white-space: nowrap と適正パディングで折り返しを完全防止
+ * ・【走者アイコン枠線(淵)のカスタムカラー完全連動維持】
+ * ・【自機カスタムカラーの即時優先反映維持】localPlayerInstance.color 優先参照
  * ・【メニュー外余白ドラッグ完全遮断維持】ラバーバンド現象遮断
  * ・【メニュー外タップ終了維持】背後余白タップでの即時クローズ
  * ・【誤閉塞完全防止維持】ボトムシート内部の stopPropagation()
  * ・【動的HOSTバッジ解決維持】ホスト昇格時のHOSTバッジ正確表示
- * ・GravityRouter 連携、走者一覧の最大定員6名枠完全維持
+ * ・GravityRouter 連携維持
  * ==============================================================================
  */
 
@@ -180,7 +182,7 @@ export class MenuManager {
             content.style.display = content.id === `tab-pane-${tabName}` ? 'block' : 'none';
         });
 
-        // 「走者」タブが開かれた際、常に最新のスロット情報を即時再評価
+        // 「プレイヤ」タブが開かれた際、常に最新のスロット情報を即時再評価
         if (tabName === 'players' && window.NetworkManager && Array.isArray(window.NetworkManager.slots)) {
             this.updateParticipants(window.NetworkManager.slots);
         }
@@ -199,6 +201,11 @@ export class MenuManager {
     bindTabs() {
         const tabs = document.querySelectorAll('.sheet-tab-btn');
         tabs.forEach(tab => {
+            // スマホ画面幅でタブ文字が2行に折り返されないようCSSを保護
+            tab.style.whiteSpace = 'nowrap';
+            tab.style.padding = '8px 4px';
+            tab.style.fontSize = '11px';
+
             tab.onclick = (e) => {
                 e.stopPropagation();
                 this.switchTab(tab.dataset.tab);
@@ -305,57 +312,73 @@ export class MenuManager {
     }
 
     /**
-     * 走者一覧の更新
+     * プレイヤ一覧の更新（ソロプレイ／マルチプレイ完全切り分け対応）
      */
     updateParticipants(playerList) {
         const listContainer = document.getElementById('participants-list');
-        const tabCount = document.getElementById('players-tab-count');
+        const tabBtn = document.querySelector('.sheet-tab-btn[data-tab="players"]');
         if (!listContainer) return;
 
         const netMgr = (typeof window !== 'undefined' && window.NetworkManager) ? window.NetworkManager : null;
+        const isMulti = netMgr ? Boolean(netMgr.isMultiplayerActive) : false;
+
         const slotsSource = (netMgr && Array.isArray(netMgr.slots))
             ? netMgr.slots
             : (Array.isArray(playerList) ? playerList : []);
 
+        // =========================================================================
+        // 1. タブ表記の更新（「👥 プレイヤ」への統一 ＆ ソロ/マルチ人数切り替え）
+        // =========================================================================
         let humanCount = 0;
-        for (let i = 0; i < MAX_PLAYERS; i++) {
-            const slot = slotsSource[i];
-            if (slot && !slot.isAI) {
-                humanCount++;
+        if (isMulti) {
+            for (let i = 0; i < MAX_PLAYERS; i++) {
+                const slot = slotsSource[i];
+                if (slot && !slot.isAI) {
+                    humanCount++;
+                }
             }
+            if (humanCount === 0) humanCount = 1;
+        } else {
+            humanCount = 1;
         }
-        if (humanCount === 0) humanCount = 1;
 
-        if (tabCount) {
-            tabCount.innerText = `(${humanCount}/${MAX_PLAYERS})`;
+        if (tabBtn) {
+            const countText = isMulti ? `(${humanCount}/${MAX_PLAYERS})` : `(1/1)`;
+            tabBtn.innerHTML = `👥 プレイヤ <span id="players-tab-count">${countText}</span>`;
         }
 
         const isNetHost = netMgr ? Boolean(netMgr.isHost) : false;
         const mySlot = netMgr ? netMgr.mySlot : 0;
         const myUserId = (netMgr && netMgr.myUser) ? String(netMgr.myUser.user_id) : 'local_user';
 
+        // 表示する最大スロット数：ソロ時は自機1行のみ、マルチ時は全6枠
+        const targetSlotCount = isMulti ? MAX_PLAYERS : 1;
+
         // =========================================================================
-        // ★ 【シグネチャに color を追加し、色変更時の即時再描画を保証】
+        // 2. キャッシュ判定シグネチャ（ソロ/マルチ状態と各スロット色・状態を網羅）
         // =========================================================================
-        const signature = slotsSource.slice(0, MAX_PLAYERS).map(s => {
+        const signature = `multi:${isMulti}_` + slotsSource.slice(0, targetSlotCount).map(s => {
             if (!s) return 'empty';
             return `${s.slot}_${s.userId || ''}_${s.name || ''}_${s.portrait || ''}_${s.color || ''}_${s.isAI}_${s.isHost || false}`;
         }).join('|') + `_host:${isNetHost}_mySlot:${mySlot}_customCol:${this.selectedColor}`;
 
-        if (signature === this._lastParticipantSignature && listContainer.children.length === MAX_PLAYERS) {
+        if (signature === this._lastParticipantSignature && listContainer.children.length === targetSlotCount) {
             return;
         }
         this._lastParticipantSignature = signature;
 
         listContainer.innerHTML = '';
 
-        for (let i = 0; i < MAX_PLAYERS; i++) {
+        // =========================================================================
+        // 3. リスト行の生成
+        // =========================================================================
+        for (let i = 0; i < targetSlotCount; i++) {
             const slotData = slotsSource[i];
-            const isAssigned = slotData && !slotData.isAI;
-            const isMe = isAssigned && (slotData.slot === mySlot || String(slotData.userId) === myUserId);
+            const isAssigned = isMulti ? (slotData && !slotData.isAI) : true;
+            const isMe = isMulti ? (isAssigned && (slotData.slot === mySlot || String(slotData.userId) === myUserId)) : true;
 
             let isCurrentHost = false;
-            if (isAssigned) {
+            if (isMulti && isAssigned) {
                 if (isMe) {
                     isCurrentHost = isNetHost;
                 } else if (slotData.isHost !== undefined) {
@@ -373,11 +396,20 @@ export class MenuManager {
                 slotColor = window.localPlayerInstance.color;
             }
 
-            const displayName = isAssigned 
-                ? (slotData.name || (isCurrentHost ? 'ホスト' : `プレイヤー ${i + 1}`))
-                : `CPU ${i + 1} (空き枠)`;
-            const portraitUrl = isAssigned ? (slotData.portrait || '') : '';
-            const targetUid = isAssigned ? slotData.userId : null;
+            // 表示名：空き枠は「プレイヤ X (空き枠)」
+            let displayName = '';
+            if (isMulti) {
+                displayName = isAssigned 
+                    ? (slotData.name || (isCurrentHost ? 'ホスト' : `プレイヤ ${i + 1}`))
+                    : `プレイヤ ${i + 1} (空き枠)`;
+            } else {
+                displayName = (window.localPlayerInstance && window.localPlayerInstance.name) 
+                    ? window.localPlayerInstance.name 
+                    : (slotData && slotData.name ? slotData.name : 'あなた');
+            }
+
+            const portraitUrl = isAssigned ? (slotData ? (slotData.portrait || '') : '') : '';
+            const targetUid = isAssigned ? (slotData ? slotData.userId : null) : null;
 
             const row = document.createElement('div');
             row.className = 'participant-row';
@@ -393,9 +425,7 @@ export class MenuManager {
                 transition: background 0.15s, border-color 0.15s;
             `;
 
-            // =========================================================================
-            // ★ 【アイコンの淵（border）および文字バッジ枠線を最新 slotColor に完全連動】
-            // =========================================================================
+            // アイコン部分：空き枠は「+」バッジ、自機・他走者はカスタムカラー枠線
             let avatarHtml = '';
             if (portraitUrl) {
                 avatarHtml = `
@@ -411,22 +441,22 @@ export class MenuManager {
                     ">
                 `;
             } else {
-                const badgeInitial = isAssigned ? displayName.charAt(0) : 'CPU';
+                const badgeInitial = isAssigned ? displayName.charAt(0) : '+';
                 avatarHtml = `
                     <div class="participant-avatar" style="
                         width: 36px;
                         height: 36px;
                         border-radius: 50%;
-                        background-color: ${isAssigned ? slotColor : 'rgba(255, 255, 255, 0.12)'};
+                        background-color: ${isAssigned ? slotColor : 'rgba(255, 255, 255, 0.08)'};
                         display: flex;
                         align-items: center;
                         justify-content: center;
-                        color: #ffffff;
+                        color: ${isAssigned ? '#ffffff' : '#38bdf8'};
                         font-weight: 800;
-                        font-size: ${isAssigned ? '14px' : '10px'};
+                        font-size: ${isAssigned ? '14px' : '18px'};
                         margin-right: 10px;
                         flex-shrink: 0;
-                        border: 2px solid ${isAssigned ? slotColor : 'rgba(255,255,255,0.1)'};
+                        border: 2px solid ${isAssigned ? slotColor : 'rgba(56, 189, 248, 0.35)'};
                         box-shadow: ${isAssigned ? `0 0 6px ${slotColor}55` : 'none'};
                     ">
                         ${badgeInitial}
@@ -444,7 +474,7 @@ export class MenuManager {
 
             const statusHtml = isAssigned
                 ? `<div class="participant-status" style="color: #34d399; font-size: 11px; margin-top: 2px;">● プレイ中</div>`
-                : `<div class="participant-status" style="color: #94a3b8; font-size: 11px; margin-top: 2px;">○ 自動参戦中</div>`;
+                : `<div class="participant-status" style="color: #94a3b8; font-size: 11px; margin-top: 2px;">○ 募集中</div>`;
 
             const actionArrowHtml = isAssigned && targetUid && targetUid !== 'local_user'
                 ? `<div class="participant-arrow" style="color: #38bdf8; font-size: 16px; font-weight: bold; margin-left: 8px;">↗</div>`

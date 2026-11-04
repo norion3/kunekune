@@ -1,10 +1,10 @@
 // ==============================================================================
 // 『くねくねバトル オンライン』スネークエンティティクラス (snake.js)
-// v34.0.0 相手マイアイコン顔(user_avatar)Canvas完全描画＆無敵シールド版:
-// ・【相手マイアイコン顔(user_avatar)のCanvas完全描画】
-// 　リモート走者がマイアイコン顔を選択した際、手元のスロット情報（NetworkManager.slots）
-// 　にある相手の portrait URL から動的に Image オブジェクトを遅延生成・キャッシュ（avatarImg）。
-// 　ホスト・ゲスト双方の頭部へ相手自身のアバターアイコンを真円クリップで100%確実に描画！
+// v35.0.0 ブースト肉片ドロップ外壁安全クランプ＆マイアイコン完全描画版:
+// ・【ブースト肉片ドロップの外壁内安全クランプ】
+// 　外壁際でブースト加速した際、散布される肉片がマップ境界の外側にこぼれ落ちて
+// 　回収不能になるのを防ぐため、ドロップ座標(dropX, dropY)をフィールド内へ確実にクランプ！
+// ・【相手マイアイコン顔(user_avatar)のCanvas完全描画維持】avatarImgキャッシュ
 // ・【デバッグ用無敵シールド(isGodMode)維持】外壁死スキップ＆不死身判定
 // ・【ブースト肉片ドロップの復元維持】身を削る加速と餌散布
 // ・【巨大化時の旋回慣性（ジャイアントキリング）維持】
@@ -205,8 +205,9 @@ export class Snake {
             this.recalculateSize();
 
             // =========================================================================
-            // ★ 【ブースト肉片ドロップの復元】
+            // ★ 【ブースト肉片ドロップの復元 ＆ 外壁内安全クランプ】
             // 自分のスコア（身）を削って加速する際、尾の位置から餌をドロップする
+            // 外壁際で加速しても餌が壁外へ飛び出さないよう、座標を安全にクランプ
             // =========================================================================
             this.boostDropCounter += scoreCost;
             if (this.boostDropCounter >= 2.5 && this.score > 65) {
@@ -217,13 +218,17 @@ export class Snake {
                 const tailPt = this.history[tailIdx];
                 
                 if (tailPt) {
+                    const margin = 20;
+                    const dropX = Math.max(margin, Math.min(MAP_SIZE - margin, tailPt.x + (Math.random() - 0.5) * 10));
+                    const dropY = Math.max(margin, Math.min(MAP_SIZE - margin, tailPt.y + (Math.random() - 0.5) * 10));
+
                     if (this.isPlayer && typeof window !== 'undefined' && window.NetworkManager && window.NetworkManager.isMultiplayerActive) {
                         const colorIdx = Math.max(0, SNAKE_COLORS.indexOf(this.color));
-                        window.NetworkManager.queueDropFood(tailPt.x, tailPt.y, 2.5, colorIdx);
+                        window.NetworkManager.queueDropFood(dropX, dropY, 2.5, colorIdx);
                     } else if (typeof window !== 'undefined' && window.currentWorldInstance) {
                         window.currentWorldInstance.dropFoods.push({
-                            x: tailPt.x + (Math.random() - 0.5) * 10,
-                            y: tailPt.y + (Math.random() - 0.5) * 10,
+                            x: dropX,
+                            y: dropY,
                             val: 2.5,
                             size: 4.5,
                             isBig: true,
