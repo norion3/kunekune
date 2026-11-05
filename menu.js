@@ -1,14 +1,18 @@
 /**
  * ==============================================================================
  * 『くねくねバトル オンライン』ボトムシートメニュー (menu.js)
- * v30.0.0 メニュー定型文＆チャットバッジ色カスタムカラー完全連動版:
- * ・【定型文チャット（chat-chip）バッジ色のカスタムカラー完全連動】
- * 　「よろしく！」「ごめんね！」等の定型文チップをタップした際、自画面の Danmaku.push
- * 　へ渡す badgeColor をシアン（#00e5ff）固定ではなく、Menu.selectedColor / player.color
- * 　を絶対最優先で解決して投入！自機が黄色・ピンクなど選んだ色と寸分違わず一致した
- * 　バッジ枠・背景で画面上を流れる演出を完全実現
- * ・【自由入力チャット（#btn-send-chat）バッジ色のカスタムカラー完全連動】
- * ・【マルチプレイ送信（NetworkManager.queueChat）とローカル弾幕の完全両立】
+ * v31.0.0 チャット送信引数適正化＆ゲスト配信・単一表示完全収束版:
+ * ・【NetworkManager.queueChat 呼び出し引数の適正化（ゲスト配信保証）】
+ * 　従来の queueChat(mySlot, text) による引数重複（スロット番号がテキストとして扱われ
+ * 　メッセージが消去・破損していた致命的不具合）を完全解消！
+ * 　正規の仕様である queueChat(text)（引数1個：メッセージ文字列のみ）へ統一し、
+ * 　ホストが発信した「ありがとう！」「1」等のチャットパケットがゲスト端末へ100%確実に
+ * 　配信・表示される健全な通信整合性を確立
+ * ・【ホスト側二重表示の根絶＆単一発火保証】
+ * 　ui_binder.js の重複ハンドラ撤廃と調和し、定型文チップおよび自由入力時の自画面弾幕
+ * 　（Danmaku.push）を1回のみ安全に実行
+ * ・【チャットバッジ色のメニューカスタムカラー完全連動維持】
+ * 　_resolveMyBadgeColor() により Menu.selectedColor / player.color を最優先適用
  * ・【「プレイヤ」表記への刷新＆ソロ・マルチ表示完全切り分け維持】
  * ・【スマホ画面でのタブ幅1行保持】white-space: nowrap と適正パディングで折り返しを完全防止
  * ・【走者アイコン枠線(淵)のカスタムカラー完全連動維持】
@@ -246,13 +250,15 @@ export class MenuManager {
                 const myName = (myPlayer && myPlayer.name) ? myPlayer.name : 'あなた';
                 const badgeColor = this._resolveMyBadgeColor();
 
-                // 1. 自端末画面へカスタムカラーのバッジで即時弾幕を流す
+                // 1. 自端末画面へカスタムカラーのバッジで即時弾幕を流す（単一発火）
                 Danmaku.push(myName, text, badgeColor);
 
-                // 2. マルチプレイ中の場合、他端末へパケット送信キューイング
+                // =========================================================================
+                // ★ 【2. マルチプレイ送信：引数を queueChat(text) に適正化】
+                // mySlot を渡さずテキストのみを渡すことで、メッセージが破損せず確実にゲストへ届く
+                // =========================================================================
                 if (window.NetworkManager && typeof window.NetworkManager.queueChat === 'function') {
-                    const mySlot = window.NetworkManager.mySlot !== undefined ? window.NetworkManager.mySlot : 0;
-                    window.NetworkManager.queueChat(mySlot, text);
+                    window.NetworkManager.queueChat(text);
                 }
 
                 this.close();
@@ -274,13 +280,14 @@ export class MenuManager {
                 const myName = (myPlayer && myPlayer.name) ? myPlayer.name : 'あなた';
                 const badgeColor = this._resolveMyBadgeColor();
 
-                // 1. 自端末画面へカスタムカラーのバッジで即時弾幕を流す
+                // 1. 自端末画面へカスタムカラーのバッジで即時弾幕を流す（単一発火）
                 Danmaku.push(myName, safeText, badgeColor);
 
-                // 2. マルチプレイ中の場合、他端末へパケット送信キューイング
+                // =========================================================================
+                // ★ 【2. マルチプレイ送信：引数を queueChat(safeText) に適正化】
+                // =========================================================================
                 if (window.NetworkManager && typeof window.NetworkManager.queueChat === 'function') {
-                    const mySlot = window.NetworkManager.mySlot !== undefined ? window.NetworkManager.mySlot : 0;
-                    window.NetworkManager.queueChat(mySlot, safeText);
+                    window.NetworkManager.queueChat(safeText);
                 }
 
                 inputEl.value = '';
