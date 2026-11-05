@@ -1,21 +1,23 @@
 // ==============================================================================
 // 『くねくねバトル オンライン』スネークエンティティクラス (snake.js)
-// v39.0.0 ブースト自傷餌ローカル即時反映＆リモート体長即時実体化版:
-// ・【ブースト自傷肉片の自画面即時ドロップ反映】
-// 　マルチプレイ中の加速時、queueDropFood 送信と同時にローカルの world.dropFoods
-// 　へも即座に肉片をプッシュ！「相手の画面には出ているのに自分の画面だけ餌が出ない」
-// 　描画の非対称・消失感を完全解消
-// ・【リモート走者遭遇時の「頭だけ（寸胴）」即時実体化補間】
-// 　targetLength と historyLength の乖離が大きい場合（入室直後や画面外からの接近時）、
-// 　現在座標と進行角度から過去体節を即座に補間生成！巨大な相手が数秒間頭だけで
-// 　走行する不気味な描画遅延を100%物理根絶
+// v40.0.0 巨獣化太さ特化スケール＆描画FPS保護節数ハードキャップ版:
+// ・【超巨大化時の太さ特化スケール（最大太さ 65px）】
+// 　スコア数万ptに達した際、頭部と胴体の半径（size）が最大 65px（直径130px、初期の約4.5倍）
+// 　までダイナミックに拡大！画面を圧倒する巨獣・ボスの大迫力を実現
+// ・【節数ハードキャップ（最大95節）によるCanvas描画FPS完全防護】
+// 　スコアが数万ptになっても、節数（targetLength）を最大「95節」で厳格に頭打ち！
+// 　Canvas APIのパス描画命令（arc / lineTo）の爆発を物理遮断し、スマホでの60FPSを完全死守
+// ・【巨体時の重量級旋回慣性バランス適正化】
+// 　巨大化時の旋回速度下限を0.22へ適正調整。小回りが利かない弱点が生まれることで、
+// 　小型スネークによる側面・首狩り（ジャイアントキリング）を成立
+// ・【ブースト自傷肉片の自画面即時ドロップ反映維持】
+// ・【リモート走者遭遇時の「頭だけ（寸胴）」即時実体化補間維持】
 // ・【リスポーン時撃破フラグ（_hasBeenKilled）初期化維持】
 // ・【ワープ時prevX/Y追従補正によるCCDデス・レーザー完全根絶維持】
 // ・【背骨ネオンライン引き裂き紐描画の完全根絶維持】
 // ・【ブースト肉片ドロップ外壁安全クランプ維持】
 // ・【相手マイアイコン顔(user_avatar)のCanvas完全描画維持】
 // ・【デバッグ用無敵シールド(isGodMode)維持】外壁死スキップ＆不死身判定
-// ・【巨大化時の旋回慣性（ジャイアントキリング）維持】
 // ・【外壁激突即死判定維持】
 // ・【とぐろ立体感＆生体ウロコ重なりレイヤード描画維持】
 // ・【ゼロ負荷設計＆生体テーパーウェーブ完全維持】
@@ -132,7 +134,6 @@ export class Snake {
      * @param {number} dy Y軸移動差分
      */
     shiftHistory(dx, dy) {
-        // ★ 前フレーム頭部座標も同時に平行移動させ、CCDのデス・レーザー誤判定を物理遮断
         if (this.prevX !== undefined) this.prevX += dx;
         if (this.prevY !== undefined) this.prevY += dy;
 
@@ -149,11 +150,19 @@ export class Snake {
 
     /**
      * サイズ＆体長計算
-     * スコア上昇時に頭部と首回りの太さがしっかりと成長し、巨大化の快感をダイレクトに伝える
+     * =========================================================================
+     * ★ 【巨獣化太さ特化スケール ＆ 描画FPS保護節数ハードキャップ】
+     * 1. 節数（targetLength）は最大「95節」で厳格に頭打ちにし、パス描画命令の激増を阻止
+     * 2. 頭部・胴体太さ（size）はスコアに応じて最大 65px まで成長（画面の半分を塞ぐ巨獣感）
+     * =========================================================================
      */
     recalculateSize() {
-        this.size = 12 + Math.pow(this.score, 0.46) * 0.40;
-        this.targetLength = 10 + Math.floor(Math.pow(this.score, 0.54) * 0.44);
+        const rawSize = 12 + Math.pow(this.score, 0.46) * 0.40;
+        this.size = Math.min(65.0, rawSize);
+
+        const rawLength = 10 + Math.floor(Math.pow(this.score, 0.54) * 0.44);
+        this.targetLength = Math.min(95, rawLength);
+
         if (this.size > this.maxSize) this.maxSize = this.size;
     }
 
@@ -217,11 +226,6 @@ export class Snake {
             this.score = Math.max(50, this.score - scoreCost);
             this.recalculateSize();
 
-            // =========================================================================
-            // ★ 【ブースト肉片ドロップの復元 ＆ 外壁内安全クランプ ＆ 自画面即時反映】
-            // 自分のスコア（身）を削って加速する際、尾の位置から餌をドロップする
-            // マルチプレイ中も queueDropFood と同時に自端末の world.dropFoods へ即時追加！
-            // =========================================================================
             this.boostDropCounter += scoreCost;
             if (this.boostDropCounter >= 2.5 && this.score > 65) {
                 this.boostDropCounter = 0;
@@ -263,9 +267,10 @@ export class Snake {
         }
 
         // =========================================================================
-        // ★ 【巨大化時の旋回慣性（ジャイアントキリング・バランス調整）】
+        // ★ 【巨大化時の重量級旋回慣性（ジャイアントキリング・適正バランス調整）】
+        // 巨体スネークは小回りが利かない弱点を持たせることで、小型スネークの首切りを成立
         // =========================================================================
-        const dynamicTurnMultiplier = Math.max(0.35, 14.0 / Math.max(14.0, this.size));
+        const dynamicTurnMultiplier = Math.max(0.22, 14.0 / Math.max(14.0, this.size));
         const currentTurnSpeed = (this.isPlayer ? TURN_SPEED_PLAYER : 0.08) * dynamicTurnMultiplier;
 
         let diff = this.targetAngle - this.angle;
@@ -278,7 +283,6 @@ export class Snake {
 
         // =========================================================================
         // 【外壁（マップ境界）激突判定】
-        // isGodMode が ON または無敵時間中の場合は死亡せず安全にクランプ＆跳ね返し
         // =========================================================================
         const wallMin = this.size;
         const wallMax = MAP_SIZE - this.size;
@@ -290,7 +294,6 @@ export class Snake {
                 this.die();
                 return;
             } else {
-                // 無敵シールド中または無敵時間中は安全にクランプして押し戻す
                 this.x = Math.max(wallMin, Math.min(wallMax, this.x));
                 this.y = Math.max(wallMin, Math.min(wallMax, this.y));
                 if (!this.isPlayer) {
@@ -313,11 +316,7 @@ export class Snake {
                 pt.x = this.x; pt.y = this.y; pt.angle = this.angle;
             }
 
-            // =========================================================================
-            // ★ 【リモート走者遭遇時の「頭だけ（寸胴）」即時実体化補間】
-            // 画面外からの接近や入室直後、targetLength と historyLength の差が大きい場合、
-            // 1ステップずつ待たずに過去体節を角度から直線補間して即座に実体化！
-            // =========================================================================
+            // リモート寸胴化防止の直線補間
             if (!this.isPlayer && (this.targetLength - this.historyLength > 4)) {
                 const diffCount = Math.min(this.targetLength - this.historyLength, 12);
                 for (let k = 0; k < diffCount; k++) {
@@ -479,9 +478,7 @@ export class Snake {
         ctx.translate(this.x, this.y);
         ctx.rotate(this.angle);
 
-        // =========================================================================
-        // ★ 【GRAVITYユーザーアバター顔スキン（自機＆リモート走者完全対応）】
-        // =========================================================================
+        // GRAVITYユーザーアバター顔スキン
         if (this.face === 'user_avatar') {
             let targetAvatarImg = null;
 

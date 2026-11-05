@@ -1,18 +1,16 @@
 // ==============================================================================
 // 『くねくねバトル オンライン』ワールド・動的チャンク餌・決定論的シード生成 (world.js)
-// v48.0.0 全人間プレイヤー視界共有・公平残骸ドロップ保護＆遠隔AI肉片高速回収版:
-// ・【全人間プレイヤー視界共有・公平残骸ドロップ保護（TTL: 30秒）】
-// 　ホスト・ゲストを一切区別せず、いずれかの生存人間プレイヤーの近く（4,500px以内）
-// 　にある撃破残骸の寿命を「12秒 ➔ 30秒」へ大幅延長！
-// 　ホストが倒しても、ゲストが倒しても、反転して戻ってくるまでの間に消えることなく
-// 　全ての肉片を平等かつ確実に食べ尽くせる十分な回収時間を保証
-// ・【人間不在・遠隔地AI肉片の超高速回収（TTL: 7秒）】
-// 　全人間プレイヤーから4,500px以上離れた僻地で起きたAI同士の戦闘残骸は、
-// 　7秒で超高速クリーンアップ！不要な残骸によるメモリと配列枠の圧迫を物理根絶
-// ・【最大保持上限の適正拡張（MAX_DROP_FOODS = 600）＆スマート間引き】
-// 　上限超過時も人間プレイヤー周辺の肉片を最優先保護し、遠隔地のAI肉片から優先間引き
+// v49.0.0 超大型ボス撃破残骸凝縮（レイドボーナス化）＆視界共有保護維持版:
+// ・【超大型ボス撃破残骸の高密度凝縮（レイドボーナス化）】
+// 　スコア数万pt（ワールドボス等）の超巨大スネーク撃破時、ドロップ個数の上限（最大38個）
+// 　を厳格に死守して配列枠（600個）のパンクを100%防止！
+// 　その代わり、肉片1粒あたりの価値（val）を最大400pt、粒サイズ（size）を最大18px
+// 　（黄金特大パルスオーラ）へ凝縮させ、一瞬でスコアが跳ね上がる超爽快なレイド討伐ボーナスへ進化
+// ・【全人間プレイヤー視界共有・公平残骸ドロップ保護（TTL: 30秒）維持】
+// 　ホスト・ゲスト問わず人間プレイヤーの近く（4,500px以内）にある撃破残骸は30秒間保護
+// ・【人間不在・遠隔地AI肉片の超高速回収（TTL: 7秒）維持】
+// ・【最大保持上限（MAX_DROP_FOODS = 600）＆人間視界優先保護間引き維持】
 // ・【未生成チャンク捕食キャッシュ（unprocessedPicks）によるゾンビ餌防止維持】
-// ・【スマート残骸ドロップ設計（個数適正抑制＆高密度価値・サイズスケール）維持】
 // ・【自機胴体の下敷き完全回避＆適正外側放射爆散維持】
 // ・【撃破破裂パーティクル演出の強化維持】32個一斉爆散
 // ・【捕食CCD変位上限二乗値の適正化維持】MAX_CCD_DISPLACEMENT_SQ = 10,000
@@ -334,7 +332,15 @@ export class WorldManager {
         this.foodGrid.set(chunkIntKey, list);
     }
 
-    // 撃破されたスネークの肉片ドロップ（TTLタイムスタンプ付き ＆ 外壁内安全クランプ ＆ ハードキャップ管理 ＆ パーティクルプール化）
+    /**
+     * 撃破されたスネークの肉片ドロップ
+     * =========================================================================
+     * ★ 【超大型ボス撃破残骸の高密度凝縮（レイドボーナス化）】
+     * 1. 撃破個数は最大38個を厳守（配列枠600件のパンク・描画負荷を完全防止）
+     * 2. スコア数万pt（ワールドボス等）の超巨体時は、1粒あたりの価値（val）を
+     * 　 最大400pt、粒サイズ（size）を最大18px（黄金特大オーラ）へ凝縮！
+     * =========================================================================
+     */
     spawnDeathDrop(snake) {
         const histLen = snake.historyLength || 0;
         const victimScore = Math.max(50, snake.score || 50);
@@ -344,10 +350,12 @@ export class WorldManager {
         let dropCount = 8 + Math.floor(Math.min(30, Math.sqrt(victimScore) * 0.32 + histLen * 0.22));
         dropCount = Math.max(8, Math.min(38, dropCount));
 
-        const totalDropVal = Math.max(100, Math.floor(victimScore * 0.30));
+        // ★ 超大型ボス時は総ドロップ価値を最大15,000ptまで凝縮還元（通常上限2,500ptから解放）
+        const totalDropVal = Math.max(100, Math.min(15000, Math.floor(victimScore * 0.30)));
         const baseValPerDrop = Math.max(12, Math.floor(totalDropVal / dropCount));
 
-        const baseFoodSize = Math.max(6.5, Math.min(14.5, 5.8 + Math.pow(baseValPerDrop, 0.40) * 1.5));
+        // ★ 1粒あたりのサイズも価値に応じてダイナミック拡大（最大18px）
+        const baseFoodSize = Math.max(6.5, Math.min(18.0, 5.8 + Math.pow(baseValPerDrop, 0.40) * 1.5));
         const victimSize = snake.size || 14;
 
         const localPlayer = (typeof window !== 'undefined' && window.localPlayerInstance) ? window.localPlayerInstance : null;
@@ -391,12 +399,10 @@ export class WorldManager {
 
         // =========================================================================
         // ★ 【肉片ドロップFIFOハードキャップ防護（MAX: 600件 ＆ 人間周辺保護間引き）】
-        // 人間プレイヤーから遠い肉片から優先的に間引き、プレイヤー周辺の肉片を保護
         // =========================================================================
         if (this.dropFoods.length > MAX_DROP_FOODS) {
             const overflow = this.dropFoods.length - MAX_DROP_FOODS;
             
-            // 人間プレイヤーリストを取得
             const humanCoords = [];
             if (localPlayer && !localPlayer.isDead) {
                 humanCoords.push({ x: localPlayer.x, y: localPlayer.y });
@@ -414,7 +420,6 @@ export class WorldManager {
             const nearHumanLimitSq = 4500 * 4500;
             let removedCount = 0;
 
-            // 1段階目：全人間プレイヤーから4,500px以上離れている遠隔肉片を古い順に間引く
             if (humanCoords.length > 0) {
                 for (let i = 0; i < this.dropFoods.length && removedCount < overflow; i++) {
                     const f = this.dropFoods[i];
@@ -436,7 +441,6 @@ export class WorldManager {
                 }
             }
 
-            // 2段階目：それでも溢れている場合は最古の肉片から順に間引き
             if (removedCount < overflow) {
                 this.dropFoods.splice(0, overflow - removedCount);
             }
@@ -566,7 +570,6 @@ export class WorldManager {
 
     /**
      * 通信で他人が食べた餌を絶対座標 (x, y) から探し出して安全に消去する
-     * ★ 自画面でチャンクが未生成の場合は unprocessedPicks へ記録しゾンビ復活を完全防止
      */
     removeFoodAt(x, y, searchRadius = 16) {
         const searchDistSq = searchRadius * searchRadius;
@@ -644,15 +647,9 @@ export class WorldManager {
             }
         }
 
-        // =========================================================================
-        // ★ 【全人間プレイヤー視界共有・公平残骸ドロップ保護（30秒）＆遠隔AI肉片高速回収（7秒）】
-        // ホスト・ゲスト問わず、人間プレイヤーの誰か1人でも近く（4,500px以内）にいる
-        // 肉片は30秒間じっくり保護！誰の視界にも入っていない僻地のAI肉片は7秒で高速消去
-        // =========================================================================
         const now = performance.now();
         const localPlayer = (typeof window !== 'undefined' && window.localPlayerInstance) ? window.localPlayerInstance : null;
 
-        // 全生存人間プレイヤー（ホスト＋全遠隔ゲスト）の座標を収集
         const humanCoords = [];
         if (localPlayer && !localPlayer.isDead) {
             humanCoords.push({ x: localPlayer.x, y: localPlayer.y });
@@ -674,7 +671,6 @@ export class WorldManager {
             if (!f.spawnTime) f.spawnTime = now;
             const ageMs = now - f.spawnTime;
 
-            // いずれかの人間プレイヤーの視界周辺（4,500px以内）にあるかを判定
             let isNearAnyHuman = false;
             for (let h = 0; h < humanCoords.length; h++) {
                 const hCoord = humanCoords[h];
@@ -685,7 +681,6 @@ export class WorldManager {
                 }
             }
 
-            // 人間の近く（ホスト・全ゲストのキル含む）は30秒保護、誰もいない僻地のAI肉片は7秒で回収
             const maxLifetimeMs = isNearAnyHuman ? 30000 : 7000;
 
             if (ageMs > maxLifetimeMs) {

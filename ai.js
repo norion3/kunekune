@@ -1,27 +1,29 @@
 // ==============================================================================
 // 『くねくねバトル オンライン』スネーク.io型 自律生態系AIマネージャー (ai.js)
-// v41.0.0 思考ターゲットマルチ化＆胴体回避リアクション遅延配備版:
-// ・【AI思考ターゲットのマルチ化（ゲスト無視の完全解消）】
-// 　ちょっかい行動（HARASS）およびプレイヤー接近トリガーの対象をホスト固定から
-// 　「AIに最も近い生存人間プレイヤー」へ動的切り替え！
-// 　ゲストプレイヤーに対しても進路妨害や並走威嚇を仕掛け、マルチプレイの対人対AI駆け引きを完全成立
-// ・【胴体回避の人間化（0ms神回避の適正化）】
-// 　危険距離侵入時の即時直角反転ルーチンに 0.15秒のリアクション遅延（avoidReactionTimer）を配備！
-// 　プレイヤーがブースト加速で側面・前方から奇襲した際、首切り・囲い込みが正当に成功する
-// 　ゲームバランスへ適正化（至近距離での緊急回避は維持）
+// v43.0.0 巨獣ワールドボス覚醒＆50,000pt成長＆120秒再覚醒サイクル版:
+// ・【300秒（5分）以降のワールドボス覚醒ロジック】
+// 　ゲーム開始から300秒（5分）が経過した後、回遊型（cruiser）の中から最大1体のみが
+// 　「colossus（巨獣・ワールドボス）」へ覚醒！
+// ・【仮想成長上限スコアの50,000pt解放】
+// 　ワールドボスの仮想成長スコア上限を既存の12,000ptから「50,000pt」へ大幅解放！
+// 　snake.js の太さ特化スケール（最大太さ 65px、直径130px）と連動し、画面を支配する圧倒的な巨体を形成
+// ・【討伐後120秒（2分）の再覚醒クールダウン管理】
+// 　ボス死亡後は120秒間のクールダウン期間を設け、即座の再覚醒を防止。
+// 　討伐したプレイヤーが巨獣化してマップの主役に君臨する覇権タイムを確保し、
+// 　120秒経過後に次の生存大型AIから「2代目ボス」が自然覚醒する持続的サイクルを配備
+// ・【ボス専用の重厚なエリア支配航行ルーチン】
+// 　自爆特攻を行わず、ゆったりとマップ全域を横断・旋回する威風堂々たる航行挙動
+// ・【ペルソナ比率の正常化（forager復元＆特攻過密解消）維持】
+// ・【正面激突自爆の完全防止（側面回り込み首切り）維持】
+// ・【Uターン・ボディシールド防御（Bait & Turn）維持】
+// ・【シャドウ並走（Shadowing）＆間合いキープ維持】
+// ・【ハイエナ掠め取り（Snatch & Run）維持】
+// ・【思考ターゲットマルチ化＆胴体回避リアクション遅延維持】
 // ・【全人間プレイヤー対応動的循環スポーン維持】
 // ・【ゲスト視界内AI突然変異（サイズ急膨張）完全防止維持】
 // ・【全人間プレイヤー視界外リスポーン（4.0秒）維持】
-// ・【画面外AIの生態系ピラミッド型仮想成長キャップ維持】
 // ・【思考用空間グリッドのactiveCells管理＆完全ゼロアロケーション化維持】
-// ・【思考用空間グリッドの毎フレーム確実クリアによるメモリリーク根絶維持】
-// ・【AI思考走査グリッドの動的探索半径化維持】
-// ・【空間ハッシュマイナス座標ビット崩壊完全防護維持】
-// ・【整数ビット演算ハッシュによる文字列アロケーション完全根絶維持】
 // ・【空間ハッシュ局所グリッド走査(O(1))維持】
-// ・【AI行動タイマー実時間同期維持】
-// ・【全行動ステート完全保持】カミカゼ暗殺(AMBUSH)、包囲コイリング(HUNTER)、
-// 　ちょっかい(HARASS)、ハイエナ(SCAVENGER)、ビビり(PANIC)、大回遊(CRUISING)
 // ==============================================================================
 
 import { MAP_SIZE, SNAKE_COLORS, GRID_SIZE } from './constants.js';
@@ -35,13 +37,15 @@ const AI_STATE = {
     HUNTER: 3,     // 狡猾な狩猟（好戦的な個体によるキル狙い・包囲コイリング）
     HARASS: 4,     // ちょっかい行動（進路横切り・並走威嚇・餌横取り）
     PANIC: 5,      // ビビり逃走（特定臆病個体のみ限定発動）
-    AMBUSH: 6      // カミカゼ特攻（巨大スネークの首元へ捨て身の突進）
+    AMBUSH: 6,     // カミカゼ特攻（巨大スネークの首元へ捨て身の突進）
+    DEFEND: 7      // Uターン・ボディシールド防御（追撃者を自分の胴体へ誘い込む）
 };
 
 // ★ 画面外AIの生態系ピラミッド型仮想成長上限スコア
-const MAX_VIRTUAL_SCORE_BOSS = 12000;    // ボス級（cruiser等: 体長約78〜85節）
-const MAX_VIRTUAL_SCORE_MID = 5000;      // 中堅好戦型（hunter, harasser, ambusher: 体長約52〜56節）
-const MAX_VIRTUAL_SCORE_DEFAULT = 2200;  // 一般・主食（forager, timid等: 体長約32〜38節）
+const MAX_VIRTUAL_SCORE_COLOSSUS = 50000; // ★ 超大型ワールドボス（colossus: スコア50,000pt、太さ65px）
+const MAX_VIRTUAL_SCORE_BOSS = 12000;     // 通常ボス級（cruiser等: 体長約78〜85節）
+const MAX_VIRTUAL_SCORE_MID = 5000;       // 中堅好戦型（hunter, harasser, ambusher: 体長約52〜56節）
+const MAX_VIRTUAL_SCORE_DEFAULT = 2200;   // 一般・主食（forager, timid等: 体長約32〜38節）
 
 // セル再利用プール上限
 const MAX_AI_CELL_POOL = 2048;
@@ -58,6 +62,11 @@ export class AIManager {
         // 仮想成長用アキュムレーター
         this._virtualGrowthTimer = 0;
 
+        // ★ ワールドボス覚醒・サイクル管理
+        this._sessionElapsedTime = 0;   // セッション経過時間（秒）
+        this._bossCooldownTimer = 0;     // ボス討伐後の再覚醒クールダウンタイマー（120秒）
+        this._currentBossSnake = null;   // 現在覚醒中のワールドボスインスタンス
+
         // ★ 思考走査専用のゼロアロケーション空間グリッドキャッシュ
         this.bodySpatialGrid = new Map();
         this.nodePool = [];
@@ -69,7 +78,6 @@ export class AIManager {
     }
 
     clear() {
-        // セルの回収とプール返却
         const activeCount = this.activeCells.length;
         for (let i = 0; i < activeCount; i++) {
             const cell = this.activeCells[i];
@@ -81,12 +89,15 @@ export class AIManager {
         this.activeCells.length = 0;
         this.bodySpatialGrid.clear();
 
-        // ノードの参照解放
         const limit = Math.min(this.nodePoolIndex, this.nodePool.length);
         for (let i = 0; i < limit; i++) {
             this.nodePool[i].snake = null;
         }
         this.nodePoolIndex = 0;
+
+        this._sessionElapsedTime = 0;
+        this._bossCooldownTimer = 0;
+        this._currentBossSnake = null;
     }
 
     init(count, playerX, playerY) {
@@ -94,18 +105,32 @@ export class AIManager {
         this.ais = [];
         this.aiMeta = [];
 
+        this._sessionElapsedTime = 0;
+        this._bossCooldownTimer = 0;
+        this._currentBossSnake = null;
+
         for (let i = 1; i <= count; i++) {
             const color = SNAKE_COLORS[i % SNAKE_COLORS.length];
             const face = this.faces[i % this.faces.length];
             const ai = new Snake(false, i, `CPU ${i}`, color, face);
 
+            // =========================================================================
+            // ★ 【ペルソナ比率の正常化（forager復元＆特攻過密の解消）】
+            // ・forager: 30% (マイペース採餌型・世界のベースとなる主食)
+            // ・hunter: 20% (好戦的な狩猟・包囲型)
+            // ・harasser: 18% (並走・ちょっかい型)
+            // ・ambusher: 12% (首元奇襲型)
+            // ・cruiser: 12% (大回遊・巨大壁型 / ボス覚醒候補)
+            // ・timid: 8% (警戒・逃走型)
+            // =========================================================================
             const randVal = Math.random();
-            let persona = 'forager'; // デフォルト採餌型 (35%)
-            if (randVal < 0.20) persona = 'hunter';          // 20%: 好戦的ハンター
-            else if (randVal < 0.40) persona = 'ambusher';  // 20%: 首元を狙う命知らずの暗殺型
-            else if (randVal < 0.60) persona = 'harasser';  // 20%: 生意気なちょっかい型
-            else if (randVal < 0.75) persona = 'cruiser';   // 15%: 悠然と回遊する大型予備軍
-            else persona = 'timid';                         // 5%: 本当にビビりの臆病個体
+            let persona = 'forager';
+            if (randVal < 0.30) persona = 'forager';
+            else if (randVal < 0.50) persona = 'hunter';
+            else if (randVal < 0.68) persona = 'harasser';
+            else if (randVal < 0.80) persona = 'ambusher';
+            else if (randVal < 0.92) persona = 'cruiser';
+            else persona = 'timid';
 
             this.aiMeta.push({
                 state: AI_STATE.FORAGING,
@@ -119,17 +144,16 @@ export class AIManager {
                 panicCooldown: 0,
                 deadTimer: 0,
                 ambushTarget: null,
-                avoidReactionTimer: 0 // ★ 回避リアクション遅延タイマー
+                avoidReactionTimer: 0,
+                defendCooldown: 0
             });
 
-            // 初期配置の広域分散化
             const angle = Math.random() * Math.PI * 2;
             const dist = 2500 + Math.random() * 16000;
             const sx = Math.max(400, Math.min(MAP_SIZE - 400, playerX + Math.cos(angle) * dist));
             const sy = Math.max(400, Math.min(MAP_SIZE - 400, playerY + Math.sin(angle) * dist));
             ai.reset(sx, sy);
 
-            // 開幕の健全な生態系ピラミッド配分
             const scoreRand = Math.random();
             if (scoreRand < 0.03) {
                 ai.addScore(Math.floor(800 + Math.random() * 400));
@@ -144,9 +168,6 @@ export class AIManager {
         }
     }
 
-    /**
-     * セル配列取得ヘルパー（ゼロアロケーション）
-     */
     _obtainCell() {
         if (this.cellPool.length > 0) {
             return this.cellPool.pop();
@@ -154,9 +175,6 @@ export class AIManager {
         return [];
     }
 
-    /**
-     * 思考走査専用グリッドのノード確保ヘルパー（ゼロアロケーション）
-     */
     _obtainGridNode(snake, x, y, radius) {
         let node;
         if (this.nodePoolIndex < this.nodePool.length) {
@@ -173,9 +191,6 @@ export class AIManager {
         return node;
     }
 
-    /**
-     * 思考走査専用グリッドの構築
-     */
     _rebuildSpatialGrid(allSnakes) {
         const activeCount = this.activeCells.length;
         for (let i = 0; i < activeCount; i++) {
@@ -186,7 +201,6 @@ export class AIManager {
             }
         }
         this.activeCells.length = 0;
-
         this.bodySpatialGrid.clear();
 
         const limit = Math.min(this.nodePoolIndex, this.nodePool.length);
@@ -224,13 +238,6 @@ export class AIManager {
         }
     }
 
-    /**
-     * AIシミュレーション更新（全人間プレイヤー対応動的循環バランサー＆思考ターゲットマルチ化）
-     * @param {Object} player 自機プレイヤー
-     * @param {Array} allSnakes 全スネーク配列
-     * @param {number} frameCount フレーム数
-     * @param {number} [dtSec=0.016] 実経過秒数
-     */
     update(player, allSnakes, frameCount, dtSec = 1 / 60) {
         const total = this.ais.length;
         if (total === 0) return;
@@ -239,8 +246,47 @@ export class AIManager {
         const timeScale = Math.max(0.1, Math.min(3.0, safeDt * 60));
 
         // =========================================================================
-        // 1. 【全生存人間プレイヤー（ホスト＋遠隔ゲスト走者）の座標・角度・インスタンス収集】
+        // ★ 【ワールドボス生存検知 ＆ 討伐後120秒クールダウンサイクル】
         // =========================================================================
+        this._sessionElapsedTime += safeDt;
+
+        if (this._currentBossSnake) {
+            if (this._currentBossSnake.isDead) {
+                // ボス死亡を検知：120秒間の再覚醒クールダウン開始
+                this._currentBossSnake = null;
+                this._bossCooldownTimer = 120.0;
+            }
+        } else if (this._bossCooldownTimer > 0) {
+            this._bossCooldownTimer = Math.max(0, this._bossCooldownTimer - safeDt);
+        }
+
+        // 開始300秒（5分）以降、かつクールダウン終了時にボスが不在の場合、回遊型から1体覚醒
+        if (this._sessionElapsedTime >= 300.0 && !this._currentBossSnake && this._bossCooldownTimer <= 0) {
+            let bestCandidate = null;
+            let highestScore = -1;
+
+            for (let i = 0; i < total; i++) {
+                const ai = this.ais[i];
+                const meta = this.aiMeta[i];
+                if (!ai || ai.isDead || !meta) continue;
+
+                if (meta.persona === 'cruiser' || meta.persona === 'hunter') {
+                    if (ai.score > highestScore) {
+                        highestScore = ai.score;
+                        bestCandidate = { ai, meta };
+                    }
+                }
+            }
+
+            if (bestCandidate) {
+                bestCandidate.meta.persona = 'colossus';
+                bestCandidate.meta.state = AI_STATE.CRUISING;
+                bestCandidate.meta.stateTimer = 300;
+                this._currentBossSnake = bestCandidate.ai;
+            }
+        }
+
+        // 1. 全生存人間プレイヤーの座標収集
         const humanTargets = [];
         if (player && !player.isDead) {
             humanTargets.push({ x: player.x, y: player.y, angle: player.angle, snake: player });
@@ -255,9 +301,7 @@ export class AIManager {
             humanTargets.push({ x: MAP_SIZE / 2, y: MAP_SIZE / 2, angle: 0, snake: player });
         }
 
-        // =========================================================================
-        // 2. 【画面外AIの仮想バックグラウンド成長】（ゲスト視界内突然変異防止対応）
-        // =========================================================================
+        // 2. 仮想成長
         this._virtualGrowthTimer += safeDt;
         if (this._virtualGrowthTimer >= 0.5) {
             const growthInterval = this._virtualGrowthTimer;
@@ -282,8 +326,13 @@ export class AIManager {
                 const meta = this.aiMeta[i];
                 if (!meta) continue;
 
+                // =========================================================================
+                // ★ 【仮想成長キャップ：colossus（50,000pt）解放】
+                // =========================================================================
                 let scoreCap = MAX_VIRTUAL_SCORE_DEFAULT;
-                if (meta.persona === 'cruiser') {
+                if (meta.persona === 'colossus') {
+                    scoreCap = MAX_VIRTUAL_SCORE_COLOSSUS;
+                } else if (meta.persona === 'cruiser') {
                     scoreCap = MAX_VIRTUAL_SCORE_BOSS;
                 } else if (meta.persona === 'hunter' || meta.persona === 'harasser' || meta.persona === 'ambusher') {
                     scoreCap = MAX_VIRTUAL_SCORE_MID;
@@ -291,8 +340,9 @@ export class AIManager {
 
                 if (ai.score < scoreCap) {
                     let gainRate = 6;
-                    if (meta.persona === 'hunter' || meta.persona === 'cruiser') gainRate = 12;
-                    if (meta.persona === 'forager') gainRate = 8;
+                    if (meta.persona === 'colossus') gainRate = 28;
+                    else if (meta.persona === 'hunter' || meta.persona === 'cruiser') gainRate = 12;
+                    else if (meta.persona === 'forager') gainRate = 8;
 
                     ai.addScore(gainRate * growthInterval);
 
@@ -315,8 +365,6 @@ export class AIManager {
         }
 
         const recycleDistSq = 16000 * 16000;
-
-        // 思考走査用グリッドの事前マッピング
         this._rebuildSpatialGrid(allSnakes);
 
         for (let i = 0; i < total; i++) {
@@ -324,13 +372,16 @@ export class AIManager {
             const meta = this.aiMeta[i];
             if (!meta) continue;
 
-            // =========================================================================
-            // 3. 【死亡中AIのリスポーン処理（全人間プレイヤー対応）】
-            // =========================================================================
+            // 3. 死亡中AIのリスポーン
             if (ai.isDead) {
                 meta.deadTimer = (meta.deadTimer || 0) + safeDt;
                 if (meta.deadTimer >= 4.0) {
                     meta.deadTimer = 0;
+
+                    // ボスだった個体がリスポーンした場合は通常cruiserへ戻す
+                    if (meta.persona === 'colossus') {
+                        meta.persona = 'cruiser';
+                    }
 
                     const baseHuman = humanTargets[Math.floor(Math.random() * humanTargets.length)];
                     const ang = Math.random() * Math.PI * 2;
@@ -350,24 +401,19 @@ export class AIManager {
                     meta.stateTimer = 50;
                     meta.harassCooldown = 90;
                     meta.panicCooldown = 60;
+                    meta.defendCooldown = 60;
                     meta.avoidReactionTimer = 0;
                 }
                 continue;
             }
 
-            // タイマー実時間同期
             meta.stateTimer -= timeScale;
-            if (meta.harassCooldown > 0) {
-                meta.harassCooldown = Math.max(0, meta.harassCooldown - timeScale);
-            }
-            if (meta.panicCooldown > 0) {
-                meta.panicCooldown = Math.max(0, meta.panicCooldown - timeScale);
-            }
+            if (meta.harassCooldown > 0) meta.harassCooldown = Math.max(0, meta.harassCooldown - timeScale);
+            if (meta.panicCooldown > 0) meta.panicCooldown = Math.max(0, meta.panicCooldown - timeScale);
+            if (meta.defendCooldown > 0) meta.defendCooldown = Math.max(0, meta.defendCooldown - timeScale);
 
-            // =========================================================================
-            // 4. 【動的循環スポーン（過疎プレイヤー優先再配置バランサー）】
-            // =========================================================================
-            if ((frameCount + i) % 60 === 0) {
+            // 4. 動的循環スポーン（※ボス個体は循環ワープさせずマップ内に常駐維持）
+            if (meta.persona !== 'colossus' && (frameCount + i) % 60 === 0) {
                 let minDistToAnyHumanSq = Infinity;
 
                 for (let h = 0; h < humanTargets.length; h++) {
@@ -400,9 +446,7 @@ export class AIManager {
                 }
             }
 
-            // =========================================================================
-            // ★ 【思考対象のマルチ化：AIに最も近い人間走者を特定して think へ渡す】
-            // =========================================================================
+            // 5. 思考実行
             const shouldThink = (i >= startIndex && i < startIndex + batchSize);
             if (shouldThink) {
                 let closestHumanSnake = player;
@@ -422,15 +466,6 @@ export class AIManager {
         }
     }
 
-    /**
-     * AI思考ルーチン（最寄り人間走者対応・胴体回避リアクション遅延・カミカゼ特攻・包囲狩猟）
-     * @param {Object} ai 
-     * @param {Object} meta 
-     * @param {Object} targetHuman AIに最も近い生存人間走者
-     * @param {Array} allSnakes 
-     * @param {Array} activeDrops 
-     * @param {number} [dtSec=0.016] 
-     */
     think(ai, meta, targetHuman, allSnakes, activeDrops, dtSec = 1 / 60) {
         // 1. 【最優先】外壁激突回避
         const wallMargin = 400 + ai.size * 2;
@@ -442,13 +477,12 @@ export class AIManager {
         }
 
         // =========================================================================
-        // 2. 【最重要・空間ハッシュ局所グリッド走査(O(1))】胴体激突回避
-        // ★ 0.15秒のリアクション遅延を配備し、人間プレイヤーの首切り・囲い込み成功を保証！
+        // 2. 【最重要・空間ハッシュ局所走査】胴体激突回避
+        // 0.15秒のリアクション遅延を付与し、人間プレイヤーの首切り・囲い込み成功を保証
         // =========================================================================
         let threatFound = false;
         const gx = Math.floor(ai.x / GRID_SIZE);
         const gy = Math.floor(ai.y / GRID_SIZE);
-
         const searchRange = Math.max(1, Math.min(3, Math.ceil(ai.size / GRID_SIZE)));
 
         for (let ox = -searchRange; ox <= searchRange && !threatFound; ox++) {
@@ -479,10 +513,9 @@ export class AIManager {
                             if (meta.avoidReactionTimer === undefined) meta.avoidReactionTimer = 0;
                             meta.avoidReactionTimer += dtSec;
 
-                            // 至近距離（safeDistLimitSq * 0.35）は即時緊急回避、それ以外は0.15秒のリアクション猶予を付与
                             if (meta.avoidReactionTimer >= 0.15 || sDistSq < (safeDistLimitSq * 0.35)) {
                                 ai.targetAngle = ai.angle + (diff > 0 ? -Math.PI / 1.6 : Math.PI / 1.6);
-                                ai.isBoosting = ai.score > 100 && sDistSq < (safeDistLimitSq * 0.40);
+                                ai.isBoosting = ai.score > 100 && sDistSq < (safeDistLimitSq * 0.40) && meta.persona !== 'colossus';
                             }
                             threatFound = true;
                             break;
@@ -493,12 +526,53 @@ export class AIManager {
         }
 
         if (threatFound) return;
-        meta.avoidReactionTimer = 0; // 脅威が去ったらリアクションタイマーをリセット
+        meta.avoidReactionTimer = 0;
+
+        // =========================================================================
+        // ★ 【ワールドボス（colossus）専用航行ルーチン】
+        // 自爆特攻や小刻みな反転を行わず、広大な空間を悠然と支配する威風堂々たる航行
+        // =========================================================================
+        if (meta.persona === 'colossus') {
+            meta.state = AI_STATE.CRUISING;
+            const angleToCenter = Math.atan2(MAP_SIZE / 2 - ai.y, MAP_SIZE / 2 - ai.x);
+            let centerDiff = angleToCenter - ai.targetAngle;
+            while (centerDiff < -Math.PI) centerDiff += Math.PI * 2;
+            while (centerDiff > Math.PI) centerDiff -= Math.PI * 2;
+
+            ai.targetAngle += meta.cruiseDirection * 0.008 + centerDiff * 0.003;
+            ai.isBoosting = false;
+            return;
+        }
 
         const totalSnakes = allSnakes.length;
+        const currentTargetHuman = targetHuman || player;
+        const isTargetHumanActive = currentTargetHuman && !currentTargetHuman.isDead;
 
-        // 3. 【カミカゼ暗殺特攻（AMBUSH）】
-        if ((meta.persona === 'ambusher' || (meta.persona === 'harasser' && Math.random() < 0.4)) && ai.score > 60) {
+        // 3. 【Uターン・ボディシールド防御（Bait & Turn）】
+        if (isTargetHumanActive && meta.defendCooldown <= 0 && ai.score > 90 && ai.historyLength > 8) {
+            const hdx = currentTargetHuman.x - ai.x;
+            const hdy = currentTargetHuman.y - ai.y;
+            const hDistSq = hdx * hdx + hdy * hdy;
+
+            if (hDistSq < 450 * 450 && hDistSq > 150 * 150 && currentTargetHuman.isBoosting) {
+                const angleToHuman = Math.atan2(hdy, hdx);
+                let rearDiff = angleToHuman - (ai.angle + Math.PI);
+                while (rearDiff < -Math.PI) rearDiff += Math.PI * 2;
+                while (rearDiff > Math.PI) rearDiff -= Math.PI * 2;
+
+                if (Math.abs(rearDiff) < Math.PI / 2.2 && Math.random() < 0.45) {
+                    meta.state = AI_STATE.DEFEND;
+                    meta.stateTimer = 22;
+                    meta.defendCooldown = 180;
+                    ai.targetAngle = ai.angle + (Math.random() < 0.5 ? Math.PI * 0.75 : -Math.PI * 0.75);
+                    ai.isBoosting = ai.score > 110;
+                    return;
+                }
+            }
+        }
+
+        // 4. 【カミカゼ暗殺（AMBUSH）：側面カット進化】
+        if ((meta.persona === 'ambusher' || (meta.persona === 'harasser' && Math.random() < 0.35)) && ai.score > 60) {
             let giantTarget = null;
             let minGiantDistSq = 1400 * 1400;
 
@@ -522,25 +596,37 @@ export class AIManager {
                 meta.state = AI_STATE.AMBUSH;
                 meta.ambushTarget = giantTarget;
 
-                const leadDist = giantTarget.size * 2.2 + 80;
-                const predictX = giantTarget.x + Math.cos(giantTarget.angle) * leadDist;
-                const predictY = giantTarget.y + Math.sin(giantTarget.angle) * leadDist;
+                let angleDiff = Math.abs(ai.angle - giantTarget.angle);
+                while (angleDiff > Math.PI) angleDiff = Math.PI * 2 - angleDiff;
 
-                ai.targetAngle = Math.atan2(predictY - ai.y, predictX - ai.x);
-                ai.isBoosting = ai.score > 70 && minGiantDistSq < (900 * 900);
+                const isHeadOn = angleDiff > (Math.PI * 0.75);
+                const leadDist = giantTarget.size * 2.8 + 120;
+
+                let aimX, aimY;
+                if (isHeadOn) {
+                    const flankAngle = giantTarget.angle + (Math.random() < 0.5 ? Math.PI / 2 : -Math.PI / 2);
+                    aimX = giantTarget.x + Math.cos(giantTarget.angle) * leadDist + Math.cos(flankAngle) * (giantTarget.size * 1.8);
+                    aimY = giantTarget.y + Math.sin(giantTarget.angle) * leadDist + Math.sin(flankAngle) * (giantTarget.size * 1.8);
+                } else {
+                    aimX = giantTarget.x + Math.cos(giantTarget.angle) * leadDist;
+                    aimY = giantTarget.y + Math.sin(giantTarget.angle) * leadDist;
+                }
+
+                ai.targetAngle = Math.atan2(aimY - ai.y, aimX - ai.x);
+                ai.isBoosting = ai.score > 75 && minGiantDistSq < (900 * 900);
                 return;
             }
         }
 
-        // 4. 【ビビり逃走の限定化】
+        // 5. 【ビビり逃走（PANIC）】
         if (meta.persona === 'timid' && meta.panicCooldown <= 0 && meta.state !== AI_STATE.PANIC && ai.score > 60) {
             let giantThreat = null;
-            const panicDistSq = 350 * 350;
+            const panicDistSq = 400 * 400;
 
             for (let i = 0; i < totalSnakes; i++) {
                 const other = allSnakes[i];
                 if (other === ai || other.isDead) continue;
-                if (other.score >= ai.score * 2.5) {
+                if (other.score >= ai.score * 2.2) {
                     const gdx = other.x - ai.x;
                     const gdy = other.y - ai.y;
                     if (gdx * gdx + gdy * gdy < panicDistSq) {
@@ -552,8 +638,8 @@ export class AIManager {
 
             if (giantThreat) {
                 meta.state = AI_STATE.PANIC;
-                meta.stateTimer = 15;
-                meta.panicCooldown = 200;
+                meta.stateTimer = 18;
+                meta.panicCooldown = 220;
                 const awayAngle = Math.atan2(ai.y - giantThreat.y, ai.x - giantThreat.x);
                 ai.targetAngle = awayAngle + (Math.random() - 0.5) * 0.4;
                 ai.isBoosting = ai.score > 75;
@@ -561,7 +647,7 @@ export class AIManager {
             }
         }
 
-        // 5. 【ハイエナモード判定】死体肉片の感知
+        // 6. 【ハイエナ（SCAVENGER）：掠め取り（Snatch & Run）】
         if (activeDrops && activeDrops.length > 0 && meta.persona !== 'cruiser') {
             let nearestDrop = null;
             let minDropDistSq = Infinity;
@@ -585,22 +671,18 @@ export class AIManager {
             if (nearestDrop) {
                 meta.state = AI_STATE.SCAVENGER;
                 meta.scavengeTarget = nearestDrop;
+                
                 const toDropAngle = Math.atan2(nearestDrop.y - ai.y, nearestDrop.x - ai.x);
-                ai.targetAngle = toDropAngle;
+                ai.targetAngle = toDropAngle + (Math.random() - 0.5) * 0.15;
 
                 const isNearDrop = minDropDistSq < (350 * 350);
-                ai.isBoosting = (ai.score > 85 && isNearDrop) || (ai.score > 100 && Math.random() < 0.35);
+                ai.isBoosting = (ai.score > 85 && isNearDrop) || (ai.score > 100 && Math.random() < 0.30);
                 return;
             }
         }
 
-        // =========================================================================
-        // 6. 【最寄り人間プレイヤー接近時のちょっかい行動トリガー（ゲスト対応）】
-        // =========================================================================
-        const currentTargetHuman = targetHuman || player;
-        const isTargetHumanActive = currentTargetHuman && !currentTargetHuman.isDead;
-
-        if (isTargetHumanActive && meta.harassCooldown <= 0 && meta.state !== AI_STATE.HARASS && meta.state !== AI_STATE.PANIC && meta.state !== AI_STATE.AMBUSH) {
+        // 7. 【ちょっかいトリガー（HARASS / SHADOWING）】
+        if (isTargetHumanActive && meta.harassCooldown <= 0 && meta.state !== AI_STATE.HARASS && meta.state !== AI_STATE.PANIC && meta.state !== AI_STATE.AMBUSH && meta.state !== AI_STATE.DEFEND) {
             const pdx = currentTargetHuman.x - ai.x;
             const pdy = currentTargetHuman.y - ai.y;
             const pDistSq = pdx * pdx + pdy * pdy;
@@ -608,19 +690,19 @@ export class AIManager {
             const harassRangeSq = 1200 * 1200;
 
             if (pDistSq < harassRangeSq) {
-                const triggerRate = meta.persona === 'harasser' ? 0.30 : 0.12;
+                const triggerRate = meta.persona === 'harasser' ? 0.35 : (meta.persona === 'hunter' ? 0.20 : 0.08);
                 if (Math.random() < triggerRate) {
                     meta.state = AI_STATE.HARASS;
                     meta.stateTimer = 35 + Math.floor(Math.random() * 30);
                     meta.harassSubtype = Math.floor(Math.random() * 3);
-                    meta.harassCooldown = 100 + Math.floor(Math.random() * 80);
+                    meta.harassCooldown = 110 + Math.floor(Math.random() * 80);
                 }
             }
         }
 
-        // 7. 【ステートタイマー満了時の自然遷移】
+        // 8. 【ステートタイマー満了時の自然遷移】
         if (meta.stateTimer <= 0) {
-            if (meta.state === AI_STATE.HARASS || meta.state === AI_STATE.PANIC || meta.state === AI_STATE.AMBUSH) {
+            if (meta.state === AI_STATE.HARASS || meta.state === AI_STATE.PANIC || meta.state === AI_STATE.AMBUSH || meta.state === AI_STATE.DEFEND) {
                 meta.state = AI_STATE.FORAGING;
                 meta.stateTimer = 70 + Math.floor(Math.random() * 60);
                 ai.isBoosting = false;
@@ -628,7 +710,7 @@ export class AIManager {
                 meta.state = AI_STATE.CRUISING;
                 meta.stateTimer = 90 + Math.floor(Math.random() * 120);
             } else if (meta.persona === 'hunter') {
-                meta.state = (Math.random() < 0.50) ? AI_STATE.HUNTER : AI_STATE.FORAGING;
+                meta.state = (Math.random() < 0.55) ? AI_STATE.HUNTER : AI_STATE.FORAGING;
                 meta.stateTimer = 50 + Math.floor(Math.random() * 50);
             } else {
                 meta.state = AI_STATE.FORAGING;
@@ -636,12 +718,11 @@ export class AIManager {
             }
         }
 
-        // =========================================================================
-        // 8. 【各ステートの行動実行（最寄り人間プレイヤーに対する追従・迎撃）】
-        // =========================================================================
+        // 9. 【各ステートの行動実行】
         switch (meta.state) {
             case AI_STATE.AMBUSH:
             case AI_STATE.PANIC:
+            case AI_STATE.DEFEND:
                 break;
 
             case AI_STATE.HARASS: {
@@ -652,22 +733,25 @@ export class AIManager {
                 }
 
                 if (meta.harassSubtype === 0) {
-                    const leadDist = 280 + currentTargetHuman.size * 1.5;
+                    const leadDist = 260 + currentTargetHuman.size * 2.0;
                     const predictX = currentTargetHuman.x + Math.cos(currentTargetHuman.angle) * leadDist;
                     const predictY = currentTargetHuman.y + Math.sin(currentTargetHuman.angle) * leadDist;
                     ai.targetAngle = Math.atan2(predictY - ai.y, predictX - ai.x);
-                    ai.isBoosting = ai.score > 85 && Math.random() < 0.50;
+                    ai.isBoosting = ai.score > 85 && Math.random() < 0.45;
                 } else if (meta.harassSubtype === 1) {
-                    const lateralAngle = currentTargetHuman.angle + (Math.random() < 0.5 ? Math.PI / 2.2 : -Math.PI / 2.2);
-                    const flankX = currentTargetHuman.x + Math.cos(lateralAngle) * (currentTargetHuman.size * 2.5 + ai.size * 2.0);
-                    const flankY = currentTargetHuman.y + Math.sin(lateralAngle) * (currentTargetHuman.size * 2.5 + ai.size * 2.0);
-                    ai.targetAngle = Math.atan2(flankY - ai.y, flankX - ai.x) * 0.4 + currentTargetHuman.angle * 0.6;
-                    ai.isBoosting = ai.score > 90 && currentTargetHuman.isBoosting && Math.random() < 0.45;
+                    const lateralSide = (ai.id % 2 === 0) ? 1 : -1;
+                    const flankAngle = currentTargetHuman.angle + lateralSide * (Math.PI / 2.1);
+                    const flankDist = currentTargetHuman.size * 3.0 + ai.size * 2.0 + 40;
+                    const flankX = currentTargetHuman.x + Math.cos(flankAngle) * flankDist;
+                    const flankY = currentTargetHuman.y + Math.sin(flankAngle) * flankDist;
+                    ai.targetAngle = Math.atan2(flankY - ai.y, flankX - ai.x) * 0.35 + currentTargetHuman.angle * 0.65;
+                    ai.isBoosting = ai.score > 90 && currentTargetHuman.isBoosting;
                 } else {
-                    const frontX = currentTargetHuman.x + Math.cos(currentTargetHuman.angle) * 220;
-                    const frontY = currentTargetHuman.y + Math.sin(currentTargetHuman.angle) * 220;
-                    ai.targetAngle = Math.atan2(frontY - ai.y, frontX - ai.x);
-                    ai.isBoosting = ai.score > 80 && Math.random() < 0.60;
+                    const frontX = currentTargetHuman.x + Math.cos(currentTargetHuman.angle) * 200;
+                    const frontY = currentTargetHuman.y + Math.sin(currentTargetHuman.angle) * 200;
+                    const toFront = Math.atan2(frontY - ai.y, frontX - ai.x);
+                    ai.targetAngle = toFront + Math.sin(meta.stateTimer * 0.2) * 0.4;
+                    ai.isBoosting = ai.score > 80 && Math.random() < 0.40;
                 }
                 break;
             }
@@ -708,7 +792,7 @@ export class AIManager {
                         ai.targetAngle = toTargetAngle + Math.PI / 2.3;
                         ai.isBoosting = ai.score > 120 && Math.random() < 0.40;
                     } else {
-                        const leadDist = 120 + huntTarget.size;
+                        const leadDist = 140 + huntTarget.size * 1.5;
                         const tx = huntTarget.x + Math.cos(huntTarget.angle) * leadDist;
                         const ty = huntTarget.y + Math.sin(huntTarget.angle) * leadDist;
                         ai.targetAngle = Math.atan2(ty - ai.y, tx - ai.x);
@@ -723,8 +807,8 @@ export class AIManager {
 
             case AI_STATE.FORAGING:
             default: {
-                if (Math.random() < 0.12) {
-                    ai.targetAngle += (Math.random() - 0.5) * 0.6;
+                if (Math.random() < 0.10) {
+                    ai.targetAngle += (Math.random() - 0.5) * 0.5;
                 }
                 ai.isBoosting = false;
                 break;
