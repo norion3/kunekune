@@ -1,6 +1,10 @@
 // ==============================================================================
 // 『くねくねバトル オンライン』Phase 7 マスター統合オーケストレーター (main.js)
-// v47.0.0 リトライ時カスタムカラー維持＆ホスト撃破肉片ローカルドロップ完全復元版:
+// v48.0.0 ゲスト自機キル先行ローカル肉片ドロップ＆残骸消失完全解消版:
+// ・【ゲスト端末自機キルの先行ローカル肉片ドロップ】
+// 　マルチプレイのゲスト端末自身が敵を撃破した際、ホストからのパケット到着を待たずに
+// 　自端末のローカルワールド（world.spawnDeathDrop）へ即座に先行ドロップを発火！
+// 　通信ラグやパケットロスによる「敵が消えたのに残骸が一切出ない」現象を物理根絶
 // ・【リトライ時のカスタムカラー・顔の完全維持】
 // 　initGame 実行時、スロットのデフォルト色による強制上書きを撤廃！
 // 　メニューで選択された最新のカスタムカラー（Menu.selectedColor）および表情
@@ -8,7 +12,6 @@
 // ・【ホスト撃破肉片のローカルワールド生成完全復元】
 // 　マルチプレイホスト時の撃破判定において、ゲストへのクラスタ同報だけでなく
 // 　ホスト自身のローカルワールド（world.spawnDeathDrop）へも確実に肉片を生成！
-// 　敵を倒した瞬間に肉片が消滅せず、その場に大量の餌がドロップするよう完全修正
 // ・【新入室プレイヤーの身代わり即死（誤爆キル）完全根絶維持】
 // ・【ゴーストAI視界保証同期の完全復元維持】
 // ・【人間撃破判定の厳格化による誤チャット完全根絶維持】
@@ -772,13 +775,16 @@ function gameLoop() {
             }
             victim._hasBeenKilled = true;
 
-            if (NetworkManager.isMultiplayerActive && !NetworkManager.isHost && !victim.isPlayer) {
+            // ゲスト端末時：自機が撃破した場合（killer.isPlayer）のみ先行処理を許可し、
+            // それ以外の画面外/他走者のキルはホスト側の同期パケットに委任
+            const isGuestLocalKill = NetworkManager.isMultiplayerActive && !NetworkManager.isHost && killer && killer.isPlayer;
+            if (NetworkManager.isMultiplayerActive && !NetworkManager.isHost && !victim.isPlayer && !isGuestLocalKill) {
                 return;
             }
 
             // =========================================================================
-            // ★ 【撃破肉片ドロップ：ホスト端末ローカルワールド生成完全復元】
-            // ソロ時だけでなく、マルチプレイホスト時も自端末の world.spawnDeathDrop を確実に発火！
+            // ★ 【撃破肉片ドロップ：ソロ・ホスト・ゲスト自機キルの完全生成】
+            // ゲスト端末自身がキルを取った場合も即座にローカル先行ドロップし、パケット遅延による残骸消失感を解消
             // =========================================================================
             if (!NetworkManager.isMultiplayerActive) {
                 world.spawnDeathDrop(victim);
@@ -797,6 +803,8 @@ function gameLoop() {
                     dropCount,
                     safeColorIdx
                 );
+            } else if (isGuestLocalKill) {
+                world.spawnDeathDrop(victim); // ゲスト自機キルの先行ローカルドロップ！
             }
 
             if (killer && !killer.isDead) {

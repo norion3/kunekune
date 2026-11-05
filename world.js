@@ -1,11 +1,15 @@
 // ==============================================================================
 // 『くねくねバトル オンライン』ワールド・動的チャンク餌・決定論的シード生成 (world.js)
-// v43.0.0 捕食CCD変位リミッター適正化＆フードトンネリング誤爆完全防止版:
-// ・【捕食CCD変位上限二乗値の適正化】
-// 　MAX_CCD_DISPLACEMENT_SQ を過大な 160,000（400px相当）から実移動量に即した
-// 　安全な 10,000（100px相当）へ適正化！
-// 　通常ブースト時の餌捕食すり抜け防止を完全維持しつつ、通信ラグ復旧やワープ補正時に
-// 　遠隔地の餌まで一瞬で直線上に吸い込んでしまうトンネリング誤爆を100%物理根絶
+// v44.0.0 撃破肉片最低ドロップ保証＆放射状爆散散布版:
+// ・【撃破肉片の最低ドロップ数保証】
+// 　スポーン直後やワープ直後で historyLength が 0〜1 の敵であっても、
+// 　撃破時に最低6個の肉片生成を必ず保証！生まれたての敵を瞬殺した際に
+// 　残骸が1個も出ない不具合を物理根絶
+// ・【残骸の放射状爆散散布（自機巨大化による即死全吸引の防止）】
+// 　自機がどれほど巨大化していても捕食判定の内側に収まって1フレームで消滅しないよう、
+// 　撃破時に放射状の外側オフセット（半径40〜90px）を付与してパーンと吹き飛ばす演出へ刷新！
+// 　敵を倒した瞬間に残骸が周囲へ飛び散る手応えと爽快感を100%可視化
+// ・【捕食CCD変位上限二乗値の適正化維持】MAX_CCD_DISPLACEMENT_SQ = 10,000
 // ・【パーティクル配列のFIFOハードキャップ防護維持】MAX_PARTICLES = 300
 // ・【パーティクル完全オブジェクトプール化維持】particlePool（最大512個）
 // ・【肉片ドロップFIFO上限キャップ維持】MAX_DROP_FOODS = 400
@@ -291,17 +295,35 @@ export class WorldManager {
         const now = performance.now();
         const margin = 20;
 
-        for (let i = 0; i < histLen; i += 2) {
-            const idx = (snake.headIdx + i) % 2048;
-            const pt = snake.history[idx];
-            if (!pt) continue;
+        // =========================================================================
+        // ★ 【撃破肉片の最低ドロップ数保証 ＆ 放射状爆散散布】
+        // 生まれたて・ワープ直後の敵（histLen <= 1）でも最低6個のドロップを保証！
+        // 自機が巨大化していても1フレームで即時全吸引されないよう、
+        // 放射状の外側オフセット（半径40〜90px）を付与して周囲に勢いよく爆散散布
+        // =========================================================================
+        const dropCount = Math.max(6, Math.floor(histLen / 2));
+        const baseSize = snake.size || 14;
 
-            // =========================================================================
-            // ★ 【外壁内安全クランプ】
-            // 外壁際で撃破された際、肉片がマップ外に飛び出して回収不能になるのを完全防止
-            // =========================================================================
-            const dropX = Math.max(margin, Math.min(MAP_SIZE - margin, pt.x + (Math.random() - 0.5) * 20));
-            const dropY = Math.max(margin, Math.min(MAP_SIZE - margin, pt.y + (Math.random() - 0.5) * 20));
+        for (let i = 0; i < dropCount; i++) {
+            let baseX = snake.x;
+            let baseY = snake.y;
+
+            if (histLen > 0) {
+                const segIdx = Math.floor((i / dropCount) * histLen);
+                const bufIdx = (snake.headIdx + segIdx) % 2048;
+                const pt = snake.history[bufIdx];
+                if (pt) {
+                    baseX = pt.x;
+                    baseY = pt.y;
+                }
+            }
+
+            // 放射状爆散オフセット（自機の吸引判定を抜ける半径40〜90pxの範囲へ吹き飛ばす）
+            const blastAngle = (i / dropCount) * Math.PI * 2 + (Math.random() - 0.5) * 0.45;
+            const blastDist = Math.max(38, baseSize * 1.6) + Math.random() * 48;
+
+            const dropX = Math.max(margin, Math.min(MAP_SIZE - margin, baseX + Math.cos(blastAngle) * blastDist));
+            const dropY = Math.max(margin, Math.min(MAP_SIZE - margin, baseY + Math.sin(blastAngle) * blastDist));
 
             this.dropFoods.push({
                 x: dropX,
