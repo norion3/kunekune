@@ -1,15 +1,13 @@
 // ==============================================================================
 // 『くねくねバトル オンライン』ワールド・動的チャンク餌・決定論的シード生成 (world.js)
-// v46.0.0 スマート残骸ドロップ（個数適正抑制＆高密度価値・サイズスケール）版:
-// ・【スマート残骸ドロップ設計（ゲームバランス崩壊・インフレ完全防止）】
-// 　残骸ドロップの個数インフレ（100〜200個）を厳格に阻止し、最大35〜40個の適正範囲
-// 　（小型8〜14個、中堅16〜24個、巨大ボス最大38個）にきっちり抑制！
-// 　その代わり、敵の蓄積スコアに応じて肉片1個あたりの「価値（val）」と「粒サイズ」が
-// 　ダイナミックに巨大化・高密度化するよう刷新。画面の過密・処理落ちを防ぎながら、
-// 　強敵を倒した瞬間に高価値な特大肉片を食べる最高の爽快感・手応えを実現
-// ・【自機胴体の下敷き完全回避＆適正外側放射爆散】
-// 　自機の胴体太さに応じた適度な外側オフセット（半径50〜110px）でパーンと散布し、
-// 　自機の胴体の真下に隠れて消える現象を物理根絶
+// v47.0.0 遠隔地「ゾンビ餌」復活防止キャッシュ配備版:
+// ・【未生成チャンク捕食キャッシュ（unprocessedPicks）配備】
+// 　遠隔地で他走者が食べた餌の消去要求（removeFoodAt）を受信した際、自画面のチャンクが
+// 　未生成で空振りした座標 (x, y) を一時キャッシュにストック！
+// 　後から自機が接近してチャンクが初生成（spawnChunkFoods）された瞬間にキャッシュと
+// 　照合して即座に間引き、他人が食べた大餌が新品として復活する「ゾンビ餌」インフレを100%物理根絶
+// ・【スマート残骸ドロップ設計（個数適正抑制＆高密度価値・サイズスケール）維持】
+// ・【自機胴体の下敷き完全回避＆適正外側放射爆散維持】
 // ・【撃破破裂パーティクル演出の強化維持】32個一斉爆散
 // ・【捕食CCD変位上限二乗値の適正化維持】MAX_CCD_DISPLACEMENT_SQ = 10,000
 // ・【パーティクル配列のFIFOハードキャップ防護維持】MAX_PARTICLES = 300
@@ -17,12 +15,8 @@
 // ・【肉片ドロップFIFO上限キャップ維持】MAX_DROP_FOODS = 400
 // ・【無限餌増殖(ボーダーダンス)の完全根絶維持】FIFOリングバッファ管理(最大4,096件)
 // ・【整数ビット演算ハッシュによる文字列アロケーション完全根絶維持】
-// ・【撃破時肉片ドロップの外壁内安全クランプ維持】
 // ・【画面外遠隔チャンクの即時回収維持】保持上限500チャンク
 // ・【肉片ドロップ寿命の適正化維持】12秒TTL
-// ・【通常チャンク・ホットスポット餌密度のスマート化維持】
-// ・【大餌・肉片オーラの超遠景ハイライト維持】
-// ・【絶対座標消去API完全維持】removeFoodAt(x, y) 連動
 // ・【ゼロアロケーション描画バケット維持】
 // ==============================================================================
 
@@ -31,6 +25,9 @@ import { NetworkManager } from './network.js';
 
 // 消費ビットマスクの最大キャッシュ保持チャンク数（メモリリーク防止 ＆ 長期エコシステム維持）
 const MAX_CONSUMED_CACHE_SIZE = 4096;
+
+// ★ 未生成チャンク捕食キャッシュの最大保持件数（メモリリーク防止）
+const MAX_UNPROCESSED_PICKS = 512;
 
 // ★ CCD変位上限二乗値（100px相当: 通常ブースト時の高速移動を網羅し、ワープ時のフードトンネリングを遮断）
 const MAX_CCD_DISPLACEMENT_SQ = 10000;
@@ -58,6 +55,9 @@ export class WorldManager {
         // キー: チャンクキー ((gx + 10) << 16) | (gy + 10), 値: 32bitビットマスク (Bit i = 餌インデックス i が消費済みか)
         this.consumedFoodBits = new Map();
 
+        // ★ 未生成チャンクに対する他走者の捕食座標一時キャッシュ [{ x, y, time }]
+        this.unprocessedPicks = [];
+
         // ゼロアロケーション用色別描画バケット
         this.batchBuckets = new Map();
         // 大餌・肉片専用オーラ描画用バッファ [x, y, radius]
@@ -79,6 +79,7 @@ export class WorldManager {
         this.particles.length = 0;
 
         this.consumedFoodBits.clear();
+        this.unprocessedPicks.length = 0;
         this.batchBuckets.clear();
         this.bigAuraBuffer.length = 0;
     }
@@ -175,14 +176,12 @@ export class WorldManager {
             for (let k of deleteKeys) {
                 this.generatedChunks.delete(k);
                 this.foodGrid.delete(k);
-                // チャンク破棄時に consumedFoodBits を即時削除しない！
-                // これにより、境界反復移動（ボーダーダンス）による餌無限復活を物理根絶
             }
         }
     }
 
     /**
-     * ホットスポット群生地 ＆ 3段階美麗餌生成（消費済みビットマスク判定対応版）
+     * ホットスポット群生地 ＆ 3段階美麗餌生成（未生成捕食キャッシュ照合対応版）
      */
     spawnChunkFoods(gx, gy, intKey = null) {
         const baseSeed = (NetworkManager && NetworkManager.currentSeed) ? NetworkManager.currentSeed : 12345678;
@@ -212,9 +211,19 @@ export class WorldManager {
 
         // チャンク整数キー（32bit）
         const chunkIntKey = intKey !== null ? intKey : (((gx + 10) << 16) | (gy + 10));
-        const consumedMask = this.consumedFoodBits.get(chunkIntKey) || 0;
+        let consumedMask = this.consumedFoodBits.get(chunkIntKey) || 0;
 
         const list = [];
+        const now = performance.now();
+
+        // 未生成捕食キャッシュの期限切れ（60秒超）を安全に整理
+        if (this.unprocessedPicks.length > 0) {
+            for (let pIdx = this.unprocessedPicks.length - 1; pIdx >= 0; pIdx--) {
+                if (now - this.unprocessedPicks[pIdx].time > 60000) {
+                    this.unprocessedPicks.splice(pIdx, 1);
+                }
+            }
+        }
 
         for (let i = 0; i < count; i++) {
             const randVal = prng();
@@ -237,11 +246,43 @@ export class WorldManager {
             // =========================================================================
             if ((consumedMask & (1 << i)) !== 0) {
                 if (sizeCategory === 2) {
-                    prng(); prng(); // 大餌の乱数消費を同期
+                    prng(); prng();
                 } else if (sizeCategory === 1) {
-                    prng(); prng(); prng(); // 中餌の乱数消費を同期
+                    prng(); prng(); prng();
                 } else {
-                    prng(); prng(); prng(); // 小餌の乱数消費を同期
+                    prng(); prng(); prng();
+                }
+                continue;
+            }
+
+            // =========================================================================
+            // ★ 【未生成チャンク捕食キャッシュとの照合・即時間引き】
+            // 遠隔地で他走者が食べた座標と一致する場合、スポーンをスキップしビットマスクへ記録
+            // =========================================================================
+            let isEatenRemotely = false;
+            const pickCount = this.unprocessedPicks.length;
+            if (pickCount > 0) {
+                for (let pIdx = pickCount - 1; pIdx >= 0; pIdx--) {
+                    const pick = this.unprocessedPicks[pIdx];
+                    const pdx = pick.x - x;
+                    const pdy = pick.y - y;
+                    if (pdx * pdx + pdy * pdy <= 324) { // 18px以内（18^2 = 324）
+                        isEatenRemotely = true;
+                        this.unprocessedPicks.splice(pIdx, 1);
+                        this._recordConsumedBit(chunkIntKey, i);
+                        consumedMask |= (1 << i);
+                        break;
+                    }
+                }
+            }
+
+            if (isEatenRemotely) {
+                if (sizeCategory === 2) {
+                    prng(); prng();
+                } else if (sizeCategory === 1) {
+                    prng(); prng(); prng();
+                } else {
+                    prng(); prng(); prng();
                 }
                 continue;
             }
@@ -298,26 +339,15 @@ export class WorldManager {
         const now = performance.now();
         const margin = 20;
 
-        // =========================================================================
-        // ★ 【スマート残骸ドロップ：個数適正抑制（最大38個）＆高密度価値スケール】
-        // 1. 個数のインフレ（100〜200個）を防止し、8〜38個の適正範囲に抑制
-        // 2. 敵の蓄積スコアに応じて1個あたりの「価値（val）」と「粒サイズ」を高密度化！
-        // 　 巨大ボス撃破時は金色に輝く特大肉片（val 50〜100pt）が飛び散り、
-        // 　 画面を散らかさずに強敵を仕留めた極上の手応えと爽快感を演出
-        // =========================================================================
         let dropCount = 8 + Math.floor(Math.min(30, Math.sqrt(victimScore) * 0.32 + histLen * 0.22));
         dropCount = Math.max(8, Math.min(38, dropCount));
 
-        // 敵の保有スコアの約30%をドロップ餌へ高密度還元
         const totalDropVal = Math.max(100, Math.floor(victimScore * 0.30));
         const baseValPerDrop = Math.max(12, Math.floor(totalDropVal / dropCount));
 
-        // 餌の粒サイズも価値に連動してダイナミックにスケール（小型6.5px 〜 巨大ボス14.5px）
         const baseFoodSize = Math.max(6.5, Math.min(14.5, 5.8 + Math.pow(baseValPerDrop, 0.40) * 1.5));
-
         const victimSize = snake.size || 14;
 
-        // 自機の胴体太さを加味して、自機の真下に隠れない安全な外側爆散距離を算出
         const localPlayer = (typeof window !== 'undefined' && window.localPlayerInstance) ? window.localPlayerInstance : null;
         const playerBodyRadius = (localPlayer && !localPlayer.isDead) ? localPlayer.size : 20;
 
@@ -335,7 +365,6 @@ export class WorldManager {
                 }
             }
 
-            // 自機胴体の下敷きを完全に避ける適正な外側放射爆散（半径50〜110px）
             const blastAngle = (i / dropCount) * Math.PI * 2 + (Math.random() - 0.5) * 0.38;
             const minClearDist = playerBodyRadius * 1.25 + victimSize * 0.9 + 18;
             const blastDist = minClearDist + Math.random() * 55;
@@ -358,18 +387,11 @@ export class WorldManager {
             });
         }
 
-        // =========================================================================
-        // ★ 【肉片ドロップFIFOハードキャップ防護】
-        // 画面外大乱戦時でも MAX_DROP_FOODS を超過した分を最も古い肉片から安全に切り捨て
-        // =========================================================================
         if (this.dropFoods.length > MAX_DROP_FOODS) {
             const overflow = this.dropFoods.length - MAX_DROP_FOODS;
             this.dropFoods.splice(0, overflow);
         }
 
-        // =========================================================================
-        // ★ 【撃破破裂パーティクル演出の強化（32個一斉爆散）】
-        // =========================================================================
         for (let p = 0; p < 32; p++) {
             const pAngle = Math.random() * Math.PI * 2;
             const pSpeed = 3.0 + Math.random() * 9.0;
@@ -383,11 +405,6 @@ export class WorldManager {
             ));
         }
 
-        // =========================================================================
-        // ★ 【パーティクルFIFOハードキャップ防護（Canvas API描画飽和防止）】
-        // 乱戦時の連続撃破で particles 配列が過密になった場合、超過分を古いものから
-        // 安全に particlePool へ返却して切り捨て
-        // =========================================================================
         if (this.particles.length > MAX_PARTICLES) {
             const overflowCount = this.particles.length - MAX_PARTICLES;
             for (let i = 0; i < overflowCount; i++) {
@@ -408,7 +425,6 @@ export class WorldManager {
         const hy = snake.y;
         const headR = snake.size;
 
-        // 前フレーム座標（未記録時は現位置として通常の点判定に安全フォールバック）
         const prevHx = snake.prevX !== undefined ? snake.prevX : hx;
         const prevHy = snake.prevY !== undefined ? snake.prevY : hy;
 
@@ -444,9 +460,6 @@ export class WorldManager {
                     const minDist = headR + f.size;
                     const minDistSq = minDist * minDist;
 
-                    // =========================================================================
-                    // ★ 【線分 vs 餌(円)の幾何学的最短距離判定（CCD捕食）】
-                    // =========================================================================
                     let hitDistSq = 0;
                     if (canUseCCD) {
                         const t = Math.max(0, Math.min(1, ((f.x - prevHx) * segDx + (f.y - prevHy) * segDy) / segLenSq));
@@ -462,7 +475,6 @@ export class WorldManager {
                     if (hitDistSq < minDistSq) {
                         snake.addScore(f.val);
 
-                        // ★ チャンク内での捕食インデックスを永続ビットマスク（FIFO管理）へ刻印
                         if (f.chunkIntKey !== undefined && f.foodIdx !== undefined) {
                             this._recordConsumedBit(f.chunkIntKey, f.foodIdx);
                         }
@@ -504,6 +516,7 @@ export class WorldManager {
 
     /**
      * 通信で他人が食べた餌を絶対座標 (x, y) から探し出して安全に消去する
+     * ★ 自画面でチャンクが未生成の場合は unprocessedPicks へ記録しゾンビ復活を完全防止
      */
     removeFoodAt(x, y, searchRadius = 16) {
         const searchDistSq = searchRadius * searchRadius;
@@ -523,6 +536,8 @@ export class WorldManager {
         // 2. チャンク餌の探索
         const gx = Math.floor(x / GRID_SIZE);
         const gy = Math.floor(y / GRID_SIZE);
+        let foundInGeneratedChunk = false;
+
         for (let ox = -1; ox <= 1; ox++) {
             for (let oy = -1; oy <= 1; oy++) {
                 const intKey = ((gx + ox + 10) << 16) | (gy + oy + 10);
@@ -534,18 +549,34 @@ export class WorldManager {
                     const dx = f.x - x;
                     const dy = f.y - y;
                     if (dx * dx + dy * dy < searchDistSq) {
-                        // ★ 他走者の捕食時もインデックスを永続ビットマスク（FIFO管理）へ刻印
                         if (f.chunkIntKey !== undefined && f.foodIdx !== undefined) {
                             this._recordConsumedBit(f.chunkIntKey, f.foodIdx);
                         }
 
                         list[i] = list[list.length - 1];
                         list.pop();
+                        foundInGeneratedChunk = true;
                         return true;
                     }
                 }
             }
         }
+
+        // =========================================================================
+        // ★ 【未生成チャンク捕食のキャッシュ記録（ゾンビ餌防止）】
+        // チャンク未生成または画面外で空振りした場合、座標をキャッシュにストック
+        // =========================================================================
+        if (!foundInGeneratedChunk) {
+            this.unprocessedPicks.push({
+                x: x,
+                y: y,
+                time: performance.now()
+            });
+            if (this.unprocessedPicks.length > MAX_UNPROCESSED_PICKS) {
+                this.unprocessedPicks.shift();
+            }
+        }
+
         return false;
     }
 
@@ -556,7 +587,6 @@ export class WorldManager {
             p.y += p.vy;
             p.life -= 0.04;
             if (p.life <= 0) {
-                // ★ 寿命を迎えたパーティクルをプールへ安全に返却（ゼロアロケーション）
                 if (this.particlePool.length < MAX_PARTICLE_POOL) {
                     this.particlePool.push(p);
                 }
@@ -565,9 +595,6 @@ export class WorldManager {
             }
         }
 
-        // =========================================================================
-        // ★ 【肉片ドロップ寿命の適正化】35秒 ➔ 12秒へ短縮し、餌の山を速やかに解消
-        // =========================================================================
         const now = performance.now();
         for (let i = this.dropFoods.length - 1; i >= 0; i--) {
             const f = this.dropFoods[i];
@@ -588,16 +615,8 @@ export class WorldManager {
         const minGy = Math.floor(cameraY / GRID_SIZE) - 1;
         const maxGy = Math.floor((cameraY + viewH) / GRID_SIZE) + 1;
 
-        // カメラスケールを逆算
         const scale = ctx.canvas.width / viewW;
 
-        // =========================================================================
-        // 【強化版・階層的スマートLoDフィルター（60,000px索敵特化）】
-        // ・scale >= 0.65: 100% 全て表示（近景・通常時）
-        // ・0.50 <= scale < 0.65: 約50%間引き（標準ズームアウト時の画面白飛びを防止）
-        // ・0.35 <= scale < 0.50: 約75%間引き（中遠景：小餌の1/4のみ表示）
-        // ・scale < 0.35: 小餌を完全非表示（超広域索敵：大餌・肉片のみが浮かぶ漆黒の宇宙）
-        // =========================================================================
         const isMidZoom = scale < 0.65 && scale >= 0.50;
         const isFarZoom = scale < 0.50 && scale >= 0.35;
         const isUltraZoom = scale < 0.35;
@@ -617,7 +636,6 @@ export class WorldManager {
                     const f = list[i];
 
                     if (f.isBig) {
-                        // ★ 大餌・中餌：遠景でも必ず美しい真円パルスオーラを放つ
                         const pulse = 1.0 + Math.sin(frameCount * 0.12 + f.x) * 0.24;
                         const minPixelRadius = Math.max(f.size, 4.0 / scale);
                         const auraSize = minPixelRadius * (f.isLargeAura ? 2.3 : 1.7) * pulse;
@@ -630,13 +648,10 @@ export class WorldManager {
                         }
                         bucket.push(f.x, f.y, Math.max(f.size, 2.8 / scale));
                     } else if (!isUltraZoom) {
-                        // ★ 小餌：スケールに応じた決定論的ハッシュでチラつきなく段階的間引き
                         const hash = (gx * 31 + gy * 17 + i) >>> 0;
                         if (isFarZoom) {
-                            // 75% 間引き（4個に1個だけ表示）
                             if ((hash % 4) !== 0) continue;
                         } else if (isMidZoom) {
-                            // 50% 間引き（2個に1個だけ表示）
                             if ((hash % 2) !== 0) continue;
                         }
 
@@ -651,7 +666,6 @@ export class WorldManager {
             }
         }
 
-        // ドロップ肉片のバケット投入（どんな遠景でも100%真円パルス発光）
         for (let i = 0; i < this.dropFoods.length; i++) {
             const f = this.dropFoods[i];
             if (f.x < cameraX - 50 || f.x > cameraX + viewW + 50 || f.y < cameraY - 50 || f.y > cameraY + viewH + 50) continue;
@@ -668,9 +682,6 @@ export class WorldManager {
             bucket.push(f.x, f.y, Math.max(f.size, 3.0 / scale) * pulse);
         }
 
-        // =========================================================================
-        // 1. 淡い黄色の神秘的発光オーラ一括描画（常に100%真円 arc で描画）
-        // =========================================================================
         const auraLen = this.bigAuraBuffer.length;
         if (auraLen > 0) {
             ctx.fillStyle = 'rgba(255, 255, 200, 0.36)';
@@ -686,9 +697,6 @@ export class WorldManager {
             ctx.fill();
         }
 
-        // =========================================================================
-        // 2. 餌コア本体のバッチ描画（真円 arc 描画でブロックノイズを根絶）
-        // =========================================================================
         for (const [color, coords] of this.batchBuckets.entries()) {
             const len = coords.length;
             if (len === 0) continue;
@@ -706,7 +714,6 @@ export class WorldManager {
             ctx.fill();
         }
 
-        // 3. パーティクル描画（超遠景時はスキップして視界をクリアに保つ）
         if (!isUltraZoom) {
             for (let i = 0; i < this.particles.length; i++) {
                 const p = this.particles[i];

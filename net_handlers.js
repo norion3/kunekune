@@ -1,12 +1,16 @@
 // ==============================================================================
 // 『くねくねバトル オンライン』リモートパケット受信反映ハンドラ (net_handlers.js)
-// v38.0.0 ランキング人間プレイヤー個別カスタムカラー＆色変更即時反映版:
-// ・【ランキング文字色の個別カスタムカラー化】
-// 　ゲスト側のランキングDOM生成部において、自機（myPlayer.color）および他人間プレイヤー
-// 　（NetworkManager.slots[slot].color）にそれぞれのカスタムカラーを適用。AIスネークは白（#ffffff）を維持
-// ・【色変更検知シグネチャ連動による0ms即時再描画】
-// 　差分検知シグネチャ（lastLeaderboardSignature）に各プレイヤーの色情報を含めることで、
-// 　スコア変動がなくてもメニューで色を変更した瞬間に即座にランキングDOMを再構築
+// v40.0.0 対人キル報酬確定同期＆順位表示DOM競合解消版:
+// ・【対人戦（PvP）キル報酬確定同期（KILL_ALERTフック）】
+// 　被害者端末から届いた KILL_ALERT をインターセプトし、自機がキラー（kn）に
+// 　指名されていた場合、被害者のスコアの18%（最低120pt）を加算しキル数を正当に加算！
+// 　他端末との対人戦において勝者のスコアが増えない重大な報酬喪失バグを完全解消
+// ・【順位表示（myRank）DOM競合・チラつき完全根絶】
+// 　ホストからの遅延順位パケットによる valRank DOMの強制上書きを撤廃！
+// 　main.js によるリアルタイム実スコア順位表示に一本化し、激しい点滅を解消
+// ・【撃破肉片クラスタ二重生成の完全防止（onDropClusterSpawned）維持】
+// ・【ランキング文字色の個別カスタムカラー化維持】
+// ・【色変更検知シグネチャ連動による0ms即時再描画維持】
 // ・【ランキング同期デッドロックの完全解消維持】
 // ・【リーダーボードキャッシュのリセット機構維持】
 // ・【相手顔タイプ・マイアイコン(face/faceIdx)リアルタイム同期維持】
@@ -64,6 +68,61 @@ export function setupNetworkHandlers(ctx) {
         initGame
     } = ctx;
 
+    // =========================================================================
+    // ★ 【対人戦（PvP）キル報酬確定同期インターセプター】
+    // 相手端末の自己判定で自分がキラーとなった KILL_ALERT を検知し、自機スコアを加算
+    // =========================================================================
+    if (NetworkManager && !NetworkManager._hasKillRewardHooked) {
+        NetworkManager._hasKillRewardHooked = true;
+        const originalHandleCustomMessage = NetworkManager._handleCustomMessage.bind(NetworkManager);
+
+        NetworkManager._handleCustomMessage = function(data) {
+            if (data) {
+                let packet = null;
+                try {
+                    let rawStr = '';
+                    if (data.data && typeof data.data.msg_data === 'string') rawStr = data.data.msg_data;
+                    else if (typeof data.msg_data === 'string') rawStr = data.msg_data;
+                    else if (data.data && typeof data.data.message === 'string') rawStr = data.data.message;
+                    else if (typeof data.message === 'string') rawStr = data.message;
+                    else if (typeof data === 'string') rawStr = data;
+
+                    if (rawStr) packet = JSON.parse(rawStr);
+                    if (!packet && typeof data === 'object') {
+                        if (data.e || data.event) packet = data;
+                        else if (data.data && typeof data.data === 'object') packet = data.data;
+                    }
+                } catch (e) {
+                    packet = null;
+                }
+
+                if (packet) {
+                    const eventType = packet.e || packet.event;
+                    if (eventType === 'KILL_ALERT') {
+                        const myPlayer = window.localPlayerInstance;
+                        const myName = (myPlayer && myPlayer.name) ? myPlayer.name : 'あなた';
+
+                        // 相手端末からのキル通告で、自機がキラーかつ被害者が他者の場合
+                        if (packet.kn === myName && packet.vs !== undefined && packet.vs !== NetworkManager.mySlot) {
+                            let victimScore = 200;
+                            const victimSnake = allSnakes.find(s => s && s.id === packet.vs);
+                            if (victimSnake && victimSnake.score) {
+                                victimScore = victimSnake.score;
+                            }
+                            const absorbedScore = Math.max(120, Math.floor(victimScore * 0.18));
+
+                            if (myPlayer && !myPlayer.isDead) {
+                                myPlayer.addScore(absorbedScore);
+                                myPlayer.kills = (myPlayer.kills || 0) + 1;
+                            }
+                        }
+                    }
+                }
+            }
+            return originalHandleCustomMessage(data);
+        };
+    }
+
     NetworkManager.setCallbacks({
         /**
          * ホストからのゲーム開始・直接参戦合図受信ハンドラ
@@ -71,7 +130,6 @@ export function setupNetworkHandlers(ctx) {
          * ★ 途中参加時は isRespawn = true 扱いにして受信済み他プレイヤーの消去（点滅）を完全防止
          */
         onGameStart(packet) {
-            // 自端末がゲームオーバー中またはリザルト画面が表示されている場合は開始処理を破棄
             const overScreen = document.getElementById('over-screen');
             const isGameOver = (typeof window !== 'undefined' && window.currentGameState === 'gameover') ||
                 (overScreen && overScreen.style.display === 'flex');
@@ -104,7 +162,6 @@ export function setupNetworkHandlers(ctx) {
                 let isRealHuman = false;
 
                 if (isPlayerSlot) {
-                    // スロット 0〜5: 人間プレイヤーまたは空き枠ダミーAI
                     const slotData = NetworkManager.slots[data.slot];
                     color = (data.colorIdx !== undefined)
                         ? SNAKE_COLORS[data.colorIdx % SNAKE_COLORS.length]
@@ -113,7 +170,6 @@ export function setupNetworkHandlers(ctx) {
                         ? slotData.name 
                         : (data.isAI ? `CPU ${data.slot + 1}` : `P${data.slot + 1}`);
 
-                    // パケットまたはスロットデータから顔タイプを復元
                     if (data.face) {
                         face = data.face;
                     } else if (data.faceIdx !== undefined && FACE_TYPES[data.faceIdx]) {
@@ -124,24 +180,20 @@ export function setupNetworkHandlers(ctx) {
                         face = 'normal';
                     }
                     
-                    // ★ ホスト枠（Slot 0）または AIフラグが立っていない枠を無条件で人間走者と判定！
                     if (data.slot === 0 || (slotData && !slotData.isAI)) {
                         isRealHuman = true;
                     }
                 } else {
-                    // スロット 6〜99: ホストがシミュレートしている通常AI
                     const originalAiId = data.slot - MAX_PLAYERS + 1;
                     color = (data.colorIdx !== undefined)
                         ? SNAKE_COLORS[data.colorIdx % SNAKE_COLORS.length]
                         : SNAKE_COLORS[originalAiId % SNAKE_COLORS.length];
                     resolvedName = `CPU ${originalAiId}`;
-                    // ★ ホスト側の ai.js と全く同じ計算式で表情を完全復元
                     face = AI_FACES[originalAiId % AI_FACES.length];
                     isRealHuman = false;
                 }
 
                 remote = new Snake(false, data.slot, resolvedName, color, face);
-                // ★ 人間走者フラグをスネーク自身に直接刻印（AIとの混同・矢印重複を物理排除）
                 remote.isHumanPlayer = isRealHuman;
 
                 remote.reset(data.x, data.y);
@@ -157,11 +209,6 @@ export function setupNetworkHandlers(ctx) {
                 }
             }
 
-            // =========================================================================
-            // ★ 【他ユーザーカラーリアルタイム同期＆走者リスト淵即時再描画】
-            // 相手がメニューで色を変更した際、毎フレーム届く colorIdx を即座に反映！
-            // スネーク本体・HUDレーダーに加え、メニュー走者リストのアイコン枠線も即時連動
-            // =========================================================================
             if (data.colorIdx !== undefined) {
                 const newColor = SNAKE_COLORS[data.colorIdx % SNAKE_COLORS.length];
                 let colorChanged = false;
@@ -177,17 +224,11 @@ export function setupNetworkHandlers(ctx) {
                     }
                 }
 
-                // 相手の色が変わった場合、メニューの走者一覧も即時更新してアイコンの淵を切り替え
                 if (colorChanged && Menu && typeof Menu.updateParticipants === 'function') {
                     Menu.updateParticipants(NetworkManager.slots.filter(s => !s.isAI));
                 }
             }
 
-            // =========================================================================
-            // ★ 【他ユーザー顔タイプ・マイアイコン(face/faceIdx)リアルタイム同期】
-            // 相手がメニューで表情やマイアイコンを変更した際、届いた顔情報を即時反映！
-            // snake.js の avatarImg キャッシュ機構と連動して相手の頭部へ即時描画
-            // =========================================================================
             let targetFace = null;
             if (data.face) {
                 targetFace = data.face;
@@ -206,7 +247,6 @@ export function setupNetworkHandlers(ctx) {
                 }
             }
 
-            // ★ 名前同期保証 ＆ 人間フラグの追従確定（Slot 0はゲスト端末で常時人間判定）
             if (data.slot < MAX_PLAYERS) {
                 const curSlot = NetworkManager.slots[data.slot];
                 if (data.slot === 0 || (curSlot && !curSlot.isAI)) {
@@ -217,24 +257,16 @@ export function setupNetworkHandlers(ctx) {
                 }
             }
 
-            // =========================================================================
-            // 1. ★ 胴体消滅・点滅の完全根絶（テレポート判定緩和＆公式 shiftHistory 適用）
-            // =========================================================================
             const dx = data.x - remote.x;
             const dy = data.y - remote.y;
             const distSq = dx * dx + dy * dy;
 
             if (distSq > 1000000) {
-                // 超大距離ワープ時（回線復旧や長距離リスポーン）：カプセル化されたAPIで安全に平行移動
                 remote.shiftHistory(dx, dy);
                 remote.x = data.x;
                 remote.y = data.y;
             }
 
-            // =========================================================================
-            // 2. ★ リモート死亡時の肉片ドロップ還元＆リスポーン復帰処理
-            // ゲストが自己判定で死亡した際、ホストが肉片クラスタを発行して食物連鎖を維持
-            // =========================================================================
             if (data.isDead && !remote.isDead) {
                 if (NetworkManager.isHost && NetworkManager.isMultiplayerActive) {
                     const colorIdx = SNAKE_COLORS.indexOf(remote.color);
@@ -256,7 +288,6 @@ export function setupNetworkHandlers(ctx) {
                 remote.reset(data.x, data.y);
             }
 
-            // 3. リモート無敵フラグの完全代入（reset() の直後に実行し、ゲスト本来の3.0秒無敵と完全同期）
             if (data.isInvulnerable) {
                 remote.invulnerableTimer = Math.max(remote.invulnerableTimer || 0, 3.0);
             } else if (!data.isInvulnerable && remote.invulnerableTimer > 0) {
@@ -269,7 +300,6 @@ export function setupNetworkHandlers(ctx) {
             remote.speed = data.speed;
             remote.targetLength = data.length;
 
-            // スコア確実同期：スコア更新と体長・サイズ再計算を同時に実施
             remote.score = data.score;
             remote.recalculateSize();
 
@@ -280,7 +310,7 @@ export function setupNetworkHandlers(ctx) {
 
         /**
          * ホストから受信した全体リーダーボード情報をゲスト端末へ同期
-         * 自機実スコア・自機名による即時補正＆再ソートを完備
+         * ★ valRank DOMの強制上書きを撤廃し、main.js の実スコア順位に一本化（チラつき完全防止）
          */
         onLeaderboardSync(lbData) {
             if (!lbData) return;
@@ -290,7 +320,6 @@ export function setupNetworkHandlers(ctx) {
             const rawTopList = lbData.top || [];
             const totalAlive = lbData.totalAlive || TOTAL_SNAKES;
 
-            // ゲスト端末側での自己情報補正：ホスト集計リスト内の自機スコア・名前を最新の実データに更新
             let hasMeInTop = false;
             const topList = rawTopList.map(item => {
                 if (item.slot === NetworkManager.mySlot) {
@@ -304,27 +333,12 @@ export function setupNetworkHandlers(ctx) {
                 return item;
             });
 
-            // スコア補正後に再度スコア降順で並び替え（順位と表示位置のズレを解消）
             topList.sort((a, b) => b.score - a.score);
 
-            // ホストから全スロット確定順位マップが届いている場合は最優先
-            let myRank = 1;
-            if (lbData.ranks && lbData.ranks[NetworkManager.mySlot] !== undefined) {
-                myRank = lbData.ranks[NetworkManager.mySlot];
-            } else if (lbData.myRank) {
-                myRank = lbData.myRank;
-            } else {
-                // フォールバック：全スネークリストまたはTopリストとの比較
-                const higherCount = topList.filter(item => item.score > myScore).length;
-                myRank = higherCount + 1;
-            }
-
-            const valRank = document.getElementById('val-rank');
+            // 生存総数のみを更新し、valRank は main.js 側のリアルタイム判定に委ねる（DOM競合解消）
             const valTotal = document.getElementById('val-total');
-            if (valRank) valRank.innerText = myRank;
             if (valTotal) valTotal.innerText = totalAlive;
 
-            // 差分検知シグネチャ（名前・スコア・順位および各プレイヤーの色文字列化）
             const newSignature = topList.slice(0, 8).map(item => {
                 let col = '#ffffff';
                 if (item.slot === NetworkManager.mySlot && myPlayer) {
@@ -333,18 +347,13 @@ export function setupNetworkHandlers(ctx) {
                     col = NetworkManager.slots[item.slot].color || '#ffffff';
                 }
                 return `${item.name}:${item.score}:${col}`;
-            }).join('|') + `_me:${myScore}_rank:${myRank}`;
+            }).join('|') + `_me:${myScore}`;
 
             if (newSignature === lastLeaderboardSignature) {
                 return;
             }
             lastLeaderboardSignature = newSignature;
 
-            // =========================================================================
-            // ★ 【ゲスト端末側ランキング表示：人間プレイヤーはカスタムカラー / AIは白】
-            // パネルが閉じている時でも常に最新の innerHTML を構築しておくことで、
-            // ユーザーがトロフィーボタンを押した瞬間に100%確実にリストが表示される！
-            // =========================================================================
             const listEl = document.getElementById('leaderboard-list');
             if (listEl) {
                 listEl.innerHTML = topList.slice(0, 8).map((item, idx) => {
@@ -395,11 +404,21 @@ export function setupNetworkHandlers(ctx) {
 
         /**
          * 撃破肉片クラスタ受信ハンドラ
+         * ★ ゲスト端末かつ自機の直近キル（ローカル先行生成済み）である場合は二重生成をスキップ！
          */
         onDropClusterSpawned(cluster) {
             if (!world || !world.dropFoods || !Array.isArray(cluster)) return;
             const cx = cluster[0];
             const cy = cluster[1];
+
+            if (NetworkManager.isMultiplayerActive && !NetworkManager.isHost) {
+                if (typeof window !== 'undefined' && typeof window.checkIsRecentLocalKill === 'function') {
+                    if (window.checkIsRecentLocalKill(cx, cy)) {
+                        return;
+                    }
+                }
+            }
+
             const totalVal = cluster[2] || 100;
             const count = cluster[3] || 15;
             const colorIdx = cluster[4] || 0;

@@ -1,27 +1,27 @@
 // ==============================================================================
 // 『くねくねバトル オンライン』スネーク.io型 自律生態系AIマネージャー (ai.js)
-// v39.0.0 循環スポーン超遠隔化＆リスポーン待機時間適正化版:
-// ・【動的循環スポーン距離の安全域超遠隔化】
-// 　スポーン距離を 4,500〜9,000px から 9,000〜15,000px へ大幅拡張！
-// 　最大ズームアウト時（視界半径約8,000px）でもカメラ視界内にAIが突然出現する
-// 　「目の前ワープ出現・激突」を物理的に完全根絶
-// ・【リスポーン待機時間の適正化（4.0秒）】
-// 　死亡から復活までの時間を 1.25秒 から 4.0秒 へ適正化！
-// 　倒した敵が即座にゾンビのように再襲来するのを防ぎ、残骸回収の安全時間と余韻を確保
+// v41.0.0 思考ターゲットマルチ化＆胴体回避リアクション遅延配備版:
+// ・【AI思考ターゲットのマルチ化（ゲスト無視の完全解消）】
+// 　ちょっかい行動（HARASS）およびプレイヤー接近トリガーの対象をホスト固定から
+// 　「AIに最も近い生存人間プレイヤー」へ動的切り替え！
+// 　ゲストプレイヤーに対しても進路妨害や並走威嚇を仕掛け、マルチプレイの対人対AI駆け引きを完全成立
+// ・【胴体回避の人間化（0ms神回避の適正化）】
+// 　危険距離侵入時の即時直角反転ルーチンに 0.15秒のリアクション遅延（avoidReactionTimer）を配備！
+// 　プレイヤーがブースト加速で側面・前方から奇襲した際、首切り・囲い込みが正当に成功する
+// 　ゲームバランスへ適正化（至近距離での緊急回避は維持）
+// ・【全人間プレイヤー対応動的循環スポーン維持】
+// ・【ゲスト視界内AI突然変異（サイズ急膨張）完全防止維持】
+// ・【全人間プレイヤー視界外リスポーン（4.0秒）維持】
 // ・【画面外AIの生態系ピラミッド型仮想成長キャップ維持】
-// 　ボス級cruiser: 12,000pt、中堅hunter/harasser/ambusher: 5,000pt、一般forager/timid: 2,200pt
 // ・【思考用空間グリッドのactiveCells管理＆完全ゼロアロケーション化維持】
 // ・【思考用空間グリッドの毎フレーム確実クリアによるメモリリーク根絶維持】
-// ・【AI思考走査グリッドの動的探索半径化維持】超巨大スネークへの自爆特攻完全防止
-// ・【ホストカメラ依存(!isVisible)スキップの完全撤廃維持】
-// ・【空間ハッシュマイナス座標ビット崩壊完全防護維持】((gx + 10) << 16) | (gy + 10)
+// ・【AI思考走査グリッドの動的探索半径化維持】
+// ・【空間ハッシュマイナス座標ビット崩壊完全防護維持】
 // ・【整数ビット演算ハッシュによる文字列アロケーション完全根絶維持】
 // ・【空間ハッシュ局所グリッド走査(O(1))維持】
-// ・【AI行動タイマー実時間同期維持】毎フレーム実時間（timeScale）一括減算
-// ・【開幕ピラミッド配分維持】小型85%、中堅12%、ボス3%
+// ・【AI行動タイマー実時間同期維持】
 // ・【全行動ステート完全保持】カミカゼ暗殺(AMBUSH)、包囲コイリング(HUNTER)、
-// 　ちょっかい(HARASS)、ハイエナ(SCAVENGER)、ビビり(PANIC)、大回遊(CRUISING)、
-// 　動的循環スポーン、O(1)リングバッファを100%保持
+// 　ちょっかい(HARASS)、ハイエナ(SCAVENGER)、ビビり(PANIC)、大回遊(CRUISING)
 // ==============================================================================
 
 import { MAP_SIZE, SNAKE_COLORS, GRID_SIZE } from './constants.js';
@@ -38,7 +38,7 @@ const AI_STATE = {
     AMBUSH: 6      // カミカゼ特攻（巨大スネークの首元へ捨て身の突進）
 };
 
-// ★ 画面外AIの生態系ピラミッド型仮想成長上限スコア（性格別上限で総負荷を相殺しつつ怪獣決戦を実現）
+// ★ 画面外AIの生態系ピラミッド型仮想成長上限スコア
 const MAX_VIRTUAL_SCORE_BOSS = 12000;    // ボス級（cruiser等: 体長約78〜85節）
 const MAX_VIRTUAL_SCORE_MID = 5000;      // 中堅好戦型（hunter, harasser, ambusher: 体長約52〜56節）
 const MAX_VIRTUAL_SCORE_DEFAULT = 2200;  // 一般・主食（forager, timid等: 体長約32〜38節）
@@ -118,27 +118,25 @@ export class AIManager {
                 harassCooldown: Math.floor(Math.random() * 60),
                 panicCooldown: 0,
                 deadTimer: 0,
-                ambushTarget: null
+                ambushTarget: null,
+                avoidReactionTimer: 0 // ★ 回避リアクション遅延タイマー
             });
 
-            // 初期配置の広域分散化（開幕直後の過密・敵だらけ状態を完全防止）
+            // 初期配置の広域分散化
             const angle = Math.random() * Math.PI * 2;
             const dist = 2500 + Math.random() * 16000;
             const sx = Math.max(400, Math.min(MAP_SIZE - 400, playerX + Math.cos(angle) * dist));
             const sy = Math.max(400, Math.min(MAP_SIZE - 400, playerY + Math.sin(angle) * dist));
             ai.reset(sx, sy);
 
-            // 開幕の健全な生態系ピラミッド配分（理不尽超巨大ボスの開幕排除）
+            // 開幕の健全な生態系ピラミッド配分
             const scoreRand = Math.random();
             if (scoreRand < 0.03) {
-                // 3%: 開幕時点でのエリアボス・強敵（800〜1,200pt / 体長20〜25節）
                 ai.addScore(Math.floor(800 + Math.random() * 400));
                 this.aiMeta[i - 1].persona = Math.random() < 0.5 ? 'cruiser' : 'hunter';
             } else if (scoreRand < 0.15) {
-                // 12%: 中堅一般個体（200〜500pt / 体長16〜19節）
                 ai.addScore(Math.floor(200 + Math.random() * 300));
             } else {
-                // 85%: 基本となる小型・序盤の狩り対象（初期50pt + ゆらぎ 0〜100pt / 体長12〜16節）
                 ai.addScore(Math.floor(Math.random() * 100));
             }
 
@@ -176,11 +174,9 @@ export class AIManager {
     }
 
     /**
-     * 思考走査専用グリッドの構築（全スネークの胴体を画面内外問わずO(1)走査用にマッピング）
-     * ★ Map.values() のイテレータ生成を排除し、毎フレーム確実に Map を初期化してメモリリークを完全防止
+     * 思考走査専用グリッドの構築
      */
     _rebuildSpatialGrid(allSnakes) {
-        // 1. アクティブセルをプールへ返却（イテレータアロケーション完全ゼロ）
         const activeCount = this.activeCells.length;
         for (let i = 0; i < activeCount; i++) {
             const cell = this.activeCells[i];
@@ -191,10 +187,8 @@ export class AIManager {
         }
         this.activeCells.length = 0;
 
-        // 2. Map をクリアして遠隔移動時のキー無限増殖（メモリリーク）を遮断
         this.bodySpatialGrid.clear();
 
-        // 3. ノード参照の解放とポインタ初期化
         const limit = Math.min(this.nodePoolIndex, this.nodePool.length);
         for (let i = 0; i < limit; i++) {
             this.nodePool[i].snake = null;
@@ -204,11 +198,9 @@ export class AIManager {
         const total = allSnakes.length;
         for (let i = 0; i < total; i++) {
             const s = allSnakes[i];
-            // 画面外フラグ(!s.isVisible)でのスキップを撤廃し、画面外でも衝突回避ができるよう登録
             if (s.isDead) continue;
 
             const histLen = s.historyLength || 0;
-            // 頭部付近（先頭2節）は自爆防止のためスキップし、4節刻みで間引き登録して超軽量化
             for (let j = 3; j < histLen; j += 4) {
                 const idx = (s.headIdx + j) % 2048;
                 const pt = s.history[idx];
@@ -219,7 +211,6 @@ export class AIManager {
 
                 const gx = Math.floor(pt.x / GRID_SIZE);
                 const gy = Math.floor(pt.y / GRID_SIZE);
-                // 整数ビット演算ハッシュ（負の座標によるビット崩壊を防ぐ正のオフセット +10 適用）
                 const key = ((gx + 10) << 16) | (gy + 10);
 
                 let cell = this.bodySpatialGrid.get(key);
@@ -234,10 +225,10 @@ export class AIManager {
     }
 
     /**
-     * AIシミュレーション更新（実時間タイマー同期＆動的循環スポーン＆仮想成長上限対応）
-     * @param {Object} player 
-     * @param {Array} allSnakes 
-     * @param {number} frameCount 
+     * AIシミュレーション更新（全人間プレイヤー対応動的循環バランサー＆思考ターゲットマルチ化）
+     * @param {Object} player 自機プレイヤー
+     * @param {Array} allSnakes 全スネーク配列
+     * @param {number} frameCount フレーム数
      * @param {number} [dtSec=0.016] 実経過秒数
      */
     update(player, allSnakes, frameCount, dtSec = 1 / 60) {
@@ -247,20 +238,50 @@ export class AIManager {
         const safeDt = (typeof dtSec === 'number' && dtSec > 0) ? Math.min(dtSec, 0.1) : (1 / 60);
         const timeScale = Math.max(0.1, Math.min(3.0, safeDt * 60));
 
-        // 1. 【画面外AIの仮想バックグラウンド成長】（生態系ピラミッド型上限キャップ対応）
+        // =========================================================================
+        // 1. 【全生存人間プレイヤー（ホスト＋遠隔ゲスト走者）の座標・角度・インスタンス収集】
+        // =========================================================================
+        const humanTargets = [];
+        if (player && !player.isDead) {
+            humanTargets.push({ x: player.x, y: player.y, angle: player.angle, snake: player });
+        }
+        for (let i = 0; i < allSnakes.length; i++) {
+            const s = allSnakes[i];
+            if (s && !s.isDead && s.isHumanPlayer && !s.isPlayer) {
+                humanTargets.push({ x: s.x, y: s.y, angle: s.angle, snake: s });
+            }
+        }
+        if (humanTargets.length === 0) {
+            humanTargets.push({ x: MAP_SIZE / 2, y: MAP_SIZE / 2, angle: 0, snake: player });
+        }
+
+        // =========================================================================
+        // 2. 【画面外AIの仮想バックグラウンド成長】（ゲスト視界内突然変異防止対応）
+        // =========================================================================
         this._virtualGrowthTimer += safeDt;
         if (this._virtualGrowthTimer >= 0.5) {
             const growthInterval = this._virtualGrowthTimer;
             this._virtualGrowthTimer = 0;
+            const nearHumanThresholdSq = 4500 * 4500;
 
             for (let i = 0; i < total; i++) {
                 const ai = this.ais[i];
-                if (ai.isDead || ai.isVisible) continue;
+                if (ai.isDead) continue;
+
+                let nearAnyHuman = false;
+                for (let h = 0; h < humanTargets.length; h++) {
+                    const ht = humanTargets[h];
+                    const distSq = (ai.x - ht.x) ** 2 + (ai.y - ht.y) ** 2;
+                    if (distSq < nearHumanThresholdSq) {
+                        nearAnyHuman = true;
+                        break;
+                    }
+                }
+                if (nearAnyHuman) continue;
 
                 const meta = this.aiMeta[i];
                 if (!meta) continue;
 
-                // ★ 性格に応じた生態系ピラミッド型上限キャップを判定
                 let scoreCap = MAX_VIRTUAL_SCORE_DEFAULT;
                 if (meta.persona === 'cruiser') {
                     scoreCap = MAX_VIRTUAL_SCORE_BOSS;
@@ -275,7 +296,6 @@ export class AIManager {
 
                     ai.addScore(gainRate * growthInterval);
 
-                    // 仮想キル発生頻度と獲得量
                     if (Math.random() < 0.005) {
                         const killBonus = Math.floor(120 + Math.random() * 380);
                         ai.addScore(killBonus);
@@ -294,18 +314,9 @@ export class AIManager {
             activeDrops = window.currentWorldInstance.dropFoods;
         }
 
-        const isPlayerAlive = player && !player.isDead;
-        const pX = isPlayerAlive ? player.x : (MAP_SIZE / 2);
-        const pY = isPlayerAlive ? player.y : (MAP_SIZE / 2);
-        const pAngle = isPlayerAlive ? player.angle : 0;
+        const recycleDistSq = 16000 * 16000;
 
-        // 動的循環スポーン判定用の遠隔閾値（18,000px）
-        const recycleDistSq = 18000 * 18000;
-
-        // =========================================================================
-        // ★ 【思考走査用グリッドの事前一括マッピング】
-        // スライス思考の直前に全スネークの胴体をグリッド化し、think() 内部の O(N^2) を O(1) 化
-        // =========================================================================
+        // 思考走査用グリッドの事前マッピング
         this._rebuildSpatialGrid(allSnakes);
 
         for (let i = 0; i < total; i++) {
@@ -314,38 +325,37 @@ export class AIManager {
             if (!meta) continue;
 
             // =========================================================================
-            // ★ 【死亡中AIのリスポーン待機時間適正化（4.0秒）＆遠隔視界外スポーン】
-            // 倒した敵が即座にゾンビのように再スポーンして襲来するのを防ぎ、残骸回収の安全時間を確保
+            // 3. 【死亡中AIのリスポーン処理（全人間プレイヤー対応）】
             // =========================================================================
             if (ai.isDead) {
                 meta.deadTimer = (meta.deadTimer || 0) + safeDt;
                 if (meta.deadTimer >= 4.0) {
                     meta.deadTimer = 0;
 
-                    // リスポーン位置をプレイヤーの最大視界範囲（約8,000px）を確実に超える遠隔域へ配置
+                    const baseHuman = humanTargets[Math.floor(Math.random() * humanTargets.length)];
                     const ang = Math.random() * Math.PI * 2;
-                    const d = 9000 + Math.random() * 8000;
-                    const rx = Math.max(400, Math.min(MAP_SIZE - 400, pX + Math.cos(ang) * d));
-                    const ry = Math.max(400, Math.min(MAP_SIZE - 400, pY + Math.sin(ang) * d));
+                    const d = 9000 + Math.random() * 6000;
+                    const rx = Math.max(400, Math.min(MAP_SIZE - 400, baseHuman.x + Math.cos(ang) * d));
+                    const ry = Math.max(400, Math.min(MAP_SIZE - 400, baseHuman.y + Math.sin(ang) * d));
                     ai.reset(rx, ry);
 
-                    // 復活時のスコア調律
                     const respawnRand = Math.random();
                     if (respawnRand < 0.02) {
-                        ai.addScore(Math.floor(500 + Math.random() * 500)); // 2%: やや強敵
+                        ai.addScore(Math.floor(500 + Math.random() * 500));
                     } else if (respawnRand < 0.12) {
-                        ai.addScore(Math.floor(150 + Math.random() * 250)); // 10%: 中堅
+                        ai.addScore(Math.floor(150 + Math.random() * 250));
                     }
 
                     meta.state = AI_STATE.FORAGING;
                     meta.stateTimer = 50;
                     meta.harassCooldown = 90;
                     meta.panicCooldown = 60;
+                    meta.avoidReactionTimer = 0;
                 }
                 continue;
             }
 
-            // ★ 【タイマー完全実時間同期】
+            // タイマー実時間同期
             meta.stateTimer -= timeScale;
             if (meta.harassCooldown > 0) {
                 meta.harassCooldown = Math.max(0, meta.harassCooldown - timeScale);
@@ -355,21 +365,30 @@ export class AIManager {
             }
 
             // =========================================================================
-            // ★ 【動的循環スポーン距離の安全域超遠隔化（9,000〜15,000px）】
-            // ズームアウト時の最大視界範囲（約8,000px）の外側へ確実にスポーンさせることで、
-            // プレイヤーの目の前に突然AIが出現・ワープ激突する理不尽現象を物理根絶！
+            // 4. 【動的循環スポーン（過疎プレイヤー優先再配置バランサー）】
             // =========================================================================
-            if (isPlayerAlive && !ai.isVisible && (frameCount + i) % 60 === 0) {
-                const distToPlayerSq = (ai.x - pX) ** 2 + (ai.y - pY) ** 2;
-                if (distToPlayerSq > recycleDistSq) {
-                    const forwardBiasAngle = pAngle + (Math.random() - 0.5) * Math.PI * 1.5;
-                    const spawnDist = 9000 + Math.random() * 6000; // 視界外（9,000〜15,000px）
-                    const nx = Math.max(400, Math.min(MAP_SIZE - 400, pX + Math.cos(forwardBiasAngle) * spawnDist));
-                    const ny = Math.max(400, Math.min(MAP_SIZE - 400, pY + Math.sin(forwardBiasAngle) * spawnDist));
+            if ((frameCount + i) % 60 === 0) {
+                let minDistToAnyHumanSq = Infinity;
+
+                for (let h = 0; h < humanTargets.length; h++) {
+                    const ht = humanTargets[h];
+                    const distSq = (ai.x - ht.x) ** 2 + (ai.y - ht.y) ** 2;
+                    if (distSq < minDistToAnyHumanSq) {
+                        minDistToAnyHumanSq = distSq;
+                    }
+                }
+
+                if (minDistToAnyHumanSq > recycleDistSq) {
+                    const targetHuman = humanTargets[Math.floor(Math.random() * humanTargets.length)];
+                    const forwardBiasAngle = targetHuman.angle + (Math.random() - 0.5) * Math.PI * 1.3;
+                    const spawnDist = 9000 + Math.random() * 5000;
+
+                    const nx = Math.max(400, Math.min(MAP_SIZE - 400, targetHuman.x + Math.cos(forwardBiasAngle) * spawnDist));
+                    const ny = Math.max(400, Math.min(MAP_SIZE - 400, targetHuman.y + Math.sin(forwardBiasAngle) * spawnDist));
 
                     ai.x = nx;
                     ai.y = ny;
-                    ai.angle = forwardBiasAngle + Math.PI; // プレイヤーの方向へ緩やかに進入
+                    ai.angle = forwardBiasAngle + Math.PI;
                     ai.targetAngle = ai.angle;
                     ai.distCounter = 0;
                     ai.headIdx = 0;
@@ -377,12 +396,26 @@ export class AIManager {
 
                     meta.state = AI_STATE.FORAGING;
                     meta.stateTimer = 40 + Math.floor(Math.random() * 40);
+                    meta.avoidReactionTimer = 0;
                 }
             }
 
+            // =========================================================================
+            // ★ 【思考対象のマルチ化：AIに最も近い人間走者を特定して think へ渡す】
+            // =========================================================================
             const shouldThink = (i >= startIndex && i < startIndex + batchSize);
             if (shouldThink) {
-                this.think(ai, meta, player, allSnakes, activeDrops);
+                let closestHumanSnake = player;
+                let minHumanDistSq = Infinity;
+                for (let h = 0; h < humanTargets.length; h++) {
+                    const ht = humanTargets[h];
+                    const distSq = (ai.x - ht.x) ** 2 + (ai.y - ht.y) ** 2;
+                    if (distSq < minHumanDistSq) {
+                        minHumanDistSq = distSq;
+                        closestHumanSnake = ht.snake || player;
+                    }
+                }
+                this.think(ai, meta, closestHumanSnake, allSnakes, activeDrops, safeDt);
             }
 
             ai.updatePhysics(safeDt, null, ai.isBoosting);
@@ -390,31 +423,36 @@ export class AIManager {
     }
 
     /**
-     * AI思考ルーチン（空間ハッシュ局所走査・動的探索半径・カミカゼ特攻・包囲狩猟・O(1)リングバッファ）
+     * AI思考ルーチン（最寄り人間走者対応・胴体回避リアクション遅延・カミカゼ特攻・包囲狩猟）
+     * @param {Object} ai 
+     * @param {Object} meta 
+     * @param {Object} targetHuman AIに最も近い生存人間走者
+     * @param {Array} allSnakes 
+     * @param {Array} activeDrops 
+     * @param {number} [dtSec=0.016] 
      */
-    think(ai, meta, player, allSnakes, activeDrops) {
+    think(ai, meta, targetHuman, allSnakes, activeDrops, dtSec = 1 / 60) {
         // 1. 【最優先】外壁激突回避
         const wallMargin = 400 + ai.size * 2;
         if (ai.x < wallMargin || ai.x > MAP_SIZE - wallMargin || ai.y < wallMargin || ai.y > MAP_SIZE - wallMargin) {
             ai.targetAngle = Math.atan2(MAP_SIZE / 2 - ai.y, MAP_SIZE / 2 - ai.x);
             ai.isBoosting = false;
+            meta.avoidReactionTimer = 0;
             return;
         }
 
         // =========================================================================
         // 2. 【最重要・空間ハッシュ局所グリッド走査(O(1))】胴体激突回避
-        // 自機サイズに応じた動的探索半径により、超巨大スネークの見落とし自爆を根絶！
+        // ★ 0.15秒のリアクション遅延を配備し、人間プレイヤーの首切り・囲い込み成功を保証！
         // =========================================================================
         let threatFound = false;
         const gx = Math.floor(ai.x / GRID_SIZE);
         const gy = Math.floor(ai.y / GRID_SIZE);
 
-        // ★ 自機サイズに連動した動的探索半径（combat.js の設計と完全整合）
         const searchRange = Math.max(1, Math.min(3, Math.ceil(ai.size / GRID_SIZE)));
 
         for (let ox = -searchRange; ox <= searchRange && !threatFound; ox++) {
             for (let oy = -searchRange; oy <= searchRange && !threatFound; oy++) {
-                // 整数ビット演算ハッシュ（負の座標によるビット崩壊を防ぐ正のオフセット +10 適用）
                 const key = ((gx + ox + 10) << 16) | (gy + oy + 10);
                 const cell = this.bodySpatialGrid.get(key);
                 if (!cell || cell.length === 0) continue;
@@ -438,8 +476,14 @@ export class AIManager {
                         while (diff > Math.PI) diff -= Math.PI * 2;
 
                         if (Math.abs(diff) < Math.PI / 2.0) {
-                            ai.targetAngle = ai.angle + (diff > 0 ? -Math.PI / 1.6 : Math.PI / 1.6);
-                            ai.isBoosting = ai.score > 100 && sDistSq < (safeDistLimitSq * 0.40);
+                            if (meta.avoidReactionTimer === undefined) meta.avoidReactionTimer = 0;
+                            meta.avoidReactionTimer += dtSec;
+
+                            // 至近距離（safeDistLimitSq * 0.35）は即時緊急回避、それ以外は0.15秒のリアクション猶予を付与
+                            if (meta.avoidReactionTimer >= 0.15 || sDistSq < (safeDistLimitSq * 0.35)) {
+                                ai.targetAngle = ai.angle + (diff > 0 ? -Math.PI / 1.6 : Math.PI / 1.6);
+                                ai.isBoosting = ai.score > 100 && sDistSq < (safeDistLimitSq * 0.40);
+                            }
                             threatFound = true;
                             break;
                         }
@@ -449,10 +493,11 @@ export class AIManager {
         }
 
         if (threatFound) return;
+        meta.avoidReactionTimer = 0; // 脅威が去ったらリアクションタイマーをリセット
 
         const totalSnakes = allSnakes.length;
 
-        // 3. 【カミカゼ暗殺特攻（AMBUSH）】（画面外ターゲットも公平に評価）
+        // 3. 【カミカゼ暗殺特攻（AMBUSH）】
         if ((meta.persona === 'ambusher' || (meta.persona === 'harasser' && Math.random() < 0.4)) && ai.score > 60) {
             let giantTarget = null;
             let minGiantDistSq = 1400 * 1400;
@@ -487,7 +532,7 @@ export class AIManager {
             }
         }
 
-        // 4. 【ビビり逃走の限定化】（画面外脅威も公平に評価）
+        // 4. 【ビビり逃走の限定化】
         if (meta.persona === 'timid' && meta.panicCooldown <= 0 && meta.state !== AI_STATE.PANIC && ai.score > 60) {
             let giantThreat = null;
             const panicDistSq = 350 * 350;
@@ -549,11 +594,15 @@ export class AIManager {
             }
         }
 
-        // 6. 【プレイヤー接近時のちょっかい行動トリガー】
-        const isPlayerActive = player && !player.isDead;
-        if (isPlayerActive && meta.harassCooldown <= 0 && meta.state !== AI_STATE.HARASS && meta.state !== AI_STATE.PANIC && meta.state !== AI_STATE.AMBUSH) {
-            const pdx = player.x - ai.x;
-            const pdy = player.y - ai.y;
+        // =========================================================================
+        // 6. 【最寄り人間プレイヤー接近時のちょっかい行動トリガー（ゲスト対応）】
+        // =========================================================================
+        const currentTargetHuman = targetHuman || player;
+        const isTargetHumanActive = currentTargetHuman && !currentTargetHuman.isDead;
+
+        if (isTargetHumanActive && meta.harassCooldown <= 0 && meta.state !== AI_STATE.HARASS && meta.state !== AI_STATE.PANIC && meta.state !== AI_STATE.AMBUSH) {
+            const pdx = currentTargetHuman.x - ai.x;
+            const pdy = currentTargetHuman.y - ai.y;
             const pDistSq = pdx * pdx + pdy * pdy;
 
             const harassRangeSq = 1200 * 1200;
@@ -587,34 +636,36 @@ export class AIManager {
             }
         }
 
-        // 8. 【各ステートの行動実行】
+        // =========================================================================
+        // 8. 【各ステートの行動実行（最寄り人間プレイヤーに対する追従・迎撃）】
+        // =========================================================================
         switch (meta.state) {
             case AI_STATE.AMBUSH:
             case AI_STATE.PANIC:
                 break;
 
             case AI_STATE.HARASS: {
-                if (!isPlayerActive) {
+                if (!isTargetHumanActive) {
                     meta.state = AI_STATE.FORAGING;
                     ai.isBoosting = false;
                     break;
                 }
 
                 if (meta.harassSubtype === 0) {
-                    const leadDist = 280 + player.size * 1.5;
-                    const predictX = player.x + Math.cos(player.angle) * leadDist;
-                    const predictY = player.y + Math.sin(player.angle) * leadDist;
+                    const leadDist = 280 + currentTargetHuman.size * 1.5;
+                    const predictX = currentTargetHuman.x + Math.cos(currentTargetHuman.angle) * leadDist;
+                    const predictY = currentTargetHuman.y + Math.sin(currentTargetHuman.angle) * leadDist;
                     ai.targetAngle = Math.atan2(predictY - ai.y, predictX - ai.x);
                     ai.isBoosting = ai.score > 85 && Math.random() < 0.50;
                 } else if (meta.harassSubtype === 1) {
-                    const lateralAngle = player.angle + (Math.random() < 0.5 ? Math.PI / 2.2 : -Math.PI / 2.2);
-                    const flankX = player.x + Math.cos(lateralAngle) * (player.size * 2.5 + ai.size * 2.0);
-                    const flankY = player.y + Math.sin(lateralAngle) * (player.size * 2.5 + ai.size * 2.0);
-                    ai.targetAngle = Math.atan2(flankY - ai.y, flankX - ai.x) * 0.4 + player.angle * 0.6;
-                    ai.isBoosting = ai.score > 90 && player.isBoosting && Math.random() < 0.45;
+                    const lateralAngle = currentTargetHuman.angle + (Math.random() < 0.5 ? Math.PI / 2.2 : -Math.PI / 2.2);
+                    const flankX = currentTargetHuman.x + Math.cos(lateralAngle) * (currentTargetHuman.size * 2.5 + ai.size * 2.0);
+                    const flankY = currentTargetHuman.y + Math.sin(lateralAngle) * (currentTargetHuman.size * 2.5 + ai.size * 2.0);
+                    ai.targetAngle = Math.atan2(flankY - ai.y, flankX - ai.x) * 0.4 + currentTargetHuman.angle * 0.6;
+                    ai.isBoosting = ai.score > 90 && currentTargetHuman.isBoosting && Math.random() < 0.45;
                 } else {
-                    const frontX = player.x + Math.cos(player.angle) * 220;
-                    const frontY = player.y + Math.sin(player.angle) * 220;
+                    const frontX = currentTargetHuman.x + Math.cos(currentTargetHuman.angle) * 220;
+                    const frontY = currentTargetHuman.y + Math.sin(currentTargetHuman.angle) * 220;
                     ai.targetAngle = Math.atan2(frontY - ai.y, frontX - ai.x);
                     ai.isBoosting = ai.score > 80 && Math.random() < 0.60;
                 }

@@ -1,17 +1,20 @@
 // ==============================================================================
 // 『くねくねバトル オンライン』スネークエンティティクラス (snake.js)
-// v38.0.0 リスポーン時撃破フラグリセット＆残骸不発完全根絶版:
-// ・【リスポーン時撃破フラグ（_hasBeenKilled）初期化による残骸不発完全根絶】
-// 　reset() 実行時に this._hasBeenKilled = false を確実に初期化！
-// 　リスポーンして再成長した敵がプレイヤーの胴体に激突した際、前回の死亡フラグが
-// 　残っているせいで撃破判定と残骸ドロップがスキップされ、敵がスッと消えるだけで
-// 　残骸が一切出ない致命的論理バグを100%物理根絶
+// v39.0.0 ブースト自傷餌ローカル即時反映＆リモート体長即時実体化版:
+// ・【ブースト自傷肉片の自画面即時ドロップ反映】
+// 　マルチプレイ中の加速時、queueDropFood 送信と同時にローカルの world.dropFoods
+// 　へも即座に肉片をプッシュ！「相手の画面には出ているのに自分の画面だけ餌が出ない」
+// 　描画の非対称・消失感を完全解消
+// ・【リモート走者遭遇時の「頭だけ（寸胴）」即時実体化補間】
+// 　targetLength と historyLength の乖離が大きい場合（入室直後や画面外からの接近時）、
+// 　現在座標と進行角度から過去体節を即座に補間生成！巨大な相手が数秒間頭だけで
+// 　走行する不気味な描画遅延を100%物理根絶
+// ・【リスポーン時撃破フラグ（_hasBeenKilled）初期化維持】
 // ・【ワープ時prevX/Y追従補正によるCCDデス・レーザー完全根絶維持】
 // ・【背骨ネオンライン引き裂き紐描画の完全根絶維持】
 // ・【ブースト肉片ドロップ外壁安全クランプ維持】
-// ・【相手マイアイコン顔(user_avatar)のCanvas完全描画維持】avatarImgキャッシュ
+// ・【相手マイアイコン顔(user_avatar)のCanvas完全描画維持】
 // ・【デバッグ用無敵シールド(isGodMode)維持】外壁死スキップ＆不死身判定
-// ・【ブースト肉片ドロップの復元維持】身を削る加速と餌散布
 // ・【巨大化時の旋回慣性（ジャイアントキリング）維持】
 // ・【外壁激突即死判定維持】
 // ・【とぐろ立体感＆生体ウロコ重なりレイヤード描画維持】
@@ -76,7 +79,7 @@ export class Snake {
         this.isVisible = true;
 
         this.invulnerableTimer = 0;
-        // ★ デバッグ用無敵シールド（デフォルトON）
+        // ★ デバッグ用無敵シールド（デフォルトON・維持）
         this.isGodMode = isPlayer ? true : false;
 
         this.aiLevel = isPlayer ? 0 : (Math.floor(Math.random() * 3) + 1);
@@ -215,9 +218,9 @@ export class Snake {
             this.recalculateSize();
 
             // =========================================================================
-            // ★ 【ブースト肉片ドロップの復元 ＆ 外壁内安全クランプ】
+            // ★ 【ブースト肉片ドロップの復元 ＆ 外壁内安全クランプ ＆ 自画面即時反映】
             // 自分のスコア（身）を削って加速する際、尾の位置から餌をドロップする
-            // 外壁際で加速しても餌が壁外へ飛び出さないよう、座標を安全にクランプ
+            // マルチプレイ中も queueDropFood と同時に自端末の world.dropFoods へ即時追加！
             // =========================================================================
             this.boostDropCounter += scoreCost;
             if (this.boostDropCounter >= 2.5 && this.score > 65) {
@@ -232,10 +235,14 @@ export class Snake {
                     const dropX = Math.max(margin, Math.min(MAP_SIZE - margin, tailPt.x + (Math.random() - 0.5) * 10));
                     const dropY = Math.max(margin, Math.min(MAP_SIZE - margin, tailPt.y + (Math.random() - 0.5) * 10));
 
+                    // 1. マルチプレイ時は他走者へ向けて送信キューに登録
                     if (this.isPlayer && typeof window !== 'undefined' && window.NetworkManager && window.NetworkManager.isMultiplayerActive) {
                         const colorIdx = Math.max(0, SNAKE_COLORS.indexOf(this.color));
                         window.NetworkManager.queueDropFood(dropX, dropY, 2.5, colorIdx);
-                    } else if (typeof window !== 'undefined' && window.currentWorldInstance) {
+                    }
+
+                    // 2. 自機の画面にも即座に肉片オブジェクトを追加（描画の非対称を根絶）
+                    if (typeof window !== 'undefined' && window.currentWorldInstance && window.currentWorldInstance.dropFoods) {
                         window.currentWorldInstance.dropFoods.push({
                             x: dropX,
                             y: dropY,
@@ -306,7 +313,27 @@ export class Snake {
                 pt.x = this.x; pt.y = this.y; pt.angle = this.angle;
             }
 
-            if (this.historyLength < this.targetLength) {
+            // =========================================================================
+            // ★ 【リモート走者遭遇時の「頭だけ（寸胴）」即時実体化補間】
+            // 画面外からの接近や入室直後、targetLength と historyLength の差が大きい場合、
+            // 1ステップずつ待たずに過去体節を角度から直線補間して即座に実体化！
+            // =========================================================================
+            if (!this.isPlayer && (this.targetLength - this.historyLength > 4)) {
+                const diffCount = Math.min(this.targetLength - this.historyLength, 12);
+                for (let k = 0; k < diffCount; k++) {
+                    const nextHistIdx = (this.headIdx + this.historyLength) % MAX_HISTORY;
+                    const prevPt = this.history[(nextHistIdx - 1 + MAX_HISTORY) % MAX_HISTORY] || pt;
+                    let fillPt = this.history[nextHistIdx];
+                    const fillX = prevPt.x - Math.cos(this.angle) * stepDist;
+                    const fillY = prevPt.y - Math.sin(this.angle) * stepDist;
+                    if (!fillPt) {
+                        this.history[nextHistIdx] = { x: fillX, y: fillY, angle: this.angle };
+                    } else {
+                        fillPt.x = fillX; fillPt.y = fillY; fillPt.angle = this.angle;
+                    }
+                    this.historyLength++;
+                }
+            } else if (this.historyLength < this.targetLength) {
                 this.historyLength++;
             } else if (this.historyLength > this.targetLength) {
                 this.historyLength = this.targetLength;
@@ -409,9 +436,6 @@ export class Snake {
             ctx.lineCap = 'round';
             ctx.lineJoin = 'round';
 
-            // ★ 【体節間異常距離スキップ防護】
-            // 直前体節との距離を計測し、通信揺らぎやリスポーン等で異常に離れている（size * 3.5以上）場合は
-            // ctx.moveTo でペンを離すことで、画面を横断する細い紐状の直線を物理根絶
             let lastDrawX = null;
             let lastDrawY = null;
             const maxSegDist = this.size * 3.5;
@@ -466,7 +490,6 @@ export class Snake {
                     ? window.userAvatarImgInstance
                     : null;
             } else {
-                // リモート走者：手元のスロット情報（portrait）から Image を遅延ロード・キャッシュ
                 const netMgr = (typeof window !== 'undefined' && window.NetworkManager) ? window.NetworkManager : null;
                 const slotData = (netMgr && netMgr.slots) ? netMgr.slots[this.id] : null;
                 const portraitUrl = (slotData && slotData.portrait) ? slotData.portrait : '';
@@ -500,7 +523,6 @@ export class Snake {
                 ctx.arc(0, 0, this.size, 0, Math.PI * 2);
                 ctx.stroke();
             } else {
-                // 画像ロード中または未設定時は通常の顔にフォールバック
                 ctx.fillStyle = this.color;
                 ctx.beginPath();
                 ctx.arc(0, 0, this.size, 0, Math.PI * 2);
@@ -518,7 +540,6 @@ export class Snake {
             ctx.arc(0, 0, this.size, 0, Math.PI * 2);
             ctx.fill();
 
-            // 頭部外縁の立体リング
             ctx.strokeStyle = 'rgba(0, 0, 0, 0.25)';
             ctx.lineWidth = 1.4;
             ctx.stroke();

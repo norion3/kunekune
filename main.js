@@ -1,18 +1,17 @@
 // ==============================================================================
 // 『くねくねバトル オンライン』Phase 7 マスター統合オーケストレーター (main.js)
-// v50.0.0 ゲストキルAIホスト即時確定RPC＆頭だけゾンビAI完全根絶版:
-// ・【ゲストキルAIホスト即時確定RPC（sendAIKill）連携】
-// 　ゲスト端末が敵AIを撃破した瞬間、ホストへ確定通知（sendAIKill）を即座に送信！
-// 　ホスト側でも該当AIを確実に即死させ、正規の肉片クラスタを全端末へ発行
-// ・【直近キルAIの遅延ゾンビ復活完全ブロックガード（recentlyKilledAISlots）】
-// 　ゲスト自機が撃破したAIスロットを一定時間（3.0秒間）保護リストに保持！
-// 　ホストからの遅延生存パケットによって目の前に「頭だけの無敵ゾンビAI」が
-// 　突如出現し自機が即死させられる重大なデシンク現象を100%物理根絶
-// ・【ホスト端末側 onAIKilledByGuest 受信ハンドラ配備】
-// 　ゲストがキルを取ったAIをホスト側でも即座に死亡（die）させ、食物連鎖とスコアを完全同期
+// v52.0.0 リモート走者バックステップ二重減算撤廃＆滑らかLerp追従版:
+// ・【リモート走者のバックステップ二重減算撤廃（他プレイヤー痙攣完全根絶）】
+// 　remoteSnakes.forEach 内で未来予測Lerp追従を行った直後、前進量を過剰に引き戻していた
+// 　remote.x -= Math.cos(...) / remote.y -= Math.sin(...) を完全撤廃！
+// 　他プレイヤーが前進するたびにピクピクと後退・振動するジッター現象を100%物理根絶し、
+// 　ヌルヌルとした滑らかな走行描画を実現
+// ・【直近キル座標キャッシュ（recentlyKilledPositions）配備維持】
+// ・【ゲストキルAIホスト即時確定RPC（sendAIKill）連携維持】
+// ・【直近キルAIの遅延ゾンビ復活完全ブロックガード（recentlyKilledAISlots）維持】
+// ・【ホスト端末側 onAIKilledByGuest 受信ハンドラ配備維持】
 // ・【リモート人間走者の代理処刑完全遮断（クライアント自己判定主義）維持】
 // ・【被害者スロット（victimSlot）送信の自機限定化維持】
-// ・【ゲスト自機キルの先行ローカル肉片ドロップ維持】
 // ・【リトライ時のカスタムカラー・顔の完全維持】
 // ・【ホスト撃破肉片のローカルワールド生成完全復元維持】
 // ・【新入室プレイヤーの身代わり即死（誤爆キル）完全根絶維持】
@@ -164,9 +163,34 @@ let killerTargetSnake = null;
 // ★ ゲスト端末での直近キルAI遅延ゾンビ復活ガード用キャッシュ (slot -> expireTime)
 const recentlyKilledAISlots = new Map();
 
+// ★ ゲスト端末での直近キル座標キャッシュ（ホストからの二重肉片クラスタ重複排除用: { x, y, expire }）
+const recentlyKilledPositions = [];
+
+/**
+ * ホストから届いた撃破肉片クラスタが自機の直近キル（ローカル先行生成済み）であるかを照合するAPI
+ */
+if (typeof window !== 'undefined') {
+    window.checkIsRecentLocalKill = function(x, y) {
+        const now = performance.now();
+        for (let i = recentlyKilledPositions.length - 1; i >= 0; i--) {
+            const item = recentlyKilledPositions[i];
+            if (now > item.expire) {
+                recentlyKilledPositions.splice(i, 1);
+                continue;
+            }
+            const dx = item.x - x;
+            const dy = item.y - y;
+            if (dx * dx + dy * dy < 90000) { // 半径300px以内（300^2 = 90,000）
+                return true;
+            }
+        }
+        return false;
+    };
+}
+
 window.localPlayerInstance = player;
 window.allAISnakesInstance = aiManager.ais;
-window.allSnakesInstance = allSnakes; // ★ net_broadcaster.js の視界保証同期用に全スネーク参照を露出
+window.allSnakesInstance = allSnakes;
 
 export const UIController = {
     showLobby() {
@@ -251,7 +275,6 @@ export const UIController = {
                 }
             }
 
-            // ★ 待機枠表記の統一：空き枠は「+」バッジ、名前は「プレイヤ X (空き枠)」
             const badgeText = isMe ? 'YOU' : (s.isAI ? '+' : `P${s.slot + 1}`);
             const displayName = s.isAI ? `プレイヤ ${s.slot + 1} (空き枠)` : (s.name || `プレイヤ ${s.slot + 1}`);
             
@@ -282,12 +305,6 @@ if (typeof window !== 'undefined') {
  * @param {boolean} [isExplicitRetry=false] ユーザーの手動リトライボタン押下による明示的な再開フラグ
  */
 export function initGame(isRespawn = false, isExplicitRetry = false) {
-    // =========================================================================
-    // ★ 【ゲームオーバー中の外部自動リセット完全遮断】
-    // リザルトモーダル（#over-screen）が表示中、または gameState === 'gameover' の場合、
-    // ユーザー自身の手動リトライ（isExplicitRetry = true）以外による
-    // 通信パケット経由の自動 initGame を物理遮断し、リザルト画面の消失を100%防止！
-    // =========================================================================
     const overScreenEl = document.getElementById('over-screen');
     const isModalVisible = overScreenEl && overScreenEl.style.display === 'flex';
 
@@ -308,6 +325,7 @@ export function initGame(isRespawn = false, isExplicitRetry = false) {
     lastFrameTime = Date.now();
     killerTargetSnake = null;
     recentlyKilledAISlots.clear();
+    recentlyKilledPositions.length = 0;
 
     const spawnX = MAP_SIZE / 2 + (Math.random() - 0.5) * 8000;
     const spawnY = MAP_SIZE / 2 + (Math.random() - 0.5) * 8000;
@@ -321,11 +339,6 @@ export function initGame(isRespawn = false, isExplicitRetry = false) {
 
     player.name = resolvedPlayerName;
 
-    // =========================================================================
-    // ★ 【リトライ時のカスタムカラー＆顔の完全維持】
-    // スロットのデフォルト色による強制上書きを撤廃し、メニューで選択した
-    // 最新の色・顔（Menu.selectedColor / Menu.selectedFace）を確実に適用
-    // =========================================================================
     const customColor = (Menu && Menu.selectedColor) 
         ? Menu.selectedColor 
         : (player.color || SNAKE_COLORS[NetworkManager.mySlot % SNAKE_COLORS.length]);
@@ -368,7 +381,6 @@ export function initGame(isRespawn = false, isExplicitRetry = false) {
                 const slotData = NetworkManager.slots[i];
                 if (slotData && slotData.isAI) {
                     const dummyId = MAX_AIS + i + 1;
-                    // ★ 空き枠ダミーAIの名前を通常AIと完全統一された CPU ${dummyId}（例: CPU 96〜100）へ安全フォールバック
                     const dummyName = (slotData.name && slotData.name.startsWith('CPU ')) ? slotData.name : `CPU ${dummyId}`;
                     const aiSnake = new Snake(false, dummyId, dummyName, slotData.color, 'normal');
                     const angle = Math.random() * Math.PI * 2;
@@ -414,9 +426,6 @@ export function initGame(isRespawn = false, isExplicitRetry = false) {
         window.allSnakesInstance = allSnakes;
     }
 
-    // =========================================================================
-    // ★ 【描画ループ未起動ブラックアウト完全防止フェイルセーフ】
-    // =========================================================================
     if (!animFrameId) {
         animFrameId = requestAnimationFrame(gameLoop);
     }
@@ -488,7 +497,6 @@ NetworkManager.setCallbacks({
             if (!existingFake) {
                 const slotData = NetworkManager.slots[slotIdx];
                 const aiColor = (slotData && slotData.color) ? slotData.color : SNAKE_COLORS[slotIdx % SNAKE_COLORS.length];
-                // ★ 途中退室時のダミーAIも通常AIと完全統一された CPU ${dummyId}（例: CPU 96〜100）へ命名
                 const aiName = (slotData && slotData.name && slotData.name.startsWith('CPU ')) ? slotData.name : `CPU ${dummyId}`;
                 
                 const newDummyAI = new Snake(false, dummyId, aiName, aiColor, 'normal');
@@ -525,6 +533,7 @@ NetworkManager.setCallbacks({
     onWorldPurged() {
         remoteSnakes.clear();
         recentlyKilledAISlots.clear();
+        recentlyKilledPositions.length = 0;
         if (allSnakes && player) {
             allSnakes.length = 0;
             allSnakes.push(player, ...(aiManager && Array.isArray(aiManager.ais) ? aiManager.ais : []));
@@ -635,9 +644,6 @@ function handleGameOver(killer) {
     const overScreen = document.getElementById('over-screen');
     if (!overScreen) return;
 
-    // =========================================================================
-    // ★ 【リザルト表示の例外完全防護（100%点灯保証）】
-    // =========================================================================
     try {
         const higherCount = allSnakes.filter(s => s && s !== player && (s.score || 0) > finalScore).length;
         const exactRank = higherCount + 1;
@@ -680,21 +686,12 @@ function gameLoop() {
             }
             player.updatePhysics(dtSec, inputAngle, input.boost);
 
-            // =========================================================================
-            // ★ 【外壁激突死のゲームオーバー連携】
-            // updatePhysics 内で外壁境界接触により player.isDead が立った場合、即座に起動
-            // =========================================================================
             if (player.isDead) {
                 handleGameOver({ name: '外壁 (MAP境界)', isDead: false });
             }
         }
 
         remoteSnakes.forEach((remote, slotIdx) => {
-            // =========================================================================
-            // ★ 【ゲスト端末での直近キルAI遅延ゾンビ復活ガード】
-            // ゲスト自機が撃破したAIについて、ホストから遅れて生存パケットが届いても
-            // 3.0秒間は強制的に死亡状態（isDead = true, invulnerableTimer = 0）を死守！
-            // =========================================================================
             const killExpire = recentlyKilledAISlots.get(slotIdx);
             if (killExpire) {
                 if (performance.now() < killExpire) {
@@ -730,6 +727,11 @@ function gameLoop() {
                 return;
             }
 
+            // =========================================================================
+            // ★ 【リモート走者位置更新：バックステップ二重減算の撤廃】
+            // 未来予測位置へのLerp補正後に前進量を二重減算していたコードを撤廃し、
+            // カクつき・痙攣振動のない滑らかな走行描画を実現
+            // =========================================================================
             if (remote.targetNetX !== undefined && remote.targetNetY !== undefined) {
                 const timeScale = Math.max(0.1, Math.min(3.0, dtSec * 60));
                 
@@ -738,7 +740,6 @@ function gameLoop() {
 
                 const distSq = (remote.targetNetX - remote.x) ** 2 + (remote.targetNetY - remote.y) ** 2;
                 
-                // ★ 250px（62500）へ適正化（旧 1,000,000）し、急変時の無理なlerp引き裂きを抑止
                 if (distSq > 62500) {
                     const shiftX = remote.targetNetX - remote.x;
                     const shiftY = remote.targetNetY - remote.y;
@@ -751,9 +752,6 @@ function gameLoop() {
                     remote.x += (remote.targetNetX - remote.x) * lerpFactor;
                     remote.y += (remote.targetNetY - remote.y) * lerpFactor;
                 }
-                
-                remote.x -= Math.cos(remote.targetAngle) * (remote.speed * timeScale);
-                remote.y -= Math.sin(remote.targetAngle) * (remote.speed * timeScale);
             }
             
             remote.updatePhysics(dtSec, remote.targetAngle, remote.isBoosting);
@@ -830,19 +828,10 @@ function gameLoop() {
 
         collisionEngine.registerBodies(allSnakes);
         collisionEngine.checkHeadCollisions(allSnakes, (killer, victim) => {
-            // =========================================================================
-            // ★ 【撃破判定の多重発火防止ガード（論理矛盾修正）】
-            // =========================================================================
             if (!victim || victim._hasBeenKilled) {
                 return;
             }
 
-            // =========================================================================
-            // ★ 【リモート人間走者の代理処刑完全遮断（クライアント自己判定主義）】
-            // 被害者がリモートの人間走者（victim.isHumanPlayer && !victim.isPlayer）である場合、
-            // その走者自身の画面で衝突死が判定されるため、他端末（ホスト含む）が
-            // 画面外・不可視AIとの接触によって勝手に死亡判定を下すことを物理遮断！
-            // =========================================================================
             const isVictimRemoteHuman = Boolean(victim.isHumanPlayer && !victim.isPlayer);
             if (NetworkManager.isMultiplayerActive && isVictimRemoteHuman) {
                 return;
@@ -850,21 +839,18 @@ function gameLoop() {
 
             victim._hasBeenKilled = true;
 
-            // ゲスト端末時：自機が撃破した場合（killer.isPlayer）のみ先行処理を許可し、
-            // それ以外の画面外/他走者のキルはホスト側の同期パケットに委任
             const isGuestLocalKill = NetworkManager.isMultiplayerActive && !NetworkManager.isHost && killer && killer.isPlayer;
             if (NetworkManager.isMultiplayerActive && !NetworkManager.isHost && !victim.isPlayer && !isGuestLocalKill) {
                 return;
             }
 
             // =========================================================================
-            // ★ 【撃破肉片ドロップ：ソロ・ホスト・ゲスト自機キルの完全生成】
-            // ゲスト端末自身がキルを取った場合も即座にローカル先行ドロップし、パケット遅延による残骸消失感を解消
+            // ★ 【撃破肉片ドロップ ＆ ゲストキル座標キャッシュ登録】
             // =========================================================================
             if (!NetworkManager.isMultiplayerActive) {
                 world.spawnDeathDrop(victim);
             } else if (NetworkManager.isHost) {
-                world.spawnDeathDrop(victim); // ホスト画面のローカルワールドにも確実に肉片をドロップ！
+                world.spawnDeathDrop(victim);
 
                 const colorIdx = SNAKE_COLORS.indexOf(victim.color);
                 const safeColorIdx = colorIdx >= 0 ? colorIdx : 0;
@@ -881,10 +867,13 @@ function gameLoop() {
             } else if (isGuestLocalKill) {
                 world.spawnDeathDrop(victim); // ゲスト自機キルの先行ローカルドロップ！
 
-                // =========================================================================
-                // ★ 【ゲストキルAIのホスト確定RPC送信＆遅延ゾンビ復活防止ガード登録】
-                // 撃破したAIスロットを3.0秒間保護し、ホストへ確定通告（sendAIKill）を送信！
-                // =========================================================================
+                // 直近キル座標をキャッシュへ記録（1.8秒間保持し、ホストからの重複クラスタを破棄）
+                recentlyKilledPositions.push({
+                    x: victim.x,
+                    y: victim.y,
+                    expire: performance.now() + 1800
+                });
+
                 if (victim.id !== undefined) {
                     recentlyKilledAISlots.set(victim.id, performance.now() + 3000);
                     if (typeof NetworkManager.sendAIKill === 'function') {
@@ -897,24 +886,13 @@ function gameLoop() {
                 const absorbedScore = Math.max(120, Math.floor(victim.score * 0.18));
                 killer.addScore(absorbedScore);
 
-                // =========================================================================
-                // ★ 【人間撃破判定の厳格化（実体属性による直接判定）】
-                // 通常AI（CPU 1〜5）のID数値（1〜5）が人間スロットと一致していても、
-                // AIである限り人間と誤判定しないようスネークの実体属性で完全識別
-                // =========================================================================
                 const isKillerHuman = Boolean(killer.isPlayer || killer.isHumanPlayer === true);
                 const isVictimHuman = Boolean(victim.isPlayer || victim.isHumanPlayer === true);
 
-                // 人間参加者が関与する撃破のみ通知
                 if (isKillerHuman || isVictimHuman) {
                     const killColor = killer.color || '#ff3366';
                     Danmaku.push(killer.name, `${victim.name} を撃破！`, killColor);
 
-                    // =========================================================================
-                    // ★ 【撃破同報への被害者スロット(victimSlot)送信の自機限定化】
-                    // 被害者が自機（victim.isPlayer）である場合のみスロット番号を通知！
-                    // 他端末のプレイヤーに対して勝手に死亡宣告を送りつける代理処刑を完全防止
-                    // =========================================================================
                     if (NetworkManager.isMultiplayerActive && typeof NetworkManager.broadcastKill === 'function') {
                         let victimSlot = null;
                         if (victim.isPlayer) {
@@ -977,8 +955,6 @@ function gameLoop() {
                             if (s === player) {
                                 slotNum = NetworkManager.mySlot;
                             } else if (!s.isPlayer && s.id !== undefined) {
-                                // ★ 【リモート人間プレイヤーのスロット番号保護】
-                                // 人間走者の場合は本来のスロット番号（0〜5）を維持し、AIスロットへの誤変換を遮断
                                 const isRemoteHuman = Boolean(
                                     s.isHumanPlayer ||
                                     (s.id < MAX_PLAYERS && NetworkManager.slots[s.id] && !NetworkManager.slots[s.id].isAI)
@@ -1001,11 +977,6 @@ function gameLoop() {
                     });
                 }
 
-                // =========================================================================
-                // ★ 【ホスト端末側ランキング表示：人間プレイヤーはカスタムカラー / AIは白】
-                // 非表示中であっても常に最新の innerHTML を構築しておくことで、
-                // トロフィーボタンを押した瞬間にホスト側でも100%確実にリストが表示される！
-                // =========================================================================
                 const listEl = document.getElementById('leaderboard-list');
                 if (listEl) {
                     listEl.innerHTML = topList.map((s, idx) => {
@@ -1066,7 +1037,6 @@ function gameLoop() {
     }
 }
 
-// 独立モジュール化した起動シーケンスを実行
 runBootSequence({
     NetworkManager,
     player,
