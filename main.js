@@ -1,17 +1,18 @@
 // ==============================================================================
 // 『くねくねバトル オンライン』Phase 7 マスター統合オーケストレーター (main.js)
-// v48.0.0 ゲスト自機キル先行ローカル肉片ドロップ＆残骸消失完全解消版:
-// ・【ゲスト端末自機キルの先行ローカル肉片ドロップ】
-// 　マルチプレイのゲスト端末自身が敵を撃破した際、ホストからのパケット到着を待たずに
-// 　自端末のローカルワールド（world.spawnDeathDrop）へ即座に先行ドロップを発火！
-// 　通信ラグやパケットロスによる「敵が消えたのに残骸が一切出ない」現象を物理根絶
+// v49.0.0 クライアント自己判定主義＆不可視AI代理処刑完全根絶版:
+// ・【リモート人間走者の代理処刑完全遮断（クライアント自己判定主義）】
+// 　ホスト画面にのみ存在する未送信AIや通信ラグによって、ゲストプレイヤーが
+// 　何もない空間で突如として即死させられる不具合を100%物理根絶！
+// 　被害者がリモートの人間走者（victim.isHumanPlayer && !victim.isPlayer）である場合、
+// 　他端末（ホスト含む）が勝手にキル判定を下すことを即座にスキップし、
+// 　人間走者の生死は各自の画面（ローカル自機）でのみ判定するネットコードの鉄則を確立
+// ・【被害者スロット（victimSlot）送信の自機限定化】
+// 　broadcastKill において victimSlot を送信するのは自機自身が死亡した時
+// 　（victim.isPlayer）のみに限定し、他端末への誤った強制キル宣告を物理遮断
+// ・【ゲスト自機キルの先行ローカル肉片ドロップ維持】
 // ・【リトライ時のカスタムカラー・顔の完全維持】
-// 　initGame 実行時、スロットのデフォルト色による強制上書きを撤廃！
-// 　メニューで選択された最新のカスタムカラー（Menu.selectedColor）および表情
-// 　（Menu.selectedFace）を保持・適用し、リトライ時に色が元に戻る不具合を完全解消
-// ・【ホスト撃破肉片のローカルワールド生成完全復元】
-// 　マルチプレイホスト時の撃破判定において、ゲストへのクラスタ同報だけでなく
-// 　ホスト自身のローカルワールド（world.spawnDeathDrop）へも確実に肉片を生成！
+// ・【ホスト撃破肉片のローカルワールド生成完全復元維持】
 // ・【新入室プレイヤーの身代わり即死（誤爆キル）完全根絶維持】
 // ・【ゴーストAI視界保証同期の完全復元維持】
 // ・【人間撃破判定の厳格化による誤チャット完全根絶維持】
@@ -773,6 +774,18 @@ function gameLoop() {
             if (!victim || victim._hasBeenKilled) {
                 return;
             }
+
+            // =========================================================================
+            // ★ 【リモート人間走者の代理処刑完全遮断（クライアント自己判定主義）】
+            // 被害者がリモートの人間走者（victim.isHumanPlayer && !victim.isPlayer）である場合、
+            // その走者自身の画面で衝突死が判定されるため、他端末（ホスト含む）が
+            // 画面外・不可視AIとの接触によって勝手に死亡判定を下すことを物理遮断！
+            // =========================================================================
+            const isVictimRemoteHuman = Boolean(victim.isHumanPlayer && !victim.isPlayer);
+            if (NetworkManager.isMultiplayerActive && isVictimRemoteHuman) {
+                return;
+            }
+
             victim._hasBeenKilled = true;
 
             // ゲスト端末時：自機が撃破した場合（killer.isPlayer）のみ先行処理を許可し、
@@ -825,17 +838,14 @@ function gameLoop() {
                     Danmaku.push(killer.name, `${victim.name} を撃破！`, killColor);
 
                     // =========================================================================
-                    // ★ 【撃破同報への被害者スロット(victimSlot)数値同期＆新入室身代わり即死完全根絶】
-                    // 被害者が真の人間プレイヤー（isPlayer または isHumanPlayer === true）である場合のみ
-                    // 正確なスロット番号を送信。空き枠ダミーAI撃破時は victimSlot = null を送信し、
-                    // 新規入室者が入室直後に身代わり即死させられるバグを100%物理遮断！
+                    // ★ 【撃破同報への被害者スロット(victimSlot)送信の自機限定化】
+                    // 被害者が自機（victim.isPlayer）である場合のみスロット番号を通知！
+                    // 他端末のプレイヤーに対して勝手に死亡宣告を送りつける代理処刑を完全防止
                     // =========================================================================
                     if (NetworkManager.isMultiplayerActive && typeof NetworkManager.broadcastKill === 'function') {
                         let victimSlot = null;
                         if (victim.isPlayer) {
                             victimSlot = NetworkManager.mySlot;
-                        } else if (victim.isHumanPlayer === true) {
-                            victimSlot = victim.id;
                         }
                         NetworkManager.broadcastKill(killer.name, victim.name, killColor, victimSlot !== null ? Number(victimSlot) : null);
                     }
