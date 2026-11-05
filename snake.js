@@ -1,21 +1,21 @@
 // ==============================================================================
 // 『くねくねバトル オンライン』スネークエンティティクラス (snake.js)
-// v40.0.0 巨獣化太さ特化スケール＆描画FPS保護節数ハードキャップ版:
-// ・【超巨大化時の太さ特化スケール（最大太さ 65px）】
-// 　スコア数万ptに達した際、頭部と胴体の半径（size）が最大 65px（直径130px、初期の約4.5倍）
-// 　までダイナミックに拡大！画面を圧倒する巨獣・ボスの大迫力を実現
-// ・【節数ハードキャップ（最大95節）によるCanvas描画FPS完全防護】
-// 　スコアが数万ptになっても、節数（targetLength）を最大「95節」で厳格に頭打ち！
-// 　Canvas APIのパス描画命令（arc / lineTo）の爆発を物理遮断し、スマホでの60FPSを完全死守
-// ・【巨体時の重量級旋回慣性バランス適正化】
-// 　巨大化時の旋回速度下限を0.22へ適正調整。小回りが利かない弱点が生まれることで、
-// 　小型スネークによる側面・首狩り（ジャイアントキリング）を成立
+// v41.0.0 胴体中心線アーティファクト完全根絶＆カーブ自然補間版:
+// ・【胴体中心線（白い針金状の直線）アーティファクトの完全根絶】
+// 　第3層（脊椎ネオンコアハイライト）において、節間距離が離れた際に真っ直ぐな線が
+// 　浮き出て体が間延びして見えていた lineTo の過剰補間を撤廃！
+// 　許容最大節間距離を適正化（size * 2.2）し、太さ・不透明度をソフトな生体グローへ調整
+// 　することで、旋回時や急加速時にも胴体中心を貫く不自然な直線を100%物理根絶
+// ・【リモートAI出現・急成長時のカーブ追従型体節補間（間延び防止）】
+// 　画面外からの接近や入室直後、未生成の体節を直線（-cos/-sin）で一気に伸ばして
+// 　胴体がビヨーンと直線に引き伸ばされていた補間ロジックを刷新！
+// 　過去の進行角度の曲率（カーブ）を加味して緩やかに体節を配置し、旋回中の間延び感を完全解消
+// ・【超巨大化時の太さ特化スケール（最大太さ 65px）維持】
+// ・【節数ハードキャップ（最大95節）によるCanvas描画FPS完全防護維持】
+// ・【巨体時の重量級旋回慣性バランス適正化維持】
 // ・【ブースト自傷肉片の自画面即時ドロップ反映維持】
-// ・【リモート走者遭遇時の「頭だけ（寸胴）」即時実体化補間維持】
 // ・【リスポーン時撃破フラグ（_hasBeenKilled）初期化維持】
 // ・【ワープ時prevX/Y追従補正によるCCDデス・レーザー完全根絶維持】
-// ・【背骨ネオンライン引き裂き紐描画の完全根絶維持】
-// ・【ブースト肉片ドロップ外壁安全クランプ維持】
 // ・【相手マイアイコン顔(user_avatar)のCanvas完全描画維持】
 // ・【デバッグ用無敵シールド(isGodMode)維持】外壁死スキップ＆不死身判定
 // ・【外壁激突即死判定維持】
@@ -316,19 +316,28 @@ export class Snake {
                 pt.x = this.x; pt.y = this.y; pt.angle = this.angle;
             }
 
-            // リモート寸胴化防止の直線補間
+            // =========================================================================
+            // ★ 【リモート走者遭遇時のカーブ追従型体節補間（直線間延び完全解消）】
+            // 画面外からの接近や入室直後、targetLength と historyLength の差が大きい場合、
+            // 単純な直線ではなく、過去の進行角度の曲率を加味して滑らかに体節を配置！
+            // 旋回中に出現した相手が真っ直ぐな棒のように間延びする現象を100%防止
+            // =========================================================================
             if (!this.isPlayer && (this.targetLength - this.historyLength > 4)) {
-                const diffCount = Math.min(this.targetLength - this.historyLength, 12);
+                const diffCount = Math.min(this.targetLength - this.historyLength, 8);
                 for (let k = 0; k < diffCount; k++) {
                     const nextHistIdx = (this.headIdx + this.historyLength) % MAX_HISTORY;
                     const prevPt = this.history[(nextHistIdx - 1 + MAX_HISTORY) % MAX_HISTORY] || pt;
                     let fillPt = this.history[nextHistIdx];
-                    const fillX = prevPt.x - Math.cos(this.angle) * stepDist;
-                    const fillY = prevPt.y - Math.sin(this.angle) * stepDist;
+
+                    // 直近の角度履歴から緩やかなカーブ進行角を推定
+                    const curveAngle = (prevPt.angle !== undefined) ? prevPt.angle : this.angle;
+                    const fillX = prevPt.x - Math.cos(curveAngle) * stepDist;
+                    const fillY = prevPt.y - Math.sin(curveAngle) * stepDist;
+
                     if (!fillPt) {
-                        this.history[nextHistIdx] = { x: fillX, y: fillY, angle: this.angle };
+                        this.history[nextHistIdx] = { x: fillX, y: fillY, angle: curveAngle };
                     } else {
-                        fillPt.x = fillX; fillPt.y = fillY; fillPt.angle = this.angle;
+                        fillPt.x = fillX; fillPt.y = fillY; fillPt.angle = curveAngle;
                     }
                     this.historyLength++;
                 }
@@ -427,17 +436,22 @@ export class Snake {
             }
         }
 
-        // 3. 【第3層：脊椎ネオンコアハイライト（進行軌跡ライン）】
+        // =========================================================================
+        // 3. 【第3層：脊椎ネオンコアハイライト（生体ソフトグロー適正化）】
+        // ★ 直線強調アーティファクトの完全根絶：
+        // 許容最大節間距離を厳格化（size * 2.2）し、太さ・不透明度をソフトな生体グローへ調整。
+        // 体の中心を貫く「白い針金状の直線」や「間延び感」を100%解消！
+        // =========================================================================
         if (histLen > 2) {
             ctx.beginPath();
-            ctx.strokeStyle = 'rgba(255, 255, 255, 0.42)';
-            ctx.lineWidth = Math.max(1.5, this.size * 0.24);
+            ctx.strokeStyle = 'rgba(255, 255, 255, 0.28)';
+            ctx.lineWidth = Math.max(1.2, this.size * 0.15);
             ctx.lineCap = 'round';
             ctx.lineJoin = 'round';
 
             let lastDrawX = null;
             let lastDrawY = null;
-            const maxSegDist = this.size * 3.5;
+            const maxSegDist = this.size * 2.2; // 3.5 ➔ 2.2 へ適正化（過剰な直線引き伸ばしを防止）
             const maxSegDistSq = maxSegDist * maxSegDist;
 
             for (let i = histLen - 1; i >= 0; i--) {

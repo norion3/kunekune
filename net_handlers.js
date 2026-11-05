@@ -1,12 +1,14 @@
 // ==============================================================================
 // 『くねくねバトル オンライン』リモートパケット受信反映ハンドラ (net_handlers.js)
-// v41.0.0 ゲスト端末ランキング順位(valRank)完全同期＆PvPキル報酬維持版:
-// ・【ゲスト端末側ランキング順位（valRank）同期の完全正常化】
-// 　ホスト側のみで updateStats が実行される仕様と調和させ、ゲスト端末の onLeaderboardSync
-// 　においてトップリスト内の自機確定位置（myTopIndex + 1）および全体確定順位（ranks）
-// 　から算出した myRank を val-rank DOM へ確実に反映！
-// 　下部リストが「8. のりおん」であるにもかかわらず上部が初期値の「1 / 87」と表示される
-// 　矛盾を100%解消し、上部ヘッダーとリスト順位を完全一致化
+// v42.0.0 チャットバッジ色メニューカスタムカラー完全連動＆順位同期維持版:
+// ・【チャットバッジ色の人間走者メニューカスタムカラー完全連動】
+// 　定期パケット内のチャット（ch）受信時およびキル通告（KILL_ALERT）受信時、
+// 　発信元スロット（slot）の人間走者（ホスト・ゲスト問わず）がメニューで選択した
+// 　個別カスタムカラー（NetworkManager.slots[slot].color または remoteSnake.color）
+// 　を確実に特定して Danmaku.push へ投入！シアン固定や初期色への退行を根絶し、
+// 　各プレイヤー固有のカラーバッジで弾幕チャットが画面を流れる美麗な演出を実現
+// ・【ゲスト端末側ランキング順位（valRank）同期の完全正常化維持】
+// 　下部リストが「8. のりおん」の際に上部ヘッダーも「8 / 87」と完全一致
 // ・【対人戦（PvP）キル報酬確定同期（KILL_ALERTフック）維持】
 // ・【撃破肉片クラスタ二重生成の完全防止（onDropClusterSpawned）維持】
 // ・【ランキング文字色の個別カスタムカラー化維持】
@@ -29,6 +31,7 @@
 import { Snake } from './snake.js';
 import { NetworkManager } from './network.js';
 import { Menu } from './menu.js';
+import { Danmaku } from './danmaku.js';
 import { FACE_TYPES } from './net_protocol.js';
 import { SNAKE_COLORS, TOTAL_SNAKES, MAX_PLAYERS } from './constants.js';
 
@@ -69,8 +72,7 @@ export function setupNetworkHandlers(ctx) {
     } = ctx;
 
     // =========================================================================
-    // ★ 【対人戦（PvP）キル報酬確定同期インターセプター】
-    // 相手端末の自己判定で自分がキラーとなった KILL_ALERT を検知し、自機スコアを加算
+    // ★ 【対人戦（PvP）キル報酬確定同期 ＆ チャットバッジ色カスタムカラー連動インターセプター】
     // =========================================================================
     if (NetworkManager && !NetworkManager._hasKillRewardHooked) {
         NetworkManager._hasKillRewardHooked = true;
@@ -98,6 +100,10 @@ export function setupNetworkHandlers(ctx) {
 
                 if (packet) {
                     const eventType = packet.e || packet.event;
+
+                    // =========================================================================
+                    // ★ 【KILL_ALERT：相手端末キル通告のスコア加算 ＆ カスタムカラーバッジ弾幕】
+                    // =========================================================================
                     if (eventType === 'KILL_ALERT') {
                         const myPlayer = window.localPlayerInstance;
                         const myName = (myPlayer && myPlayer.name) ? myPlayer.name : 'あなた';
@@ -115,6 +121,62 @@ export function setupNetworkHandlers(ctx) {
                                 myPlayer.addScore(absorbedScore);
                                 myPlayer.kills = (myPlayer.kills || 0) + 1;
                             }
+                        }
+
+                        // ★ 撃破弾幕バッジ色：キラー走者のカスタムカラーを特定
+                        let killerBadgeColor = packet.c || '#ff3366';
+                        const killerSnake = allSnakes.find(s => s && s.name === packet.kn);
+                        if (killerSnake && killerSnake.color) {
+                            killerBadgeColor = killerSnake.color;
+                        } else {
+                            const killerSlot = NetworkManager.slots.find(s => s && s.name === packet.kn);
+                            if (killerSlot && killerSlot.color) {
+                                killerBadgeColor = killerSlot.color;
+                            }
+                        }
+
+                        // 他走者同士の撃破、または自機が倒された時の公式通知を発火
+                        if (packet.kn && packet.vn) {
+                            Danmaku.push(packet.kn, `${packet.vn} を撃破！`, killerBadgeColor);
+                        }
+                    }
+
+                    // =========================================================================
+                    // ★ 【チャットパケット（ch）受信時：発信元スロットのカスタムカラー連動】
+                    // =========================================================================
+                    if (Array.isArray(packet.ch) && packet.ch.length > 0) {
+                        for (let i = 0; i < packet.ch.length; i++) {
+                            const chatItem = packet.ch[i];
+                            const senderSlot = chatItem[0];
+                            const chatText = chatItem[1];
+
+                            let senderName = `P${senderSlot + 1}`;
+                            let badgeColor = '#00e5ff';
+
+                            if (senderSlot === NetworkManager.mySlot) {
+                                const myPlayer = window.localPlayerInstance;
+                                senderName = (myPlayer && myPlayer.name) ? myPlayer.name : 'あなた';
+                                badgeColor = (Menu && Menu.selectedColor) ? Menu.selectedColor : (myPlayer ? myPlayer.color : '#00e5ff');
+                            } else if (senderSlot < MAX_PLAYERS) {
+                                const slotData = NetworkManager.slots[senderSlot];
+                                const remote = remoteSnakes.get(senderSlot);
+
+                                if (slotData && slotData.name) {
+                                    senderName = slotData.name;
+                                } else if (remote && remote.name) {
+                                    senderName = remote.name;
+                                }
+
+                                if (slotData && slotData.color) {
+                                    badgeColor = slotData.color;
+                                } else if (remote && remote.color) {
+                                    badgeColor = remote.color;
+                                } else {
+                                    badgeColor = SNAKE_COLORS[senderSlot % SNAKE_COLORS.length];
+                                }
+                            }
+
+                            Danmaku.push(senderName, chatText, badgeColor);
                         }
                     }
                 }
