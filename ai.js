@@ -1,24 +1,24 @@
 // ==============================================================================
 // 『くねくねバトル オンライン』スネーク.io型 自律生態系AIマネージャー (ai.js)
-// v43.0.0 巨獣ワールドボス覚醒＆50,000pt成長＆120秒再覚醒サイクル版:
-// ・【300秒（5分）以降のワールドボス覚醒ロジック】
-// 　ゲーム開始から300秒（5分）が経過した後、回遊型（cruiser）の中から最大1体のみが
-// 　「colossus（巨獣・ワールドボス）」へ覚醒！
-// ・【仮想成長上限スコアの50,000pt解放】
-// 　ワールドボスの仮想成長スコア上限を既存の12,000ptから「50,000pt」へ大幅解放！
-// 　snake.js の太さ特化スケール（最大太さ 65px、直径130px）と連動し、画面を支配する圧倒的な巨体を形成
-// ・【討伐後120秒（2分）の再覚醒クールダウン管理】
-// 　ボス死亡後は120秒間のクールダウン期間を設け、即座の再覚醒を防止。
-// 　討伐したプレイヤーが巨獣化してマップの主役に君臨する覇権タイムを確保し、
-// 　120秒経過後に次の生存大型AIから「2代目ボス」が自然覚醒する持続的サイクルを配備
-// ・【ボス専用の重厚なエリア支配航行ルーチン】
-// 　自爆特攻を行わず、ゆったりとマップ全域を横断・旋回する威風堂々たる航行挙動
-// ・【ペルソナ比率の正常化（forager復元＆特攻過密解消）維持】
-// ・【正面激突自爆の完全防止（側面回り込み首切り）維持】
+// v44.0.0 正面自爆激突完全根絶＆動的チキンレース事前ステアリング版:
+// ・【頭部接近（Head-to-Head）事前警戒扇形コーンの配備】
+// 　胴体グリッドだけでなく「相手の頭部座標（Head）」を検知する前方扇形警戒コーン
+// 　（前方75度、距離360px）を配備！対向して近づく相手を事前に察知し、
+// 　正面衝突コースを直前で斜め外側へ逃がすチキンレース回避を実現
+// ・【状況別可変リアクションディレイ（正面即時回避＆側面奇襲キル維持）】
+// 　正面対向接近時（diff < 45度）は遅延を0.02秒（即時）に短縮して正面自爆を根絶！
+// 　プレイヤーが側面や斜め後方から首を刈りに来た場合は 0.15秒の遅延を維持し、
+// 　プレイヤーのテクニック（奇襲・囲い込み）が正当に成功する完璧なゲームバランスを両立
+// ・【回避時の緊急ブースト解除（コンパクト旋回）】
+// 　衝突危険域に入った瞬間、強制的にブーストをOFFにして旋回半径を最小化
+// ・【300秒ワールドボス（colossus）覚醒＆50,000pt成長維持】
+// ・【討伐後120秒再覚醒クールダウンサイクル維持】
+// ・【ボス専用の重厚なエリア支配航行ルーチン維持】
+// ・【ペルソナ比率の正常化（forager 30%）維持】
 // ・【Uターン・ボディシールド防御（Bait & Turn）維持】
 // ・【シャドウ並走（Shadowing）＆間合いキープ維持】
 // ・【ハイエナ掠め取り（Snatch & Run）維持】
-// ・【思考ターゲットマルチ化＆胴体回避リアクション遅延維持】
+// ・【思考ターゲットマルチ化維持】
 // ・【全人間プレイヤー対応動的循環スポーン維持】
 // ・【ゲスト視界内AI突然変異（サイズ急膨張）完全防止維持】
 // ・【全人間プレイヤー視界外リスポーン（4.0秒）維持】
@@ -42,7 +42,7 @@ const AI_STATE = {
 };
 
 // ★ 画面外AIの生態系ピラミッド型仮想成長上限スコア
-const MAX_VIRTUAL_SCORE_COLOSSUS = 50000; // ★ 超大型ワールドボス（colossus: スコア50,000pt、太さ65px）
+const MAX_VIRTUAL_SCORE_COLOSSUS = 50000; // 超大型ワールドボス（colossus: スコア50,000pt、太さ65px）
 const MAX_VIRTUAL_SCORE_BOSS = 12000;     // 通常ボス級（cruiser等: 体長約78〜85節）
 const MAX_VIRTUAL_SCORE_MID = 5000;       // 中堅好戦型（hunter, harasser, ambusher: 体長約52〜56節）
 const MAX_VIRTUAL_SCORE_DEFAULT = 2200;   // 一般・主食（forager, timid等: 体長約32〜38節）
@@ -116,12 +116,6 @@ export class AIManager {
 
             // =========================================================================
             // ★ 【ペルソナ比率の正常化（forager復元＆特攻過密の解消）】
-            // ・forager: 30% (マイペース採餌型・世界のベースとなる主食)
-            // ・hunter: 20% (好戦的な狩猟・包囲型)
-            // ・harasser: 18% (並走・ちょっかい型)
-            // ・ambusher: 12% (首元奇襲型)
-            // ・cruiser: 12% (大回遊・巨大壁型 / ボス覚醒候補)
-            // ・timid: 8% (警戒・逃走型)
             // =========================================================================
             const randVal = Math.random();
             let persona = 'forager';
@@ -252,7 +246,6 @@ export class AIManager {
 
         if (this._currentBossSnake) {
             if (this._currentBossSnake.isDead) {
-                // ボス死亡を検知：120秒間の再覚醒クールダウン開始
                 this._currentBossSnake = null;
                 this._bossCooldownTimer = 120.0;
             }
@@ -326,9 +319,6 @@ export class AIManager {
                 const meta = this.aiMeta[i];
                 if (!meta) continue;
 
-                // =========================================================================
-                // ★ 【仮想成長キャップ：colossus（50,000pt）解放】
-                // =========================================================================
                 let scoreCap = MAX_VIRTUAL_SCORE_DEFAULT;
                 if (meta.persona === 'colossus') {
                     scoreCap = MAX_VIRTUAL_SCORE_COLOSSUS;
@@ -378,7 +368,6 @@ export class AIManager {
                 if (meta.deadTimer >= 4.0) {
                     meta.deadTimer = 0;
 
-                    // ボスだった個体がリスポーンした場合は通常cruiserへ戻す
                     if (meta.persona === 'colossus') {
                         meta.persona = 'cruiser';
                     }
@@ -412,7 +401,7 @@ export class AIManager {
             if (meta.panicCooldown > 0) meta.panicCooldown = Math.max(0, meta.panicCooldown - timeScale);
             if (meta.defendCooldown > 0) meta.defendCooldown = Math.max(0, meta.defendCooldown - timeScale);
 
-            // 4. 動的循環スポーン（※ボス個体は循環ワープさせずマップ内に常駐維持）
+            // 4. 動的循環スポーン
             if (meta.persona !== 'colossus' && (frameCount + i) % 60 === 0) {
                 let minDistToAnyHumanSq = Infinity;
 
@@ -477,8 +466,55 @@ export class AIManager {
         }
 
         // =========================================================================
-        // 2. 【最重要・空間ハッシュ局所走査】胴体激突回避
-        // 0.15秒のリアクション遅延を付与し、人間プレイヤーの首切り・囲い込み成功を保証
+        // 2. 【最重要・対頭部（Head-to-Head）事前警戒 ＆ チキンレース回避】
+        // 真正面からお互いに向かい合っている時、350px手前から進路を斜め外側へ反らす！
+        // これにより、ただ直進して口の中に飛び込むような正面自爆を100%防止
+        // =========================================================================
+        let headThreatFound = false;
+        const totalSnakesCount = allSnakes.length;
+
+        for (let i = 0; i < totalSnakesCount; i++) {
+            const other = allSnakes[i];
+            if (!other || other === ai || other.isDead) continue;
+
+            const hdx = other.x - ai.x;
+            const hdy = other.y - ai.y;
+            const hDistSq = hdx * hdx + hdy * hdy;
+
+            // 警戒距離（360px以内）
+            const headAlertLimit = 360 + ai.size + other.size;
+            if (hDistSq < headAlertLimit * headAlertLimit) {
+                // 相手が自機の前方視野（75度以内）にいるか
+                const angleToOtherHead = Math.atan2(hdy, hdx);
+                let relAngle = angleToOtherHead - ai.angle;
+                while (relAngle < -Math.PI) relAngle += Math.PI * 2;
+                while (relAngle > Math.PI) relAngle -= Math.PI * 2;
+
+                if (Math.abs(relAngle) < Math.PI * 0.42) {
+                    // お互いの進行方向が対向（130度以上）しているか
+                    let faceDiff = Math.abs(ai.angle - other.angle);
+                    while (faceDiff > Math.PI) faceDiff = Math.PI * 2 - faceDiff;
+
+                    if (faceDiff > Math.PI * 0.72) {
+                        // 正面衝突コースを検知：相手と交差するように斜め外側（±55度）へ舵を切る
+                        const steerSide = (relAngle >= 0) ? -Math.PI * 0.32 : Math.PI * 0.32;
+                        ai.targetAngle = ai.angle + steerSide;
+                        ai.isBoosting = false; // 加速をやめてコンパクトに旋回
+                        meta.avoidReactionTimer = 0;
+                        headThreatFound = true;
+                        break;
+                    }
+                }
+            }
+        }
+
+        if (headThreatFound) return;
+
+        // =========================================================================
+        // 3. 【空間ハッシュ局所走査】胴体激突回避
+        // ★ 状況別可変ディレイ：
+        // ・正面対向接近時（diff < 45度）: 遅延を0.02秒（即時）に短縮して正面自爆を根絶！
+        // ・側面・斜め奇襲時: 0.15秒の遅延を維持し、プレイヤーの首切り・囲い込み成功を保証！
         // =========================================================================
         let threatFound = false;
         const gx = Math.floor(ai.x / GRID_SIZE);
@@ -500,7 +536,7 @@ export class AIManager {
                     const sdx = node.x - ai.x;
                     const sdy = node.y - ai.y;
                     const sDistSq = sdx * sdx + sdy * sdy;
-                    const safeDistLimit = ai.size * 2.5 + node.radius * 1.2;
+                    const safeDistLimit = ai.size * 2.8 + node.radius * 1.3;
                     const safeDistLimitSq = safeDistLimit * safeDistLimit;
 
                     if (sDistSq < safeDistLimitSq) {
@@ -513,9 +549,14 @@ export class AIManager {
                             if (meta.avoidReactionTimer === undefined) meta.avoidReactionTimer = 0;
                             meta.avoidReactionTimer += dtSec;
 
-                            if (meta.avoidReactionTimer >= 0.15 || sDistSq < (safeDistLimitSq * 0.35)) {
+                            // 正面（進行方向±40度以内）の胴体は即座に回避（0.02秒）、側面奇襲は0.15秒の猶予を残す
+                            const isHeadOnObstacle = Math.abs(diff) < Math.PI * 0.22;
+                            const requiredDelay = isHeadOnObstacle ? 0.02 : 0.15;
+
+                            if (meta.avoidReactionTimer >= requiredDelay || sDistSq < (safeDistLimitSq * 0.40)) {
                                 ai.targetAngle = ai.angle + (diff > 0 ? -Math.PI / 1.6 : Math.PI / 1.6);
-                                ai.isBoosting = ai.score > 100 && sDistSq < (safeDistLimitSq * 0.40) && meta.persona !== 'colossus';
+                                // 緊急回避時はブーストを即解除して旋回半径を小さくする
+                                ai.isBoosting = false;
                             }
                             threatFound = true;
                             break;
@@ -530,7 +571,6 @@ export class AIManager {
 
         // =========================================================================
         // ★ 【ワールドボス（colossus）専用航行ルーチン】
-        // 自爆特攻や小刻みな反転を行わず、広大な空間を悠然と支配する威風堂々たる航行
         // =========================================================================
         if (meta.persona === 'colossus') {
             meta.state = AI_STATE.CRUISING;
@@ -548,7 +588,7 @@ export class AIManager {
         const currentTargetHuman = targetHuman || player;
         const isTargetHumanActive = currentTargetHuman && !currentTargetHuman.isDead;
 
-        // 3. 【Uターン・ボディシールド防御（Bait & Turn）】
+        // 4. 【Uターン・ボディシールド防御（Bait & Turn）】
         if (isTargetHumanActive && meta.defendCooldown <= 0 && ai.score > 90 && ai.historyLength > 8) {
             const hdx = currentTargetHuman.x - ai.x;
             const hdy = currentTargetHuman.y - ai.y;
@@ -571,7 +611,7 @@ export class AIManager {
             }
         }
 
-        // 4. 【カミカゼ暗殺（AMBUSH）：側面カット進化】
+        // 5. 【カミカゼ暗殺（AMBUSH）：側面カット進化】
         if ((meta.persona === 'ambusher' || (meta.persona === 'harasser' && Math.random() < 0.35)) && ai.score > 60) {
             let giantTarget = null;
             let minGiantDistSq = 1400 * 1400;
@@ -618,7 +658,7 @@ export class AIManager {
             }
         }
 
-        // 5. 【ビビり逃走（PANIC）】
+        // 6. 【ビビり逃走（PANIC）】
         if (meta.persona === 'timid' && meta.panicCooldown <= 0 && meta.state !== AI_STATE.PANIC && ai.score > 60) {
             let giantThreat = null;
             const panicDistSq = 400 * 400;
@@ -647,7 +687,7 @@ export class AIManager {
             }
         }
 
-        // 6. 【ハイエナ（SCAVENGER）：掠め取り（Snatch & Run）】
+        // 7. 【ハイエナ（SCAVENGER）：掠め取り（Snatch & Run）】
         if (activeDrops && activeDrops.length > 0 && meta.persona !== 'cruiser') {
             let nearestDrop = null;
             let minDropDistSq = Infinity;
@@ -681,7 +721,7 @@ export class AIManager {
             }
         }
 
-        // 7. 【ちょっかいトリガー（HARASS / SHADOWING）】
+        // 8. 【ちょっかいトリガー（HARASS / SHADOWING）】
         if (isTargetHumanActive && meta.harassCooldown <= 0 && meta.state !== AI_STATE.HARASS && meta.state !== AI_STATE.PANIC && meta.state !== AI_STATE.AMBUSH && meta.state !== AI_STATE.DEFEND) {
             const pdx = currentTargetHuman.x - ai.x;
             const pdy = currentTargetHuman.y - ai.y;
@@ -700,7 +740,7 @@ export class AIManager {
             }
         }
 
-        // 8. 【ステートタイマー満了時の自然遷移】
+        // 9. 【ステートタイマー満了時の自然遷移】
         if (meta.stateTimer <= 0) {
             if (meta.state === AI_STATE.HARASS || meta.state === AI_STATE.PANIC || meta.state === AI_STATE.AMBUSH || meta.state === AI_STATE.DEFEND) {
                 meta.state = AI_STATE.FORAGING;
@@ -718,7 +758,7 @@ export class AIManager {
             }
         }
 
-        // 9. 【各ステートの行動実行】
+        // 10. 【各ステートの行動実行】
         switch (meta.state) {
             case AI_STATE.AMBUSH:
             case AI_STATE.PANIC:
