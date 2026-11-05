@@ -1,15 +1,16 @@
 // ==============================================================================
 // 『くねくねバトル オンライン』Phase 7 マスター統合オーケストレーター (main.js)
-// v45.0.0 人間撃破判定厳格化＆AIキル誤チャット・誤爆即死完全根絶版:
-// ・【人間撃破判定の厳格化による誤チャット完全根絶】
-// 　撃破判定部における人間判定（isKillerHuman / isVictimHuman）を、スネーク自身の
-// 　実体属性（isPlayer または isHumanPlayer === true）による直接判定へ刷新！
-// 　通常AI（CPU 1〜5）のIDが人間スロット（1〜5）と重複している場合でも、
-// 　AI同士の撃破を人間と誤認してチャット送信してしまう不具合を100%物理根絶
-// ・【AI撃破時の他プレイヤー誤爆即死（身代わりキル）完全根絶】
-// 　キル同報パケットの被害者スロット（victimSlot）送信において、被害者が実際に
-// 　人間プレイヤー（自機または isHumanPlayer）である場合のみスロット番号を渡し、
-// 　通常AI撃破時は null を送信することで無関係な人間ゲストが即死するバグを完全解消
+// v46.0.0 身代わり即死完全根絶＆ゴーストAI視界保証同期連携版:
+// ・【新入室プレイヤーの身代わり即死（誤爆キル）完全根絶】
+// 　撃破同報処理において、空き枠ダミーAI（CPU 96〜100）撃破時のスロット番号送信を撤廃！
+// 　真の人間プレイヤー（isPlayer または isHumanPlayer === true）が撃破された時のみ
+// 　スロット番号を相手端末へ通知し、ダミーAI撃破時は victimSlot = null を送信。
+// 　空き枠へ入室した直後の新プレイヤーが理不尽に即死するバグを100%物理遮断
+// ・【ゴーストAI視界保証同期の完全復元】
+// 　net_broadcaster.js が参照する全スネークインスタンスへの参照（window.allSnakesInstance）
+// 　をグローバルへ確実に露出！ゲストプレイヤーの近傍にいるAIが優先同期リストへ
+// 　確実に組み込まれるようになり、ゲスト画面でのゴーストAI（透明化・壁抜け）を根絶
+// ・【人間撃破判定の厳格化による誤チャット完全根絶維持】
 // ・【リーダーボードパケットのリモート人間プレイヤースロット番号死守維持】
 // ・【リモート追従ワープ判定閾値の適正化維持】250px（62,500）
 // ・【ホスト端末側ランキング表示：人間プレイヤーはカスタムカラー / AIは白維持】
@@ -155,6 +156,7 @@ let killerTargetSnake = null;
 
 window.localPlayerInstance = player;
 window.allAISnakesInstance = aiManager.ais;
+window.allSnakesInstance = allSnakes; // ★ net_broadcaster.js の視界保証同期用に全スネーク参照を露出
 
 export const UIController = {
     showLobby() {
@@ -367,6 +369,7 @@ export function initGame(isRespawn = false, isExplicitRetry = false) {
         }
 
         sortedSnakes = [...allSnakes];
+        window.allSnakesInstance = allSnakes;
         Menu.updateParticipants(NetworkManager.slots.filter(s => !s.isAI));
         updateZoomButtonsState(input.zoomMultiplier);
         
@@ -376,6 +379,7 @@ export function initGame(isRespawn = false, isExplicitRetry = false) {
             allSnakes.unshift(player);
         }
         sortedSnakes = [...allSnakes];
+        window.allSnakesInstance = allSnakes;
     }
 
     // =========================================================================
@@ -413,6 +417,7 @@ NetworkManager.setCallbacks({
             setAllSnakes: (list) => {
                 allSnakes.length = 0;
                 allSnakes.push(...list);
+                window.allSnakesInstance = allSnakes;
             },
             aiManager,
             player,
@@ -430,6 +435,7 @@ NetworkManager.setCallbacks({
         allSnakes.length = 0;
         allSnakes.push(player, ...currentRemotes);
         sortedSnakes = [...allSnakes];
+        window.allSnakesInstance = allSnakes;
 
         updateResetButtonVisibility();
     },
@@ -479,6 +485,7 @@ NetworkManager.setCallbacks({
                 }
                 sortedSnakes = [...allSnakes];
                 window.allAISnakesInstance = aiManager.ais;
+                window.allSnakesInstance = allSnakes;
             }
         }
     },
@@ -489,6 +496,7 @@ NetworkManager.setCallbacks({
             allSnakes.length = 0;
             allSnakes.push(player, ...(aiManager && Array.isArray(aiManager.ais) ? aiManager.ais : []));
             sortedSnakes = [...allSnakes];
+            window.allSnakesInstance = allSnakes;
         }
     },
 
@@ -781,9 +789,10 @@ function gameLoop() {
                     Danmaku.push(killer.name, `${victim.name} を撃破！`, killColor);
 
                     // =========================================================================
-                    // ★ 【撃破同報への被害者スロット(victimSlot)数値同期＆誤爆即死完全防止】
-                    // 被害者が人間プレイヤーである場合のみ確実なスロット番号を送信し、
-                    // 通常AI撃破時に無関係な人間ゲストが即死するバグを物理根絶
+                    // ★ 【撃破同報への被害者スロット(victimSlot)数値同期＆新入室身代わり即死完全根絶】
+                    // 被害者が真の人間プレイヤー（isPlayer または isHumanPlayer === true）である場合のみ
+                    // 正確なスロット番号を送信。空き枠ダミーAI撃破時は victimSlot = null を送信し、
+                    // 新規入室者が入室直後に身代わり即死させられるバグを100%物理遮断！
                     // =========================================================================
                     if (NetworkManager.isMultiplayerActive && typeof NetworkManager.broadcastKill === 'function') {
                         let victimSlot = null;
@@ -791,9 +800,6 @@ function gameLoop() {
                             victimSlot = NetworkManager.mySlot;
                         } else if (victim.isHumanPlayer === true) {
                             victimSlot = victim.id;
-                        } else if (victim.id !== undefined && victim.id > MAX_AIS) {
-                            // 空き枠ダミーAI
-                            victimSlot = victim.id - MAX_AIS - 1;
                         }
                         NetworkManager.broadcastKill(killer.name, victim.name, killColor, victimSlot !== null ? Number(victimSlot) : null);
                     }
