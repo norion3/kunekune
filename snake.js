@@ -1,12 +1,12 @@
 // ==============================================================================
 // 『くねくねバトル オンライン』スネークエンティティクラス (snake.js)
-// v37.0.0 ワープ時prevX/Y追従補正＆CCDデスレーザー完全根絶版:
-// ・【ワープ時prevX/Y追従補正によるCCDデス・レーザー完全根絶】
-// 　shiftHistory(dx, dy) 内で胴体履歴だけでなく前フレーム頭部座標（prevX, prevY）も
-// 　同時に平行移動追従させるガードを追加！
-// 　通信ラグ復旧やホスト移行時の位置補正によって次フレームのCCD（連続衝突判定）が
-// 　巨大な不可視の即死線分（デス・レーザー）を生成し、周囲の他走者やAIを理不尽に
-// 　巻き込み即死させる物理バグを100%物理根絶
+// v38.0.0 リスポーン時撃破フラグリセット＆残骸不発完全根絶版:
+// ・【リスポーン時撃破フラグ（_hasBeenKilled）初期化による残骸不発完全根絶】
+// 　reset() 実行時に this._hasBeenKilled = false を確実に初期化！
+// 　リスポーンして再成長した敵がプレイヤーの胴体に激突した際、前回の死亡フラグが
+// 　残っているせいで撃破判定と残骸ドロップがスキップされ、敵がスッと消えるだけで
+// 　残骸が一切出ない致命的論理バグを100%物理根絶
+// ・【ワープ時prevX/Y追従補正によるCCDデス・レーザー完全根絶維持】
 // ・【背骨ネオンライン引き裂き紐描画の完全根絶維持】
 // ・【ブースト肉片ドロップ外壁安全クランプ維持】
 // ・【相手マイアイコン顔(user_avatar)のCanvas完全描画維持】avatarImgキャッシュ
@@ -69,6 +69,7 @@ export class Snake {
         this.boostDropCounter = 0;
 
         this.isDead = false;
+        this._hasBeenKilled = false; // 二重撃破防止フラグ
         this.kills = 0;
         this.isBoosting = false;
         this._prevBoostingState = false; // ブースト状態変化検知用
@@ -107,6 +108,7 @@ export class Snake {
         this.distCounter = 0;
         this.boostDropCounter = 0;
         this.isDead = false;
+        this._hasBeenKilled = false; // ★ リスポーン時に二重キルガードを確実にリセット
         this.kills = 0;
         this.isBoosting = false;
         this._prevBoostingState = false;

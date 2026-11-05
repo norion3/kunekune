@@ -1,15 +1,16 @@
 // ==============================================================================
 // 『くねくねバトル オンライン』ワールド・動的チャンク餌・決定論的シード生成 (world.js)
-// v45.0.0 胴体下敷き回避外側放射爆散＆残骸大盤振る舞い超爽快演出版:
-// ・【自機胴体の下敷き完全回避＆外側放射爆散散布】
-// 　敵が自分の腹（胴体）に激突死した際、巨大化した自機の胴体の真下に残骸が隠れて
-// 　見えなくなる現象を物理根絶！自機の太さを加味した外側爆散距離（半径80〜200px）へ
-// 　勢いよくパーンと飛び散らせることで、敵を倒した瞬間の手応えを100%可視化
-// ・【残骸ドロップ数の大幅増量（最低18個保証）】
-// 　最低ドロップ数を従来の6個から18個（最大45個）へ倍増！
-// 　生まれたての小型敵であっても大量の煌めく肉片が周囲に弾け飛び、圧倒的な爽快感を演出
-// ・【撃破破裂パーティクルの超強化】
-// 　撃破時の光彩パーティクルを18個から32個へ増量し、初速を強化して派手に爆散
+// v46.0.0 スマート残骸ドロップ（個数適正抑制＆高密度価値・サイズスケール）版:
+// ・【スマート残骸ドロップ設計（ゲームバランス崩壊・インフレ完全防止）】
+// 　残骸ドロップの個数インフレ（100〜200個）を厳格に阻止し、最大35〜40個の適正範囲
+// 　（小型8〜14個、中堅16〜24個、巨大ボス最大38個）にきっちり抑制！
+// 　その代わり、敵の蓄積スコアに応じて肉片1個あたりの「価値（val）」と「粒サイズ」が
+// 　ダイナミックに巨大化・高密度化するよう刷新。画面の過密・処理落ちを防ぎながら、
+// 　強敵を倒した瞬間に高価値な特大肉片を食べる最高の爽快感・手応えを実現
+// ・【自機胴体の下敷き完全回避＆適正外側放射爆散】
+// 　自機の胴体太さに応じた適度な外側オフセット（半径50〜110px）でパーンと散布し、
+// 　自機の胴体の真下に隠れて消える現象を物理根絶
+// ・【撃破破裂パーティクル演出の強化維持】32個一斉爆散
 // ・【捕食CCD変位上限二乗値の適正化維持】MAX_CCD_DISPLACEMENT_SQ = 10,000
 // ・【パーティクル配列のFIFOハードキャップ防護維持】MAX_PARTICLES = 300
 // ・【パーティクル完全オブジェクトプール化維持】particlePool（最大512個）
@@ -293,19 +294,30 @@ export class WorldManager {
     // 撃破されたスネークの肉片ドロップ（TTLタイムスタンプ付き ＆ 外壁内安全クランプ ＆ ハードキャップ管理 ＆ パーティクルプール化）
     spawnDeathDrop(snake) {
         const histLen = snake.historyLength || 0;
+        const victimScore = Math.max(50, snake.score || 50);
         const now = performance.now();
         const margin = 20;
 
         // =========================================================================
-        // ★ 【自機胴体下敷き完全回避＆残骸大盤振る舞い外側放射爆散】
-        // 1. 最低ドロップ数を18個（最大45個）へ倍増！生まれたてでも豪快な残骸を保証
-        // 2. 自機の巨大な胴体の真下に隠れて見えなくなるのを防ぐため、自機の太さを
-        // 　 加味した外側爆散距離（半径80〜200px）へパーンと吹き飛ばす演出へ刷新
+        // ★ 【スマート残骸ドロップ：個数適正抑制（最大38個）＆高密度価値スケール】
+        // 1. 個数のインフレ（100〜200個）を防止し、8〜38個の適正範囲に抑制
+        // 2. 敵の蓄積スコアに応じて1個あたりの「価値（val）」と「粒サイズ」を高密度化！
+        // 　 巨大ボス撃破時は金色に輝く特大肉片（val 50〜100pt）が飛び散り、
+        // 　 画面を散らかさずに強敵を仕留めた極上の手応えと爽快感を演出
         // =========================================================================
-        const dropCount = Math.max(18, Math.min(45, Math.floor(histLen * 0.85) + 12));
+        let dropCount = 8 + Math.floor(Math.min(30, Math.sqrt(victimScore) * 0.32 + histLen * 0.22));
+        dropCount = Math.max(8, Math.min(38, dropCount));
+
+        // 敵の保有スコアの約30%をドロップ餌へ高密度還元
+        const totalDropVal = Math.max(100, Math.floor(victimScore * 0.30));
+        const baseValPerDrop = Math.max(12, Math.floor(totalDropVal / dropCount));
+
+        // 餌の粒サイズも価値に連動してダイナミックにスケール（小型6.5px 〜 巨大ボス14.5px）
+        const baseFoodSize = Math.max(6.5, Math.min(14.5, 5.8 + Math.pow(baseValPerDrop, 0.40) * 1.5));
+
         const victimSize = snake.size || 14;
 
-        // 自機のサイズを取得して、自機の胴体の外側にしっかり飛び散る距離を動的算出
+        // 自機の胴体太さを加味して、自機の真下に隠れない安全な外側爆散距離を算出
         const localPlayer = (typeof window !== 'undefined' && window.localPlayerInstance) ? window.localPlayerInstance : null;
         const playerBodyRadius = (localPlayer && !localPlayer.isDead) ? localPlayer.size : 20;
 
@@ -323,21 +335,24 @@ export class WorldManager {
                 }
             }
 
-            // 放射状爆散角度と外側吹き飛ばし距離（自機の胴体の外側へ確実に届かせる）
-            const blastAngle = (i / dropCount) * Math.PI * 2 + (Math.random() - 0.5) * 0.40;
-            const minClearDist = playerBodyRadius * 1.5 + victimSize * 1.2 + 25; // 自機胴体半径の外側
-            const blastDist = minClearDist + Math.random() * 80;
+            // 自機胴体の下敷きを完全に避ける適正な外側放射爆散（半径50〜110px）
+            const blastAngle = (i / dropCount) * Math.PI * 2 + (Math.random() - 0.5) * 0.38;
+            const minClearDist = playerBodyRadius * 1.25 + victimSize * 0.9 + 18;
+            const blastDist = minClearDist + Math.random() * 55;
 
             const dropX = Math.max(margin, Math.min(MAP_SIZE - margin, baseX + Math.cos(blastAngle) * blastDist));
             const dropY = Math.max(margin, Math.min(MAP_SIZE - margin, baseY + Math.sin(blastAngle) * blastDist));
 
+            const finalVal = Math.floor(baseValPerDrop + (Math.random() - 0.5) * (baseValPerDrop * 0.35));
+            const finalSize = Math.max(5.5, baseFoodSize + (Math.random() - 0.5) * 2.0);
+
             this.dropFoods.push({
                 x: dropX,
                 y: dropY,
-                size: 7.5 + Math.random() * 4.5,
-                val: 18 + Math.random() * 14,
+                size: finalSize,
+                val: Math.max(8, finalVal),
                 isBig: true,
-                isLargeAura: true,
+                isLargeAura: finalVal >= 25,
                 color: snake.color,
                 spawnTime: now
             });
@@ -353,7 +368,7 @@ export class WorldManager {
         }
 
         // =========================================================================
-        // ★ 【撃破破裂パーティクル演出の超強化（32個一斉爆散）】
+        // ★ 【撃破破裂パーティクル演出の強化（32個一斉爆散）】
         // =========================================================================
         for (let p = 0; p < 32; p++) {
             const pAngle = Math.random() * Math.PI * 2;
