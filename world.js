@@ -1,22 +1,26 @@
 // ==============================================================================
 // 『くねくねバトル オンライン』ワールド・動的チャンク餌・決定論的シード生成 (world.js)
-// v47.0.0 遠隔地「ゾンビ餌」復活防止キャッシュ配備版:
-// ・【未生成チャンク捕食キャッシュ（unprocessedPicks）配備】
-// 　遠隔地で他走者が食べた餌の消去要求（removeFoodAt）を受信した際、自画面のチャンクが
-// 　未生成で空振りした座標 (x, y) を一時キャッシュにストック！
-// 　後から自機が接近してチャンクが初生成（spawnChunkFoods）された瞬間にキャッシュと
-// 　照合して即座に間引き、他人が食べた大餌が新品として復活する「ゾンビ餌」インフレを100%物理根絶
+// v48.0.0 全人間プレイヤー視界共有・公平残骸ドロップ保護＆遠隔AI肉片高速回収版:
+// ・【全人間プレイヤー視界共有・公平残骸ドロップ保護（TTL: 30秒）】
+// 　ホスト・ゲストを一切区別せず、いずれかの生存人間プレイヤーの近く（4,500px以内）
+// 　にある撃破残骸の寿命を「12秒 ➔ 30秒」へ大幅延長！
+// 　ホストが倒しても、ゲストが倒しても、反転して戻ってくるまでの間に消えることなく
+// 　全ての肉片を平等かつ確実に食べ尽くせる十分な回収時間を保証
+// ・【人間不在・遠隔地AI肉片の超高速回収（TTL: 7秒）】
+// 　全人間プレイヤーから4,500px以上離れた僻地で起きたAI同士の戦闘残骸は、
+// 　7秒で超高速クリーンアップ！不要な残骸によるメモリと配列枠の圧迫を物理根絶
+// ・【最大保持上限の適正拡張（MAX_DROP_FOODS = 600）＆スマート間引き】
+// 　上限超過時も人間プレイヤー周辺の肉片を最優先保護し、遠隔地のAI肉片から優先間引き
+// ・【未生成チャンク捕食キャッシュ（unprocessedPicks）によるゾンビ餌防止維持】
 // ・【スマート残骸ドロップ設計（個数適正抑制＆高密度価値・サイズスケール）維持】
 // ・【自機胴体の下敷き完全回避＆適正外側放射爆散維持】
 // ・【撃破破裂パーティクル演出の強化維持】32個一斉爆散
 // ・【捕食CCD変位上限二乗値の適正化維持】MAX_CCD_DISPLACEMENT_SQ = 10,000
 // ・【パーティクル配列のFIFOハードキャップ防護維持】MAX_PARTICLES = 300
 // ・【パーティクル完全オブジェクトプール化維持】particlePool（最大512個）
-// ・【肉片ドロップFIFO上限キャップ維持】MAX_DROP_FOODS = 400
 // ・【無限餌増殖(ボーダーダンス)の完全根絶維持】FIFOリングバッファ管理(最大4,096件)
 // ・【整数ビット演算ハッシュによる文字列アロケーション完全根絶維持】
 // ・【画面外遠隔チャンクの即時回収維持】保持上限500チャンク
-// ・【肉片ドロップ寿命の適正化維持】12秒TTL
 // ・【ゼロアロケーション描画バケット維持】
 // ==============================================================================
 
@@ -32,8 +36,8 @@ const MAX_UNPROCESSED_PICKS = 512;
 // ★ CCD変位上限二乗値（100px相当: 通常ブースト時の高速移動を網羅し、ワープ時のフードトンネリングを遮断）
 const MAX_CCD_DISPLACEMENT_SQ = 10000;
 
-// 肉片ドロップ最大保持上限（乱戦・大量撃破時の計算量爆発・FPS崩壊を物理防護）
-const MAX_DROP_FOODS = 400;
+// ★ 肉片ドロップ最大保持上限（400 ➔ 600 へ適正拡張）
+const MAX_DROP_FOODS = 600;
 
 // ★ パーティクルオブジェクトプールの最大保持上限
 const MAX_PARTICLE_POOL = 512;
@@ -242,7 +246,6 @@ export class WorldManager {
 
             // =========================================================================
             // ★ 【消費済みビット判定（ゾンビ復活防止）】
-            // 過去に捕食されたインデックスの餌は、PRNGの乱数順序を狂わせずにスポーンのみ安全にスキップ
             // =========================================================================
             if ((consumedMask & (1 << i)) !== 0) {
                 if (sizeCategory === 2) {
@@ -257,7 +260,6 @@ export class WorldManager {
 
             // =========================================================================
             // ★ 【未生成チャンク捕食キャッシュとの照合・即時間引き】
-            // 遠隔地で他走者が食べた座標と一致する場合、スポーンをスキップしビットマスクへ記録
             // =========================================================================
             let isEatenRemotely = false;
             const pickCount = this.unprocessedPicks.length;
@@ -387,9 +389,57 @@ export class WorldManager {
             });
         }
 
+        // =========================================================================
+        // ★ 【肉片ドロップFIFOハードキャップ防護（MAX: 600件 ＆ 人間周辺保護間引き）】
+        // 人間プレイヤーから遠い肉片から優先的に間引き、プレイヤー周辺の肉片を保護
+        // =========================================================================
         if (this.dropFoods.length > MAX_DROP_FOODS) {
             const overflow = this.dropFoods.length - MAX_DROP_FOODS;
-            this.dropFoods.splice(0, overflow);
+            
+            // 人間プレイヤーリストを取得
+            const humanCoords = [];
+            if (localPlayer && !localPlayer.isDead) {
+                humanCoords.push({ x: localPlayer.x, y: localPlayer.y });
+            }
+            if (typeof window !== 'undefined' && Array.isArray(window.allSnakesInstance)) {
+                const allS = window.allSnakesInstance;
+                for (let k = 0; k < allS.length; k++) {
+                    const s = allS[k];
+                    if (s && !s.isDead && s.isHumanPlayer && !s.isPlayer) {
+                        humanCoords.push({ x: s.x, y: s.y });
+                    }
+                }
+            }
+
+            const nearHumanLimitSq = 4500 * 4500;
+            let removedCount = 0;
+
+            // 1段階目：全人間プレイヤーから4,500px以上離れている遠隔肉片を古い順に間引く
+            if (humanCoords.length > 0) {
+                for (let i = 0; i < this.dropFoods.length && removedCount < overflow; i++) {
+                    const f = this.dropFoods[i];
+                    let isNearAnyHuman = false;
+                    for (let h = 0; h < humanCoords.length; h++) {
+                        const hCoord = humanCoords[h];
+                        const dSq = (f.x - hCoord.x) ** 2 + (f.y - hCoord.y) ** 2;
+                        if (dSq < nearHumanLimitSq) {
+                            isNearAnyHuman = true;
+                            break;
+                        }
+                    }
+
+                    if (!isNearAnyHuman) {
+                        this.dropFoods.splice(i, 1);
+                        i--;
+                        removedCount++;
+                    }
+                }
+            }
+
+            // 2段階目：それでも溢れている場合は最古の肉片から順に間引き
+            if (removedCount < overflow) {
+                this.dropFoods.splice(0, overflow - removedCount);
+            }
         }
 
         for (let p = 0; p < 32; p++) {
@@ -562,10 +612,6 @@ export class WorldManager {
             }
         }
 
-        // =========================================================================
-        // ★ 【未生成チャンク捕食のキャッシュ記録（ゾンビ餌防止）】
-        // チャンク未生成または画面外で空振りした場合、座標をキャッシュにストック
-        // =========================================================================
         if (!foundInGeneratedChunk) {
             this.unprocessedPicks.push({
                 x: x,
@@ -580,6 +626,9 @@ export class WorldManager {
         return false;
     }
 
+    /**
+     * パーティクル更新 ＆ 肉片寿命管理（全人間プレイヤー視界共有保護 30秒 / 僻地AI肉片 7秒）
+     */
     updateParticles() {
         for (let i = this.particles.length - 1; i >= 0; i--) {
             const p = this.particles[i];
@@ -595,11 +644,51 @@ export class WorldManager {
             }
         }
 
+        // =========================================================================
+        // ★ 【全人間プレイヤー視界共有・公平残骸ドロップ保護（30秒）＆遠隔AI肉片高速回収（7秒）】
+        // ホスト・ゲスト問わず、人間プレイヤーの誰か1人でも近く（4,500px以内）にいる
+        // 肉片は30秒間じっくり保護！誰の視界にも入っていない僻地のAI肉片は7秒で高速消去
+        // =========================================================================
         const now = performance.now();
+        const localPlayer = (typeof window !== 'undefined' && window.localPlayerInstance) ? window.localPlayerInstance : null;
+
+        // 全生存人間プレイヤー（ホスト＋全遠隔ゲスト）の座標を収集
+        const humanCoords = [];
+        if (localPlayer && !localPlayer.isDead) {
+            humanCoords.push({ x: localPlayer.x, y: localPlayer.y });
+        }
+        if (typeof window !== 'undefined' && Array.isArray(window.allSnakesInstance)) {
+            const allS = window.allSnakesInstance;
+            for (let k = 0; k < allS.length; k++) {
+                const s = allS[k];
+                if (s && !s.isDead && s.isHumanPlayer && !s.isPlayer) {
+                    humanCoords.push({ x: s.x, y: s.y });
+                }
+            }
+        }
+
+        const nearHumanLimitSq = 4500 * 4500;
+
         for (let i = this.dropFoods.length - 1; i >= 0; i--) {
             const f = this.dropFoods[i];
             if (!f.spawnTime) f.spawnTime = now;
-            if (now - f.spawnTime > 12000) {
+            const ageMs = now - f.spawnTime;
+
+            // いずれかの人間プレイヤーの視界周辺（4,500px以内）にあるかを判定
+            let isNearAnyHuman = false;
+            for (let h = 0; h < humanCoords.length; h++) {
+                const hCoord = humanCoords[h];
+                const dSq = (f.x - hCoord.x) ** 2 + (f.y - hCoord.y) ** 2;
+                if (dSq < nearHumanLimitSq) {
+                    isNearAnyHuman = true;
+                    break;
+                }
+            }
+
+            // 人間の近く（ホスト・全ゲストのキル含む）は30秒保護、誰もいない僻地のAI肉片は7秒で回収
+            const maxLifetimeMs = isNearAnyHuman ? 30000 : 7000;
+
+            if (ageMs > maxLifetimeMs) {
                 this.dropFoods[i] = this.dropFoods[this.dropFoods.length - 1];
                 this.dropFoods.pop();
             }

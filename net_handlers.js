@@ -1,13 +1,13 @@
 // ==============================================================================
 // 『くねくねバトル オンライン』リモートパケット受信反映ハンドラ (net_handlers.js)
-// v40.0.0 対人キル報酬確定同期＆順位表示DOM競合解消版:
-// ・【対人戦（PvP）キル報酬確定同期（KILL_ALERTフック）】
-// 　被害者端末から届いた KILL_ALERT をインターセプトし、自機がキラー（kn）に
-// 　指名されていた場合、被害者のスコアの18%（最低120pt）を加算しキル数を正当に加算！
-// 　他端末との対人戦において勝者のスコアが増えない重大な報酬喪失バグを完全解消
-// ・【順位表示（myRank）DOM競合・チラつき完全根絶】
-// 　ホストからの遅延順位パケットによる valRank DOMの強制上書きを撤廃！
-// 　main.js によるリアルタイム実スコア順位表示に一本化し、激しい点滅を解消
+// v41.0.0 ゲスト端末ランキング順位(valRank)完全同期＆PvPキル報酬維持版:
+// ・【ゲスト端末側ランキング順位（valRank）同期の完全正常化】
+// 　ホスト側のみで updateStats が実行される仕様と調和させ、ゲスト端末の onLeaderboardSync
+// 　においてトップリスト内の自機確定位置（myTopIndex + 1）および全体確定順位（ranks）
+// 　から算出した myRank を val-rank DOM へ確実に反映！
+// 　下部リストが「8. のりおん」であるにもかかわらず上部が初期値の「1 / 87」と表示される
+// 　矛盾を100%解消し、上部ヘッダーとリスト順位を完全一致化
+// ・【対人戦（PvP）キル報酬確定同期（KILL_ALERTフック）維持】
 // ・【撃破肉片クラスタ二重生成の完全防止（onDropClusterSpawned）維持】
 // ・【ランキング文字色の個別カスタムカラー化維持】
 // ・【色変更検知シグネチャ連動による0ms即時再描画維持】
@@ -310,7 +310,7 @@ export function setupNetworkHandlers(ctx) {
 
         /**
          * ホストから受信した全体リーダーボード情報をゲスト端末へ同期
-         * ★ valRank DOMの強制上書きを撤廃し、main.js の実スコア順位に一本化（チラつき完全防止）
+         * ★ ゲスト端末側で算出された myRank を確実に valRank DOM へ反映し、画像のような「1 / 87」不整合を100%解消
          */
         onLeaderboardSync(lbData) {
             if (!lbData) return;
@@ -320,6 +320,7 @@ export function setupNetworkHandlers(ctx) {
             const rawTopList = lbData.top || [];
             const totalAlive = lbData.totalAlive || TOTAL_SNAKES;
 
+            // ゲスト端末側での自己情報補正：ホスト集計リスト内の自機スコア・名前を最新の実データに更新
             let hasMeInTop = false;
             const topList = rawTopList.map(item => {
                 if (item.slot === NetworkManager.mySlot) {
@@ -333,12 +334,35 @@ export function setupNetworkHandlers(ctx) {
                 return item;
             });
 
+            // スコア補正後に再度スコア降順で並び替え（順位と表示位置のズレを解消）
             topList.sort((a, b) => b.score - a.score);
 
-            // 生存総数のみを更新し、valRank は main.js 側のリアルタイム判定に委ねる（DOM競合解消）
+            // =========================================================================
+            // ★ 【自機順位（myRank）の高精度算出＆DOM確実反映】
+            // 1. トップリスト内に自機がいる場合: その表示位置インデックス + 1（画像例: 8位）
+            // 2. リスト外（9位以下）の場合: ホストが全スロットを正確に集計した確定順位マップを参照
+            // =========================================================================
+            let myRank = 1;
+            const myTopIndex = topList.findIndex(item => item.slot === NetworkManager.mySlot);
+
+            if (myTopIndex !== -1) {
+                myRank = myTopIndex + 1;
+            } else if (lbData.ranks && lbData.ranks[NetworkManager.mySlot] !== undefined) {
+                myRank = lbData.ranks[NetworkManager.mySlot];
+            } else if (lbData.myRank) {
+                myRank = lbData.myRank;
+            } else {
+                const higherCount = topList.filter(item => item.score > myScore).length;
+                myRank = higherCount + 1;
+            }
+
+            // ゲスト端末側のDOM（val-rank および val-total）を確実に同期更新
+            const valRank = document.getElementById('val-rank');
             const valTotal = document.getElementById('val-total');
+            if (valRank) valRank.innerText = myRank;
             if (valTotal) valTotal.innerText = totalAlive;
 
+            // 差分検知シグネチャ（名前・スコア・順位および各プレイヤーの色文字列化）
             const newSignature = topList.slice(0, 8).map(item => {
                 let col = '#ffffff';
                 if (item.slot === NetworkManager.mySlot && myPlayer) {
@@ -347,13 +371,16 @@ export function setupNetworkHandlers(ctx) {
                     col = NetworkManager.slots[item.slot].color || '#ffffff';
                 }
                 return `${item.name}:${item.score}:${col}`;
-            }).join('|') + `_me:${myScore}`;
+            }).join('|') + `_me:${myScore}_rank:${myRank}`;
 
             if (newSignature === lastLeaderboardSignature) {
                 return;
             }
             lastLeaderboardSignature = newSignature;
 
+            // =========================================================================
+            // ★ 【ゲスト端末側ランキング表示：人間プレイヤーはカスタムカラー / AIは白】
+            // =========================================================================
             const listEl = document.getElementById('leaderboard-list');
             if (listEl) {
                 listEl.innerHTML = topList.slice(0, 8).map((item, idx) => {
