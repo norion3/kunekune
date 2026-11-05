@@ -1,11 +1,15 @@
 // ==============================================================================
 // 『くねくねバトル オンライン』Phase 7 マスター統合オーケストレーター (main.js)
-// v52.0.0 リモート走者バックステップ二重減算撤廃＆滑らかLerp追従版:
-// ・【リモート走者のバックステップ二重減算撤廃（他プレイヤー痙攣完全根絶）】
-// 　remoteSnakes.forEach 内で未来予測Lerp追従を行った直後、前進量を過剰に引き戻していた
-// 　remote.x -= Math.cos(...) / remote.y -= Math.sin(...) を完全撤廃！
-// 　他プレイヤーが前進するたびにピクピクと後退・振動するジッター現象を100%物理根絶し、
-// 　ヌルヌルとした滑らかな走行描画を実現
+// v53.0.0 撃破通知多重発火完全根絶＆被撃破自己判定同報一本化版:
+// ・【ホスト側 onAIKilledByGuest 内の重複 Danmaku.push 撤廃】
+// 　ゲスト端末がAIを撃破した際、すでに broadcastKill（KILL_ALERT）によってホスト含む
+// 　全員へ通知が届いているため、onAIKilledByGuest 内にあった2回目の Danmaku.push を削除！
+// 　ホスト端末で同一のAI撃破チャットが2連続で流れる問題を100%物理根絶
+// ・【対人戦（PvP）撃破同報（broadcastKill）の被害者自己判定一本化】
+// 　人間同士の対戦において、キラー側・被害者側の双方がほぼ同時に broadcastKill を
+// 　二重送信していた仕様を是正。「倒された本人（victim.isPlayer）」側のみが公式に
+// 　KILL_ALERT を発行する設計へ一本化し、ルーム全体での通知二重発火を完全根絶
+// ・【リモート走者のバックステップ二重減算撤廃（他プレイヤー痙攣完全根絶）維持】
 // ・【直近キル座標キャッシュ（recentlyKilledPositions）配備維持】
 // ・【ゲストキルAIホスト即時確定RPC（sendAIKill）連携維持】
 // ・【直近キルAIの遅延ゾンビ復活完全ブロックガード（recentlyKilledAISlots）維持】
@@ -556,6 +560,7 @@ NetworkManager.setCallbacks({
     // ★ 【ゲスト端末によるAI撃破確定ハンドラ（ホスト専用）】
     // ゲスト端末が敵AIを撃破した確定通知を受信し、ホスト側の該当AIを即死確定させて
     // 正規肉片クラスタを発行。ゲスト画面での頭だけ無敵ゾンビ復活を完全防止
+    // ※ 重複していた Danmaku.push を削除し、KILL_ALERT 側の通知に一本化
     // =========================================================================
     onAIKilledByGuest(aiSlot, killerName) {
         if (!NetworkManager.isHost || !NetworkManager.isMultiplayerActive) return;
@@ -587,8 +592,6 @@ NetworkManager.setCallbacks({
                 dropCount,
                 safeColorIdx
             );
-
-            Danmaku.push(killerName, `${targetAI.name} を撃破！`, '#38bdf8');
         }
     }
 });
@@ -891,14 +894,24 @@ function gameLoop() {
 
                 if (isKillerHuman || isVictimHuman) {
                     const killColor = killer.color || '#ff3366';
-                    Danmaku.push(killer.name, `${victim.name} を撃破！`, killColor);
 
-                    if (NetworkManager.isMultiplayerActive && typeof NetworkManager.broadcastKill === 'function') {
-                        let victimSlot = null;
-                        if (victim.isPlayer) {
-                            victimSlot = NetworkManager.mySlot;
-                        }
+                    // =========================================================================
+                    // ★ 【撃破同報の多重発火防止：被撃破側（自己判定）一本化】
+                    // 対人戦において勝者・敗者双方が broadcastKill を送り合ってチャットが二重に
+                    // 流れるのを防ぐため、被撃破側（victim.isPlayer）または被害者がAIの場合のみ送信
+                    // =========================================================================
+                    const shouldBroadcast = NetworkManager.isMultiplayerActive && 
+                        typeof NetworkManager.broadcastKill === 'function' &&
+                        (victim.isPlayer || !isVictimHuman);
+
+                    if (shouldBroadcast) {
+                        let victimSlot = victim.isPlayer ? NetworkManager.mySlot : null;
                         NetworkManager.broadcastKill(killer.name, victim.name, killColor, victimSlot !== null ? Number(victimSlot) : null);
+                    }
+
+                    // 弾幕表示：自機が被害者、または自機がAIを倒したローカル先行時のみ即時表示（PvPの他者通知はKILL_ALERT経由）
+                    if (!NetworkManager.isMultiplayerActive || victim.isPlayer || (killer.isPlayer && !isVictimHuman)) {
+                        Danmaku.push(killer.name, `${victim.name} を撃破！`, killColor);
                     }
                 }
             }
