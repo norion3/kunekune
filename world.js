@@ -1,14 +1,15 @@
 // ==============================================================================
 // 『くねくねバトル オンライン』ワールド・動的チャンク餌・決定論的シード生成 (world.js)
-// v44.0.0 撃破肉片最低ドロップ保証＆放射状爆散散布版:
-// ・【撃破肉片の最低ドロップ数保証】
-// 　スポーン直後やワープ直後で historyLength が 0〜1 の敵であっても、
-// 　撃破時に最低6個の肉片生成を必ず保証！生まれたての敵を瞬殺した際に
-// 　残骸が1個も出ない不具合を物理根絶
-// ・【残骸の放射状爆散散布（自機巨大化による即死全吸引の防止）】
-// 　自機がどれほど巨大化していても捕食判定の内側に収まって1フレームで消滅しないよう、
-// 　撃破時に放射状の外側オフセット（半径40〜90px）を付与してパーンと吹き飛ばす演出へ刷新！
-// 　敵を倒した瞬間に残骸が周囲へ飛び散る手応えと爽快感を100%可視化
+// v45.0.0 胴体下敷き回避外側放射爆散＆残骸大盤振る舞い超爽快演出版:
+// ・【自機胴体の下敷き完全回避＆外側放射爆散散布】
+// 　敵が自分の腹（胴体）に激突死した際、巨大化した自機の胴体の真下に残骸が隠れて
+// 　見えなくなる現象を物理根絶！自機の太さを加味した外側爆散距離（半径80〜200px）へ
+// 　勢いよくパーンと飛び散らせることで、敵を倒した瞬間の手応えを100%可視化
+// ・【残骸ドロップ数の大幅増量（最低18個保証）】
+// 　最低ドロップ数を従来の6個から18個（最大45個）へ倍増！
+// 　生まれたての小型敵であっても大量の煌めく肉片が周囲に弾け飛び、圧倒的な爽快感を演出
+// ・【撃破破裂パーティクルの超強化】
+// 　撃破時の光彩パーティクルを18個から32個へ増量し、初速を強化して派手に爆散
 // ・【捕食CCD変位上限二乗値の適正化維持】MAX_CCD_DISPLACEMENT_SQ = 10,000
 // ・【パーティクル配列のFIFOハードキャップ防護維持】MAX_PARTICLES = 300
 // ・【パーティクル完全オブジェクトプール化維持】particlePool（最大512個）
@@ -296,13 +297,17 @@ export class WorldManager {
         const margin = 20;
 
         // =========================================================================
-        // ★ 【撃破肉片の最低ドロップ数保証 ＆ 放射状爆散散布】
-        // 生まれたて・ワープ直後の敵（histLen <= 1）でも最低6個のドロップを保証！
-        // 自機が巨大化していても1フレームで即時全吸引されないよう、
-        // 放射状の外側オフセット（半径40〜90px）を付与して周囲に勢いよく爆散散布
+        // ★ 【自機胴体下敷き完全回避＆残骸大盤振る舞い外側放射爆散】
+        // 1. 最低ドロップ数を18個（最大45個）へ倍増！生まれたてでも豪快な残骸を保証
+        // 2. 自機の巨大な胴体の真下に隠れて見えなくなるのを防ぐため、自機の太さを
+        // 　 加味した外側爆散距離（半径80〜200px）へパーンと吹き飛ばす演出へ刷新
         // =========================================================================
-        const dropCount = Math.max(6, Math.floor(histLen / 2));
-        const baseSize = snake.size || 14;
+        const dropCount = Math.max(18, Math.min(45, Math.floor(histLen * 0.85) + 12));
+        const victimSize = snake.size || 14;
+
+        // 自機のサイズを取得して、自機の胴体の外側にしっかり飛び散る距離を動的算出
+        const localPlayer = (typeof window !== 'undefined' && window.localPlayerInstance) ? window.localPlayerInstance : null;
+        const playerBodyRadius = (localPlayer && !localPlayer.isDead) ? localPlayer.size : 20;
 
         for (let i = 0; i < dropCount; i++) {
             let baseX = snake.x;
@@ -318,9 +323,10 @@ export class WorldManager {
                 }
             }
 
-            // 放射状爆散オフセット（自機の吸引判定を抜ける半径40〜90pxの範囲へ吹き飛ばす）
-            const blastAngle = (i / dropCount) * Math.PI * 2 + (Math.random() - 0.5) * 0.45;
-            const blastDist = Math.max(38, baseSize * 1.6) + Math.random() * 48;
+            // 放射状爆散角度と外側吹き飛ばし距離（自機の胴体の外側へ確実に届かせる）
+            const blastAngle = (i / dropCount) * Math.PI * 2 + (Math.random() - 0.5) * 0.40;
+            const minClearDist = playerBodyRadius * 1.5 + victimSize * 1.2 + 25; // 自機胴体半径の外側
+            const blastDist = minClearDist + Math.random() * 80;
 
             const dropX = Math.max(margin, Math.min(MAP_SIZE - margin, baseX + Math.cos(blastAngle) * blastDist));
             const dropY = Math.max(margin, Math.min(MAP_SIZE - margin, baseY + Math.sin(blastAngle) * blastDist));
@@ -328,8 +334,8 @@ export class WorldManager {
             this.dropFoods.push({
                 x: dropX,
                 y: dropY,
-                size: 7 + Math.random() * 4,
-                val: 18 + Math.random() * 12,
+                size: 7.5 + Math.random() * 4.5,
+                val: 18 + Math.random() * 14,
                 isBig: true,
                 isLargeAura: true,
                 color: snake.color,
@@ -347,14 +353,16 @@ export class WorldManager {
         }
 
         // =========================================================================
-        // ★ 【パーティクル完全オブジェクトプール化（ゼロアロケーション完遂）】
+        // ★ 【撃破破裂パーティクル演出の超強化（32個一斉爆散）】
         // =========================================================================
-        for (let p = 0; p < 18; p++) {
+        for (let p = 0; p < 32; p++) {
+            const pAngle = Math.random() * Math.PI * 2;
+            const pSpeed = 3.0 + Math.random() * 9.0;
             this.particles.push(this._obtainParticle(
                 snake.x,
                 snake.y,
-                (Math.random() - 0.5) * 8,
-                (Math.random() - 0.5) * 8,
+                Math.cos(pAngle) * pSpeed,
+                Math.sin(pAngle) * pSpeed,
                 1.0,
                 snake.color
             ));

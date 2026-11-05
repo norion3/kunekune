@@ -1,11 +1,15 @@
 // ==============================================================================
 // 『くねくねバトル オンライン』スネーク.io型 自律生態系AIマネージャー (ai.js)
-// v38.0.0 生態系ピラミッド型AI成長キャップ版:
-// ・【画面外AIの生態系ピラミッド型仮想成長キャップ】
-// 　一律3,000pt制限を撤廃し、性格別キャップ（ボス級cruiser: 12,000pt、
-// 　中堅hunter/harasser/ambusher: 5,000pt、一般forager/timid: 2,200pt）へ最適化！
-// 　全体の平均ノード数・描画負荷を完全に維持したまま、終盤の巨大怪獣決戦と
-// 　ジャイアントキリングを負荷ゼロで実現
+// v39.0.0 循環スポーン超遠隔化＆リスポーン待機時間適正化版:
+// ・【動的循環スポーン距離の安全域超遠隔化】
+// 　スポーン距離を 4,500〜9,000px から 9,000〜15,000px へ大幅拡張！
+// 　最大ズームアウト時（視界半径約8,000px）でもカメラ視界内にAIが突然出現する
+// 　「目の前ワープ出現・激突」を物理的に完全根絶
+// ・【リスポーン待機時間の適正化（4.0秒）】
+// 　死亡から復活までの時間を 1.25秒 から 4.0秒 へ適正化！
+// 　倒した敵が即座にゾンビのように再襲来するのを防ぎ、残骸回収の安全時間と余韻を確保
+// ・【画面外AIの生態系ピラミッド型仮想成長キャップ維持】
+// 　ボス級cruiser: 12,000pt、中堅hunter/harasser/ambusher: 5,000pt、一般forager/timid: 2,200pt
 // ・【思考用空間グリッドのactiveCells管理＆完全ゼロアロケーション化維持】
 // ・【思考用空間グリッドの毎フレーム確実クリアによるメモリリーク根絶維持】
 // ・【AI思考走査グリッドの動的探索半径化維持】超巨大スネークへの自爆特攻完全防止
@@ -295,8 +299,8 @@ export class AIManager {
         const pY = isPlayerAlive ? player.y : (MAP_SIZE / 2);
         const pAngle = isPlayerAlive ? player.angle : 0;
 
-        // 動的循環スポーン判定用の遠隔閾値（15,000px）
-        const recycleDistSq = 15000 * 15000;
+        // 動的循環スポーン判定用の遠隔閾値（18,000px）
+        const recycleDistSq = 18000 * 18000;
 
         // =========================================================================
         // ★ 【思考走査用グリッドの事前一括マッピング】
@@ -309,15 +313,18 @@ export class AIManager {
             const meta = this.aiMeta[i];
             if (!meta) continue;
 
-            // 死亡中AIのリスポーン処理
+            // =========================================================================
+            // ★ 【死亡中AIのリスポーン待機時間適正化（4.0秒）＆遠隔視界外スポーン】
+            // 倒した敵が即座にゾンビのように再スポーンして襲来するのを防ぎ、残骸回収の安全時間を確保
+            // =========================================================================
             if (ai.isDead) {
                 meta.deadTimer = (meta.deadTimer || 0) + safeDt;
-                if (meta.deadTimer >= 1.25) {
+                if (meta.deadTimer >= 4.0) {
                     meta.deadTimer = 0;
 
-                    // リスポーン位置をプレイヤー視界外の安全な遠隔域へ分散
+                    // リスポーン位置をプレイヤーの最大視界範囲（約8,000px）を確実に超える遠隔域へ配置
                     const ang = Math.random() * Math.PI * 2;
-                    const d = 4500 + Math.random() * 8000;
+                    const d = 9000 + Math.random() * 8000;
                     const rx = Math.max(400, Math.min(MAP_SIZE - 400, pX + Math.cos(ang) * d));
                     const ry = Math.max(400, Math.min(MAP_SIZE - 400, pY + Math.sin(ang) * d));
                     ai.reset(rx, ry);
@@ -347,12 +354,16 @@ export class AIManager {
                 meta.panicCooldown = Math.max(0, meta.panicCooldown - timeScale);
             }
 
-            // 【動的循環スポーン（過疎化防止 ＆ 絶妙な交戦密度ループ）】
+            // =========================================================================
+            // ★ 【動的循環スポーン距離の安全域超遠隔化（9,000〜15,000px）】
+            // ズームアウト時の最大視界範囲（約8,000px）の外側へ確実にスポーンさせることで、
+            // プレイヤーの目の前に突然AIが出現・ワープ激突する理不尽現象を物理根絶！
+            // =========================================================================
             if (isPlayerAlive && !ai.isVisible && (frameCount + i) % 60 === 0) {
                 const distToPlayerSq = (ai.x - pX) ** 2 + (ai.y - pY) ** 2;
                 if (distToPlayerSq > recycleDistSq) {
                     const forwardBiasAngle = pAngle + (Math.random() - 0.5) * Math.PI * 1.5;
-                    const spawnDist = 4500 + Math.random() * 4500;
+                    const spawnDist = 9000 + Math.random() * 6000; // 視界外（9,000〜15,000px）
                     const nx = Math.max(400, Math.min(MAP_SIZE - 400, pX + Math.cos(forwardBiasAngle) * spawnDist));
                     const ny = Math.max(400, Math.min(MAP_SIZE - 400, pY + Math.sin(forwardBiasAngle) * spawnDist));
 
