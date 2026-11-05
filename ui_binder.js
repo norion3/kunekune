@@ -1,7 +1,12 @@
 // ==============================================================================
 // 『くねくねバトル オンライン』UIイベントバインダーモジュール (ui_binder.js)
-// v31.0.0 顔・マイアイコン即時マルチ同期＆カラー・無敵シールド完全調和版:
-// ・【顔・マイアイコン即時マルチ同期】
+// v32.0.0 ユーザー送信チャットバッジ色メニューカスタムカラー完全連動版:
+// ・【ユーザー送信チャットのバッジ色カスタムカラー完全連動】
+// 　メニューまたはチャット入力欄からユーザーが発言した際、Danmaku.push に渡す
+// 　badgeColor の解決ロジックを刷新！Menu.selectedColor を絶対最優先で参照し、
+// 　メニューで選択した最新のカスタムカラーが自分の画面でも100%確実に即座に
+// 　バッジ枠・背景色として反映される連携を確立
+// ・【顔・マイアイコン即時マルチ同期維持】
 // 　Menu.init コールバック内で顔や色の変更が行われた際、自機 player.face / color
 // 　だけでなく NetworkManager.slots[mySlot].face / color を即時更新！
 // 　ホスト時は ROOM_MEMBERS_SYNC を一斉同報し、ホスト・ゲスト問わず
@@ -17,6 +22,8 @@
 // ==============================================================================
 
 import { Menu } from './menu.js';
+import { Danmaku } from './danmaku.js';
+import { SNAKE_COLORS } from './constants.js';
 
 /**
  * ズームボタンのdisabled状態を倍率に応じて更新
@@ -297,7 +304,62 @@ export function initUIBindings(ctx) {
         }
     });
 
-    // 10. リザルト画面：リトライボタン（直接リスポーン再戦化＆貫通防止＆300ms適正デバウンス）
+    // =========================================================================
+    // 10. ★ 【メニュー/HUDチャット送信バインド（カスタムカラーバッジ完全連動）】
+    // ユーザー自身がチャットを打った際、Menu.selectedColor を絶対最優先で参照して
+    // 画面を流れる自機チャットのバッジ色を最新のカスタムカラーへ100%確実に反映
+    // =========================================================================
+    const chatInput = document.getElementById('chat-input');
+    const chatSendBtn = document.getElementById('btn-chat-send');
+
+    const handleSendChat = () => {
+        if (!chatInput) return;
+        const text = chatInput.value.trim();
+        if (!text) return;
+
+        const p = getPlayer();
+        const resolvedName = (p && p.name) ? p.name : ((NetworkManager && NetworkManager.myUser && NetworkManager.myUser.name !== 'あなた') ? NetworkManager.myUser.name : 'あなた');
+
+        // ★ バッジ色を Menu.selectedColor 最優先で解決
+        let myBadgeColor = '#00e5ff';
+        if (Menu && Menu.selectedColor) {
+            myBadgeColor = Menu.selectedColor;
+        } else if (p && p.color) {
+            myBadgeColor = p.color;
+        } else if (NetworkManager && NetworkManager.slots && NetworkManager.slots[NetworkManager.mySlot] && NetworkManager.slots[NetworkManager.mySlot].color) {
+            myBadgeColor = NetworkManager.slots[NetworkManager.mySlot].color;
+        } else if (NetworkManager) {
+            myBadgeColor = SNAKE_COLORS[NetworkManager.mySlot % SNAKE_COLORS.length];
+        }
+
+        // 1. 自端末画面へカスタムカラーのバッジで即時弾幕を流す
+        Danmaku.push(resolvedName, text, myBadgeColor);
+
+        // 2. マルチプレイ中の場合、他端末へチャットパケットをキューイング
+        if (NetworkManager && NetworkManager.isMultiplayerActive && typeof NetworkManager.queueChat === 'function') {
+            NetworkManager.queueChat(NetworkManager.mySlot, text);
+        }
+
+        chatInput.value = '';
+        chatInput.blur();
+    };
+
+    if (chatSendBtn && !chatSendBtn._hasChatBound) {
+        chatSendBtn._hasChatBound = true;
+        bindFastTap(chatSendBtn, handleSendChat);
+    }
+
+    if (chatInput && !chatInput._hasChatKeyBound) {
+        chatInput._hasChatKeyBound = true;
+        chatInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                handleSendChat();
+            }
+        });
+    }
+
+    // 11. リザルト画面：リトライボタン（直接リスポーン再戦化＆貫通防止＆300ms適正デバウンス）
     const btnRetry = document.getElementById('btn-retry');
     if (btnRetry && !btnRetry._hasRetryBound) {
         btnRetry._hasRetryBound = true;
