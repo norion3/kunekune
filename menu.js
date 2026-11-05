@@ -1,12 +1,15 @@
 /**
  * ==============================================================================
  * 『くねくねバトル オンライン』ボトムシートメニュー (menu.js)
- * v29.0.0 プレイヤ表記＆ソロ・マルチ表示完全切り分け版:
- * ・【「プレイヤ」表記への刷新＆ソロ・マルチ表示完全切り分け】
- * 　1人で遊ぶ場合（ソロプレイ）はタブを「👥 プレイヤ (1/1)」とし、自機1行のみを
- * 　スマートに表示（他人がいないためHOSTバッジおよび空き枠は全非表示）
- * 　マルチプレイ時は全6枠を表示し、空き枠を「プレイヤ X (空き枠)」「+」「○ 募集中」
- * 　へ刷新してゲーム世界観と完全調和
+ * v30.0.0 メニュー定型文＆チャットバッジ色カスタムカラー完全連動版:
+ * ・【定型文チャット（chat-chip）バッジ色のカスタムカラー完全連動】
+ * 　「よろしく！」「ごめんね！」等の定型文チップをタップした際、自画面の Danmaku.push
+ * 　へ渡す badgeColor をシアン（#00e5ff）固定ではなく、Menu.selectedColor / player.color
+ * 　を絶対最優先で解決して投入！自機が黄色・ピンクなど選んだ色と寸分違わず一致した
+ * 　バッジ枠・背景で画面上を流れる演出を完全実現
+ * ・【自由入力チャット（#btn-send-chat）バッジ色のカスタムカラー完全連動】
+ * ・【マルチプレイ送信（NetworkManager.queueChat）とローカル弾幕の完全両立】
+ * ・【「プレイヤ」表記への刷新＆ソロ・マルチ表示完全切り分け維持】
  * ・【スマホ画面でのタブ幅1行保持】white-space: nowrap と適正パディングで折り返しを完全防止
  * ・【走者アイコン枠線(淵)のカスタムカラー完全連動維持】
  * ・【自機カスタムカラーの即時優先反映維持】localPlayerInstance.color 優先参照
@@ -213,20 +216,45 @@ export class MenuManager {
         });
     }
 
+    // =========================================================================
+    // ★ 【自機バッジ色解決ヘルパー：メニュー選択カスタムカラーを絶対最優先】
+    // =========================================================================
+    _resolveMyBadgeColor() {
+        if (this.selectedColor) {
+            return this.selectedColor;
+        }
+        const p = (typeof window !== 'undefined' && window.localPlayerInstance) ? window.localPlayerInstance : null;
+        if (p && p.color) {
+            return p.color;
+        }
+        const netMgr = (typeof window !== 'undefined' && window.NetworkManager) ? window.NetworkManager : null;
+        if (netMgr && netMgr.slots && netMgr.slots[netMgr.mySlot] && netMgr.slots[netMgr.mySlot].color) {
+            return netMgr.slots[netMgr.mySlot].color;
+        }
+        return SNAKE_COLORS[0];
+    }
+
     bindChatChips() {
         const chips = document.querySelectorAll('.chat-chip');
         chips.forEach(chip => {
             chip.onclick = (e) => {
                 e.stopPropagation();
                 const text = chip.innerText.trim();
+                if (!text) return;
 
-                // 二重表示の根絶: NetworkManager.queueChat に一本化
+                const myPlayer = (typeof window !== 'undefined' && window.localPlayerInstance) ? window.localPlayerInstance : null;
+                const myName = (myPlayer && myPlayer.name) ? myPlayer.name : 'あなた';
+                const badgeColor = this._resolveMyBadgeColor();
+
+                // 1. 自端末画面へカスタムカラーのバッジで即時弾幕を流す
+                Danmaku.push(myName, text, badgeColor);
+
+                // 2. マルチプレイ中の場合、他端末へパケット送信キューイング
                 if (window.NetworkManager && typeof window.NetworkManager.queueChat === 'function') {
-                    window.NetworkManager.queueChat(text);
-                } else {
-                    const myName = (window.localPlayerInstance && window.localPlayerInstance.name) ? window.localPlayerInstance.name : 'あなた';
-                    Danmaku.push(myName, text, this.selectedColor);
+                    const mySlot = window.NetworkManager.mySlot !== undefined ? window.NetworkManager.mySlot : 0;
+                    window.NetworkManager.queueChat(mySlot, text);
                 }
+
                 this.close();
             };
         });
@@ -242,12 +270,17 @@ export class MenuManager {
             if (text.length > 0) {
                 const safeText = text.slice(0, 15);
 
-                // 二重表示の根絶: NetworkManager.queueChat に一本化
+                const myPlayer = (typeof window !== 'undefined' && window.localPlayerInstance) ? window.localPlayerInstance : null;
+                const myName = (myPlayer && myPlayer.name) ? myPlayer.name : 'あなた';
+                const badgeColor = this._resolveMyBadgeColor();
+
+                // 1. 自端末画面へカスタムカラーのバッジで即時弾幕を流す
+                Danmaku.push(myName, safeText, badgeColor);
+
+                // 2. マルチプレイ中の場合、他端末へパケット送信キューイング
                 if (window.NetworkManager && typeof window.NetworkManager.queueChat === 'function') {
-                    window.NetworkManager.queueChat(safeText);
-                } else {
-                    const myName = (window.localPlayerInstance && window.localPlayerInstance.name) ? window.localPlayerInstance.name : 'あなた';
-                    Danmaku.push(myName, safeText, this.selectedColor);
+                    const mySlot = window.NetworkManager.mySlot !== undefined ? window.NetworkManager.mySlot : 0;
+                    window.NetworkManager.queueChat(mySlot, safeText);
                 }
 
                 inputEl.value = '';

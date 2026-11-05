@@ -1,11 +1,16 @@
 /**
  * ==============================================================================
  * 『くねくねバトル オンライン』ニコニコ風弾幕チャットエンジン (danmaku.js)
- * v27.0.0 直近同一メッセージ重複排除フィルター配備版:
- * ・【直近同一メッセージ重複排除フィルター（recentMessages）配備】
- * 　直近（800ms以内）に流れたメッセージと同一の「送信者＋内容」が届いた場合、
- * 　パケットの重複や他端末からのダブル同報を安全に検知してスキップ！
- * 　敵撃破時・被撃破時・チャット連打時の二重表示を弾幕エンジン層で100%物理根絶
+ * v28.0.0 カスタムカラー完全透過＆ネオンシャドウ連動版:
+ * ・【バッジ色カスタムカラー完全連動（シアン発光上書きの根絶）】
+ * 　従来の style="background-color: badgeColor; border-color: badgeColor;" では、
+ * 　CSS（style.js）に定義された box-shadow: rgba(0, 229, 255, 0.4)（シアン発光）が
+ * 　固定で残り続け、黄色やピンクのバッジを選んでも青白く見えてしまっていた盲点を解消！
+ * 　渡された badgeColor から半透明背景（20%透過）と同一色のネオンシャドウ（box-shadow）
+ * 　を動的にインライン展開し、自機・各走者の選んだカスタムカラーが100%美しく
+ * 　画面上を流れる演出を完全実現
+ * ・【文字可読性保証】半透明背景により白文字（#ffffff）の視認性をクリアに維持
+ * ・【直近同一メッセージ重複排除フィルター（recentMessages）維持】800msデバウンス
  * ・【高空セーフ帯専用レーン配備＆自機死角完全ゼロ維持】
  * 　自機中央（50%）に絶対に被らないよう、上空セーフ帯（18vhコンテナ内）に4分散レーンを集中配備
  * ・【レーン下端自機頭上クリアランス維持】140px以上の視界確保
@@ -93,8 +98,34 @@ export class DanmakuManager {
         if (isSystem) {
             item.innerHTML = `<span class="danmaku-sys-text">${this.escapeHTML(text)}</span>`;
         } else {
+            // =========================================================================
+            // ★ 【カスタムカラー背景半透明化 ＆ 同色ネオンシャドウ動的インライン展開】
+            // CSS側のシアン（#00e5ff）固定発光シャドウを上書きし、プレイヤーが選択した色
+            // （黄色 #fde047、ピンク、緑など）と同色のネオンオーラを美しく展開
+            // =========================================================================
+            let safeColor = badgeColor || '#00e5ff';
+            let bgAlpha = safeColor;
+            let shadowGlow = safeColor;
+
+            if (safeColor.startsWith('#') && safeColor.length === 7) {
+                bgAlpha = `${safeColor}33`;    // 約20%透過背景（白文字がクッキリ読める）
+                shadowGlow = `${safeColor}66`; // 約40%発光ネオンシャドウ
+            } else if (safeColor.startsWith('#') && safeColor.length === 4) {
+                // 3桁HEXの場合 (#abc -> #aabbcc)
+                const r = safeColor[1];
+                const g = safeColor[2];
+                const b = safeColor[3];
+                bgAlpha = `#${r}${r}${g}${g}${b}${b}33`;
+                shadowGlow = `#${r}${r}${g}${g}${b}${b}66`;
+            }
+
             item.innerHTML = `
-                <span class="danmaku-badge" style="background-color: ${badgeColor}; border-color: ${badgeColor};">${this.escapeHTML(senderName)}</span>
+                <span class="danmaku-badge" style="
+                    background-color: ${bgAlpha} !important;
+                    border-color: ${safeColor} !important;
+                    color: #ffffff !important;
+                    box-shadow: 0 0 8px ${shadowGlow} !important;
+                ">${this.escapeHTML(senderName)}</span>
                 <span class="danmaku-content">${this.escapeHTML(text)}</span>
             `;
         }
