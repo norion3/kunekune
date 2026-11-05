@@ -1,15 +1,17 @@
 // ==============================================================================
 // 『くねくねバトル オンライン』Phase 7 マスター統合オーケストレーター (main.js)
-// v49.0.0 クライアント自己判定主義＆不可視AI代理処刑完全根絶版:
-// ・【リモート人間走者の代理処刑完全遮断（クライアント自己判定主義）】
-// 　ホスト画面にのみ存在する未送信AIや通信ラグによって、ゲストプレイヤーが
-// 　何もない空間で突如として即死させられる不具合を100%物理根絶！
-// 　被害者がリモートの人間走者（victim.isHumanPlayer && !victim.isPlayer）である場合、
-// 　他端末（ホスト含む）が勝手にキル判定を下すことを即座にスキップし、
-// 　人間走者の生死は各自の画面（ローカル自機）でのみ判定するネットコードの鉄則を確立
-// ・【被害者スロット（victimSlot）送信の自機限定化】
-// 　broadcastKill において victimSlot を送信するのは自機自身が死亡した時
-// 　（victim.isPlayer）のみに限定し、他端末への誤った強制キル宣告を物理遮断
+// v50.0.0 ゲストキルAIホスト即時確定RPC＆頭だけゾンビAI完全根絶版:
+// ・【ゲストキルAIホスト即時確定RPC（sendAIKill）連携】
+// 　ゲスト端末が敵AIを撃破した瞬間、ホストへ確定通知（sendAIKill）を即座に送信！
+// 　ホスト側でも該当AIを確実に即死させ、正規の肉片クラスタを全端末へ発行
+// ・【直近キルAIの遅延ゾンビ復活完全ブロックガード（recentlyKilledAISlots）】
+// 　ゲスト自機が撃破したAIスロットを一定時間（3.0秒間）保護リストに保持！
+// 　ホストからの遅延生存パケットによって目の前に「頭だけの無敵ゾンビAI」が
+// 　突如出現し自機が即死させられる重大なデシンク現象を100%物理根絶
+// ・【ホスト端末側 onAIKilledByGuest 受信ハンドラ配備】
+// 　ゲストがキルを取ったAIをホスト側でも即座に死亡（die）させ、食物連鎖とスコアを完全同期
+// ・【リモート人間走者の代理処刑完全遮断（クライアント自己判定主義）維持】
+// ・【被害者スロット（victimSlot）送信の自機限定化維持】
 // ・【ゲスト自機キルの先行ローカル肉片ドロップ維持】
 // ・【リトライ時のカスタムカラー・顔の完全維持】
 // ・【ホスト撃破肉片のローカルワールド生成完全復元維持】
@@ -159,6 +161,9 @@ let animFrameId = null;
 let lastFrameTime = Date.now();
 let killerTargetSnake = null;
 
+// ★ ゲスト端末での直近キルAI遅延ゾンビ復活ガード用キャッシュ (slot -> expireTime)
+const recentlyKilledAISlots = new Map();
+
 window.localPlayerInstance = player;
 window.allAISnakesInstance = aiManager.ais;
 window.allSnakesInstance = allSnakes; // ★ net_broadcaster.js の視界保証同期用に全スネーク参照を露出
@@ -302,6 +307,7 @@ export function initGame(isRespawn = false, isExplicitRetry = false) {
     frameCount = 0;
     lastFrameTime = Date.now();
     killerTargetSnake = null;
+    recentlyKilledAISlots.clear();
 
     const spawnX = MAP_SIZE / 2 + (Math.random() - 0.5) * 8000;
     const spawnY = MAP_SIZE / 2 + (Math.random() - 0.5) * 8000;
@@ -518,6 +524,7 @@ NetworkManager.setCallbacks({
 
     onWorldPurged() {
         remoteSnakes.clear();
+        recentlyKilledAISlots.clear();
         if (allSnakes && player) {
             allSnakes.length = 0;
             allSnakes.push(player, ...(aiManager && Array.isArray(aiManager.ais) ? aiManager.ais : []));
@@ -533,6 +540,46 @@ NetworkManager.setCallbacks({
         if (gameState !== 'gameover') {
             console.warn(`[Sync] 相手端末からの死亡通告を受信: キラー「${killerName || '敵スネーク'}」により撃破確定。リトライ画面を表示します。`);
             handleGameOver({ name: killerName || '敵スネーク', isDead: false });
+        }
+    },
+
+    // =========================================================================
+    // ★ 【ゲスト端末によるAI撃破確定ハンドラ（ホスト専用）】
+    // ゲスト端末が敵AIを撃破した確定通知を受信し、ホスト側の該当AIを即死確定させて
+    // 正規肉片クラスタを発行。ゲスト画面での頭だけ無敵ゾンビ復活を完全防止
+    // =========================================================================
+    onAIKilledByGuest(aiSlot, killerName) {
+        if (!NetworkManager.isHost || !NetworkManager.isMultiplayerActive) return;
+
+        let targetAI = null;
+        if (aiSlot < MAX_PLAYERS) {
+            const dummyId = MAX_AIS + aiSlot + 1;
+            targetAI = allSnakes.find(s => !s.isPlayer && s.id === dummyId);
+        } else {
+            const originalId = aiSlot - MAX_PLAYERS + 1;
+            targetAI = aiManager.ais.find(s => s.id === originalId);
+        }
+
+        if (targetAI && !targetAI.isDead) {
+            console.log(`[HostSync] ゲスト「${killerName}」によるAI撃破確定を受信: ${targetAI.name} (Slot: ${aiSlot}) を即死処理します`);
+            targetAI.die();
+            targetAI._hasBeenKilled = true;
+            world.spawnDeathDrop(targetAI);
+
+            const colorIdx = SNAKE_COLORS.indexOf(targetAI.color);
+            const safeColorIdx = colorIdx >= 0 ? colorIdx : 0;
+            const dropCount = Math.min(30, Math.max(10, Math.floor((targetAI.historyLength || 16) / 2)));
+            const totalVal = Math.min(2500, Math.max(100, Math.floor(targetAI.score * 0.25)));
+
+            NetworkManager.queueDropCluster(
+                targetAI.x,
+                targetAI.y,
+                totalVal,
+                dropCount,
+                safeColorIdx
+            );
+
+            Danmaku.push(killerName, `${targetAI.name} を撃破！`, '#38bdf8');
         }
     }
 });
@@ -643,6 +690,21 @@ function gameLoop() {
         }
 
         remoteSnakes.forEach((remote, slotIdx) => {
+            // =========================================================================
+            // ★ 【ゲスト端末での直近キルAI遅延ゾンビ復活ガード】
+            // ゲスト自機が撃破したAIについて、ホストから遅れて生存パケットが届いても
+            // 3.0秒間は強制的に死亡状態（isDead = true, invulnerableTimer = 0）を死守！
+            // =========================================================================
+            const killExpire = recentlyKilledAISlots.get(slotIdx);
+            if (killExpire) {
+                if (performance.now() < killExpire) {
+                    remote.isDead = true;
+                    remote.invulnerableTimer = 0;
+                } else {
+                    recentlyKilledAISlots.delete(slotIdx);
+                }
+            }
+
             if (remote.isDead) return;
 
             if (NetworkManager.isMultiplayerActive) {
@@ -818,6 +880,17 @@ function gameLoop() {
                 );
             } else if (isGuestLocalKill) {
                 world.spawnDeathDrop(victim); // ゲスト自機キルの先行ローカルドロップ！
+
+                // =========================================================================
+                // ★ 【ゲストキルAIのホスト確定RPC送信＆遅延ゾンビ復活防止ガード登録】
+                // 撃破したAIスロットを3.0秒間保護し、ホストへ確定通告（sendAIKill）を送信！
+                // =========================================================================
+                if (victim.id !== undefined) {
+                    recentlyKilledAISlots.set(victim.id, performance.now() + 3000);
+                    if (typeof NetworkManager.sendAIKill === 'function') {
+                        NetworkManager.sendAIKill(victim.id, killer.name);
+                    }
+                }
             }
 
             if (killer && !killer.isDead) {

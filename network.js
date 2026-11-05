@@ -1,16 +1,14 @@
 // ==============================================================================
 // 『くねくねバトル オンライン』AgentSDK公式マルチプレイ通信マネージャー (network.js)
-// v38.0.0 ホスト昇格時Slot 0競合タイブレーカー＆スロット競合完全防止版:
-// ・【ホスト昇格時Slot 0競合タイブレーカー（Host Duelデッドロック完全根絶）】
-// 　旧ホスト退出時に複数ゲストがほぼ同時にタイムアウトを検知して promoteToHost() を
-// 　実行した場合でも、clientId（または senderId）の確定的辞書順比較（タイブレーカー）により、
-// 　どちらか一方が必ずサレンダーして NetBroadcaster を即時停止・新ホストのスロット同期待機へ移行！
-// 　双方が Slot 0 を名乗り続けて世界線が分岐し続けるスプリットブレインデッドロックを100%物理根絶
+// v39.0.0 ゲストキルAIホスト即時確定RPC(AI_KILL)＆ゾンビ復活完全防止版:
+// ・【ゲストキルAIホスト即時確定RPC（sendAIKill）の配備】
+// 　ゲスト端末が敵AIを撃破した際、ホストへ確定通知（e: 'AI_KILL'）を即時送信！
+// 　ホスト側の世界線でも該当AIを確実に即死（die）させ、正規の肉片クラスタを発行。
+// 　ホストから「AI生存」パケットが送り返されてゲスト画面に頭だけの無敵ゾンビAIが
+// 　突如出現し即死させられる重大な通信デシンクを100%物理根絶
+// ・【ホスト昇格時Slot 0競合タイブレーカー維持】辞書順比較によるサレンダー解決
 // ・【スプリットブレイン降格時送信ロックアウト機構維持】
-// 　ホストがゲストへサレンダー降格した瞬間、パケット送信（NetBroadcaster）を即時停止！
-// 　新ホストから ROOM_MEMBERS_SYNC を受信して自機の新スロット番号が正式確定するまでの間、
-// 　古いスロット番号でパケットを送り続けて世界線を破壊するID競合バグを100%物理根絶
-// ・【新スロット番号確定時の送信自律復帰維持】ROOM_MEMBERS_SYNC 受信時に安全に送信再開
+// ・【新スロット番号確定時の送信自律復帰維持】
 // ・【空き枠ダミーAIのCPU完全統一命名維持】CPU 96〜100
 // ・【ホスト昇格時のSlot 0引越し＆元スロット解放維持】
 // ・【START_GAME ゲームオーバー中完全遮断維持】
@@ -155,7 +153,8 @@ export const NetworkManager = {
         onUserExited: null,
         onSurrenderedAsHost: null, // スプリットブレイン降格時のAIパージ用コールバック
         onWorldPurged: null,       // 再入室・ルーム遷移時のローカルゴースト走者完全消去コールバック
-        onPlayerKilled: null       // 被撃破検知（相手端末によるキル確定）コールバック
+        onPlayerKilled: null,      // 被撃破検知（相手端末によるキル確定）コールバック
+        onAIKilledByGuest: null    // ★ ゲスト端末によるAI撃破確定コールバック
     },
 
     setCallbacks(cb) {
@@ -209,6 +208,20 @@ export const NetworkManager = {
             vn: victimName,
             col: color,
             vs: victimSlot,
+            senderId: this.clientId
+        });
+    },
+
+    // =========================================================================
+    // ★ 【ゲストキルAIホスト即時確定RPC】
+    // ゲスト端末が敵AIを撃破した際、ホスト端末へ該当AIの死亡確定を通知
+    // =========================================================================
+    sendAIKill(aiSlot, killerName) {
+        if (!this.isMultiplayerActive || this.isHost || this._isSurrenderLocked) return;
+        this._sendCustomMessage({
+            e: 'AI_KILL',
+            slot: aiSlot,
+            kn: killerName,
             senderId: this.clientId
         });
     },
@@ -856,6 +869,17 @@ export const NetworkManager = {
                     if (this.callbacks.onPlayerKilled) {
                         this.callbacks.onPlayerKilled(packet.kn);
                     }
+                }
+                return;
+            }
+
+            // =========================================================================
+            // ★ 【ゲストキルAI確定通知受信ハンドラ（ホスト専用）】
+            // ゲスト端末が敵AIを撃破した確定通知を受信し、ホスト側の世界線で該当AIを即死確定
+            // =========================================================================
+            if (eventType === 'AI_KILL' && this.isHost) {
+                if (packet.slot !== undefined && this.callbacks.onAIKilledByGuest) {
+                    this.callbacks.onAIKilledByGuest(packet.slot, packet.kn || 'ゲスト');
                 }
                 return;
             }
