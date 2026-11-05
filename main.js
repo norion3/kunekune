@@ -1,15 +1,16 @@
 // ==============================================================================
 // 『くねくねバトル オンライン』Phase 7 マスター統合オーケストレーター (main.js)
-// v46.0.0 身代わり即死完全根絶＆ゴーストAI視界保証同期連携版:
-// ・【新入室プレイヤーの身代わり即死（誤爆キル）完全根絶】
-// 　撃破同報処理において、空き枠ダミーAI（CPU 96〜100）撃破時のスロット番号送信を撤廃！
-// 　真の人間プレイヤー（isPlayer または isHumanPlayer === true）が撃破された時のみ
-// 　スロット番号を相手端末へ通知し、ダミーAI撃破時は victimSlot = null を送信。
-// 　空き枠へ入室した直後の新プレイヤーが理不尽に即死するバグを100%物理遮断
-// ・【ゴーストAI視界保証同期の完全復元】
-// 　net_broadcaster.js が参照する全スネークインスタンスへの参照（window.allSnakesInstance）
-// 　をグローバルへ確実に露出！ゲストプレイヤーの近傍にいるAIが優先同期リストへ
-// 　確実に組み込まれるようになり、ゲスト画面でのゴーストAI（透明化・壁抜け）を根絶
+// v47.0.0 リトライ時カスタムカラー維持＆ホスト撃破肉片ローカルドロップ完全復元版:
+// ・【リトライ時のカスタムカラー・顔の完全維持】
+// 　initGame 実行時、スロットのデフォルト色による強制上書きを撤廃！
+// 　メニューで選択された最新のカスタムカラー（Menu.selectedColor）および表情
+// 　（Menu.selectedFace）を保持・適用し、リトライ時に色が元に戻る不具合を完全解消
+// ・【ホスト撃破肉片のローカルワールド生成完全復元】
+// 　マルチプレイホスト時の撃破判定において、ゲストへのクラスタ同報だけでなく
+// 　ホスト自身のローカルワールド（world.spawnDeathDrop）へも確実に肉片を生成！
+// 　敵を倒した瞬間に肉片が消滅せず、その場に大量の餌がドロップするよう完全修正
+// ・【新入室プレイヤーの身代わり即死（誤爆キル）完全根絶維持】
+// ・【ゴーストAI視界保証同期の完全復元維持】
 // ・【人間撃破判定の厳格化による誤チャット完全根絶維持】
 // ・【リーダーボードパケットのリモート人間プレイヤースロット番号死守維持】
 // ・【リモート追従ワープ判定閾値の適正化維持】250px（62,500）
@@ -309,14 +310,35 @@ export function initGame(isRespawn = false, isExplicitRetry = false) {
         : (NetworkManager.myUser && NetworkManager.myUser.name !== 'あなた' ? NetworkManager.myUser.name : 'あなた');
 
     player.name = resolvedPlayerName;
-    player.color = SNAKE_COLORS[NetworkManager.mySlot % SNAKE_COLORS.length];
+
+    // =========================================================================
+    // ★ 【リトライ時のカスタムカラー＆顔の完全維持】
+    // スロットのデフォルト色による強制上書きを撤廃し、メニューで選択した
+    // 最新の色・顔（Menu.selectedColor / Menu.selectedFace）を確実に適用
+    // =========================================================================
+    const customColor = (Menu && Menu.selectedColor) 
+        ? Menu.selectedColor 
+        : (player.color || SNAKE_COLORS[NetworkManager.mySlot % SNAKE_COLORS.length]);
+    const customFace = (Menu && Menu.selectedFace) 
+        ? Menu.selectedFace 
+        : (player.face || 'normal');
+
+    player.color = customColor;
+    player.face = customFace;
     player.id = NetworkManager.mySlot;
+
+    if (NetworkManager.slots && NetworkManager.slots[NetworkManager.mySlot]) {
+        NetworkManager.slots[NetworkManager.mySlot].color = customColor;
+        NetworkManager.slots[NetworkManager.mySlot].face = customFace;
+    }
 
     if (!NetworkManager.isMultiplayerActive) {
         NetworkManager.slots[0].userId = NetworkManager.myUser.user_id;
         NetworkManager.slots[0].name = resolvedPlayerName;
         NetworkManager.slots[0].portrait = NetworkManager.myUser.portrait || '';
         NetworkManager.slots[0].isAI = false;
+        NetworkManager.slots[0].color = customColor;
+        NetworkManager.slots[0].face = customFace;
     }
 
     if (!isRespawn) {
@@ -754,9 +776,15 @@ function gameLoop() {
                 return;
             }
 
+            // =========================================================================
+            // ★ 【撃破肉片ドロップ：ホスト端末ローカルワールド生成完全復元】
+            // ソロ時だけでなく、マルチプレイホスト時も自端末の world.spawnDeathDrop を確実に発火！
+            // =========================================================================
             if (!NetworkManager.isMultiplayerActive) {
                 world.spawnDeathDrop(victim);
             } else if (NetworkManager.isHost) {
+                world.spawnDeathDrop(victim); // ホスト画面のローカルワールドにも確実に肉片をドロップ！
+
                 const colorIdx = SNAKE_COLORS.indexOf(victim.color);
                 const safeColorIdx = colorIdx >= 0 ? colorIdx : 0;
                 const dropCount = Math.min(30, Math.max(10, Math.floor((victim.historyLength || 16) / 2)));
