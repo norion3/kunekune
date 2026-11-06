@@ -1,21 +1,19 @@
 /**
  * ==============================================================================
  * 『くねくねバトル オンライン』一体型HUD ＆ 自機中心相対追従レーダー (hud.js)
- * v31.0.0 MAP上1〜3位王冠表示（金銀銅・自機除外・自機マーク不変）完全統合版:
- * ・【MAP上1〜3位（Top 3）王冠マーク表示＆金銀銅色分け】
- * 　全体1〜3位のスネーク（AI・人間問わず）を特定し、専用の王冠マークで位置・方向を表示！
- * 　順位に応じて「1位：純金ゴールド(#fde047)」「2位：白銀プラチナ(#f1f5f9)」「3位：青銅ブロンズ(#fb923c)」
- * 　へ色分けし、他走者やAI赤ドット群と完全に差別化された最高峰の視認性を確立
- * ・【自機除外ルール＆王冠表示数の動的整合】
- * 　自機（player）が1〜3位にランクインしている場合、自機自身には王冠を表示せず、
- * 　画面上の王冠数は他者のみの「2つ」へ自動収束（自機が4位以下のときは3つ表示）。
- * 　ホスト・ゲスト各端末視点で自分以外の真の王者を公平に把握可能
- * ・【自機中心マークの完全不変性維持】
- * 　レーダー中心の自機マーク（カスタムカラーコア、白リング、黄色コンパス矢印）は
- * 　順位に関わらず一切変更せず、従来の優れた操作性・基準点を100%維持
+ * v32.0.0 WebKit shadowBlur消失バグ完全根絶＆多重パスグロー安定化版:
+ * ・【WebKit Canvas shadowBlurクラッシュの完全根絶（多重パスグロー回帰）】
+ * 　iOS WebKit（iPhone WebView）特有のGPUオフスクリーンCanvas消失バグを引き起こす
+ * 　ctx.shadowBlur / ctx.shadowColor を完全撤廃！
+ * 　マスターコード本来の設計である純粋ベクター多重パス（拡大半透明オーラ＋本体塗り）
+ * 　へと回帰することで、MAP（ミニマップ）消失問題を100%物理解決し、美しく輝く金銀銅王冠を完全両立
+ * ・【NaN / 不正座標の完全遮断バリデーション配備】
+ * 　相手スネークの座標（s.x, s.y）が有限数（isFinite）でない場合の描画を安全にスキップし、
+ * 　Canvas変換行列（Transform Matrix）の破壊による画面消失を完全防護
+ * ・【エンティティ存在チェック（!s ガード）配備】
+ * 　入退室や破棄直後の null/undefined アクセスによる TypeError 描画中断を根絶
+ * ・【MAP上1〜3位王冠表示（金銀銅・自機除外・自機マーク不変）完全維持】
  * ・【1〜3位人間カスタムカラー差し替え＆4位以下完全維持】
- * 　1〜3位にいる人間プレイヤーは王冠マークへ優先差し替え（カスタム色は不適用）。
- * 　4位以下の人間プレイヤーは従来の個別カスタムカラー（▲/パルスリング）を完全維持
  * ・【ランキング同期デッドロックの完全解消維持】toggleRanking連動
  * ・【カスタムカラー即時マルチ同期維持】
  * ・【矢印二重描画の完全根絶維持】
@@ -135,8 +133,8 @@ export class HUDManager {
             const radarRange = Math.max(viewW, viewH) * 4.0;
             const radarRatio = this.radarSize / radarRange;
 
-            const cx = player.x;
-            const cy = player.y;
+            const cx = Number.isFinite(player.x) ? player.x : 0;
+            const cy = Number.isFinite(player.y) ? player.y : 0;
 
             // =========================================================================
             // ★ 【Top 3 絶対順位マッピング ＆ 自機除外判定】
@@ -160,13 +158,13 @@ export class HUDManager {
 
             // 1. トップエネミーの抽出（スコア上位5体）
             this.topEnemyCount = 0;
-            const targetMinScore = player.score * 1.15;
+            const targetMinScore = (player.score || 0) * 1.15;
 
             if (otherEntities && otherEntities.length > 0) {
                 const len = otherEntities.length;
                 for (let i = 0; i < len; i++) {
                     const s = otherEntities[i];
-                    if (s === player || s.isDead || s.isPlayer || s.score <= targetMinScore) continue;
+                    if (!s || s === player || s.isDead || s.isPlayer || (s.score || 0) <= targetMinScore) continue;
 
                     if (this.topEnemyCount < 5) {
                         this.topEnemiesPool[this.topEnemyCount++] = s;
@@ -198,7 +196,11 @@ export class HUDManager {
                 const totalEntities = otherEntities.length;
                 for (let i = 0; i < totalEntities; i++) {
                     const s = otherEntities[i];
-                    if (s === player || s.isDead) continue; // ★ 自機は絶対に描画スキップ
+                    // ★ エンティティ存在・死亡・自機安全ガード
+                    if (!s || s === player || s.isDead) continue;
+
+                    // ★ 有限数バリデーション（NaN による Transform Matrix 破壊を完全遮断）
+                    if (!Number.isFinite(s.x) || !Number.isFinite(s.y)) continue;
 
                     const dx = s.x - cx;
                     const dy = s.y - cy;
@@ -208,6 +210,7 @@ export class HUDManager {
                     // =========================================================================
                     // ★ 【最優先：1〜3位（Top 3）王冠マーク描画（金・銀・銅）】
                     // 人間・AI問わず共通の王冠マークを描画し、カスタムカラーは上書き遮断
+                    // ※ WebKitバグ回避のため shadowBlur は完全撤廃し多重ベクターパスで発光を再現
                     // =========================================================================
                     const crownRank = top3Map.get(s);
                     if (crownRank !== undefined && crownRank >= 1 && crownRank <= 3) {
@@ -222,6 +225,22 @@ export class HUDManager {
                             rCtx.translate(drawX, drawY);
                             rCtx.scale(pulseScale, pulseScale);
 
+                            // 1. 背後の半透明グローオーラ（shadowBlur 不使用・WebKit安全）
+                            rCtx.beginPath();
+                            rCtx.moveTo(-6.5, 4.0);
+                            rCtx.lineTo(-6.5, -3.0);
+                            rCtx.lineTo(-3.0, 1.0);
+                            rCtx.lineTo(0, -6.2);
+                            rCtx.lineTo(3.0, 1.0);
+                            rCtx.lineTo(6.5, -3.0);
+                            rCtx.lineTo(6.5, 4.0);
+                            rCtx.closePath();
+                            rCtx.fillStyle = config.glow;
+                            rCtx.globalAlpha = 0.50;
+                            rCtx.fill();
+
+                            // 2. 本体の王冠塗り
+                            rCtx.globalAlpha = 1.0;
                             rCtx.beginPath();
                             rCtx.moveTo(-5.5, 3.2);
                             rCtx.lineTo(-5.5, -2.2);   // 左の山
@@ -231,28 +250,27 @@ export class HUDManager {
                             rCtx.lineTo(5.5, -2.2);    // 右の山
                             rCtx.lineTo(5.5, 3.2);     // 右下
                             rCtx.closePath();
-
                             rCtx.fillStyle = config.fill;
-                            rCtx.shadowColor = config.glow;
-                            rCtx.shadowBlur = 4;
                             rCtx.fill();
 
+                            // 3. 輪郭線
                             rCtx.strokeStyle = '#000000';
                             rCtx.lineWidth = 1.4;
-                            rCtx.shadowBlur = 0;
                             rCtx.stroke();
+
                             rCtx.restore();
                         } else {
                             // ★ レーダー枠外：最外周フチの王冠矢印ポインター
                             const angle = Math.atan2(dy, dx);
+                            if (!Number.isFinite(angle)) continue;
+
                             const cos = Math.cos(angle);
                             const sin = Math.sin(angle);
                             const halfSize = radarCenter - 6.5;
 
-                            const t = Math.min(
-                                Math.abs(halfSize / (cos || 0.0001)),
-                                Math.abs(halfSize / (sin || 0.0001))
-                            );
+                            const denomX = Math.abs(cos) > 0.0001 ? Math.abs(cos) : 0.0001;
+                            const denomY = Math.abs(sin) > 0.0001 ? Math.abs(sin) : 0.0001;
+                            const t = Math.min(halfSize / denomX, halfSize / denomY);
                             const edgeX = radarCenter + cos * t;
                             const edgeY = radarCenter + sin * t;
 
@@ -263,7 +281,23 @@ export class HUDManager {
                             rCtx.rotate(angle);
                             rCtx.scale(breath, breath);
 
-                            // 王冠型ポインター（中央の突起が最も高く相手を指す）
+                            // 1. 背後のネオングローオーラ（拡大パス塗り・WebKit安全）
+                            rCtx.beginPath();
+                            rCtx.moveTo(7.0, 0);
+                            rCtx.lineTo(-1.2, 5.0);
+                            rCtx.lineTo(2.4, 8.0);
+                            rCtx.lineTo(-7.8, 6.2);
+                            rCtx.lineTo(-5.5, 0);
+                            rCtx.lineTo(-7.8, -6.2);
+                            rCtx.lineTo(2.4, -8.0);
+                            rCtx.lineTo(-1.2, -5.0);
+                            rCtx.closePath();
+                            rCtx.fillStyle = config.glow;
+                            rCtx.globalAlpha = 0.50;
+                            rCtx.fill();
+
+                            // 2. 本体カラー（金・銀・銅）
+                            rCtx.globalAlpha = 1.0;
                             rCtx.beginPath();
                             rCtx.moveTo(5.5, 0);          // 中央尖塔（矢印先端）
                             rCtx.lineTo(-1.0, 3.8);       // 谷
@@ -274,19 +308,10 @@ export class HUDManager {
                             rCtx.lineTo(1.8, -6.5);       // 左突起
                             rCtx.lineTo(-1.0, -3.8);      // 谷
                             rCtx.closePath();
-
-                            // グローオーラ
-                            rCtx.fillStyle = config.glow;
-                            rCtx.shadowColor = config.glow;
-                            rCtx.shadowBlur = 6;
-                            rCtx.fill();
-
-                            // 本体カラー（金・銀・銅）
                             rCtx.fillStyle = config.fill;
-                            rCtx.shadowBlur = 0;
                             rCtx.fill();
 
-                            // 黒＋白のダブル輪郭線
+                            // 3. 黒＋白のダブル輪郭線
                             rCtx.strokeStyle = 'rgba(0, 0, 0, 0.95)';
                             rCtx.lineWidth = 1.6;
                             rCtx.stroke();
@@ -348,14 +373,15 @@ export class HUDManager {
                         } else {
                             // ★ レーダー外：最外周フチに【呼吸パルス明滅＆ネオン発光オーラ】付き方向ポインター（▲）を点灯
                             const angle = Math.atan2(dy, dx);
+                            if (!Number.isFinite(angle)) continue;
+
                             const cos = Math.cos(angle);
                             const sin = Math.sin(angle);
                             const halfSize = radarCenter - 6.5;
 
-                            const t = Math.min(
-                                Math.abs(halfSize / (cos || 0.0001)),
-                                Math.abs(halfSize / (sin || 0.0001))
-                            );
+                            const denomX = Math.abs(cos) > 0.0001 ? Math.abs(cos) : 0.0001;
+                            const denomY = Math.abs(sin) > 0.0001 ? Math.abs(sin) : 0.0001;
+                            const t = Math.min(halfSize / denomX, halfSize / denomY);
                             const edgeX = radarCenter + cos * t;
                             const edgeY = radarCenter + sin * t;
 
@@ -410,7 +436,7 @@ export class HUDManager {
                             continue;
                         }
 
-                        const isBigger = s.score > player.score;
+                        const isBigger = (s.score || 0) > (player.score || 0);
                         let isTopEnemy = false;
                         for (let k = 0; k < this.topEnemyCount; k++) {
                             if (this.topEnemiesPool[k] === s) {
@@ -475,7 +501,7 @@ export class HUDManager {
             // ★ 【自機マーク不変性維持】
             // 順位に関わらず自機選択カラー・白リング・黄色コンパス矢印をそのまま維持
             // =========================================================================
-            const pAngle = (player.angle !== undefined) ? player.angle : 0;
+            const pAngle = (player.angle !== undefined && Number.isFinite(player.angle)) ? player.angle : 0;
             const arrowTipDist = 18.0;
             const arrowWingDist = 7.5;
             const arrowWingAngle = 0.45;
