@@ -1,14 +1,13 @@
 /**
  * ==============================================================================
  * 『くねくねバトル オンライン』ニコニコ風弾幕チャットエンジン (danmaku.js)
- * v28.0.0 カスタムカラー完全透過＆ネオンシャドウ連動版:
- * ・【バッジ色カスタムカラー完全連動（シアン発光上書きの根絶）】
- * 　従来の style="background-color: badgeColor; border-color: badgeColor;" では、
- * 　CSS（style.js）に定義された box-shadow: rgba(0, 229, 255, 0.4)（シアン発光）が
- * 　固定で残り続け、黄色やピンクのバッジを選んでも青白く見えてしまっていた盲点を解消！
- * 　渡された badgeColor から半透明背景（20%透過）と同一色のネオンシャドウ（box-shadow）
- * 　を動的にインライン展開し、自機・各走者の選んだカスタムカラーが100%美しく
- * 　画面上を流れる演出を完全実現
+ * v29.0.0 送信者バッジ絵文字・サロゲートペア安全クランプ＆本文可読性保証版:
+ * ・【送信者バッジの長大ネーム・絵文字安全クランプ（チャット本文圧迫防止）】
+ * 　push メソッドにおいて、渡された senderName を Array.from() により
+ * 　絵文字・漢字・特殊文字を1文字として正確にカウントし、最大8文字＋「…」で安全にクランプ！
+ * 　長大なユーザー名を持つプレイヤーの発言時でも、送信者バッジが画面を過度に占有せず
+ * 　右側のメッセージ本文がしっかりと画面内に収まって読める視認性を完全保証
+ * ・【バッジ色カスタムカラー完全連動（シアン発光上書きの根絶）維持】
  * ・【文字可読性保証】半透明背景により白文字（#ffffff）の視認性をクリアに維持
  * ・【直近同一メッセージ重複排除フィルター（recentMessages）維持】800msデバウンス
  * ・【高空セーフ帯専用レーン配備＆自機死角完全ゼロ維持】
@@ -99,6 +98,15 @@ export class DanmakuManager {
             item.innerHTML = `<span class="danmaku-sys-text">${this.escapeHTML(text)}</span>`;
         } else {
             // =========================================================================
+            // ★ 【送信者名の絵文字・サロゲートペア安全クランプ】
+            // 長大な名前でも最大8文字＋「…」に収め、本文の可読スペースを死守
+            // =========================================================================
+            const rawSenderChars = Array.from(String(senderName || ''));
+            const safeSenderName = rawSenderChars.length > 8
+                ? rawSenderChars.slice(0, 8).join('') + '…'
+                : (senderName || '');
+
+            // =========================================================================
             // ★ 【カスタムカラー背景半透明化 ＆ 同色ネオンシャドウ動的インライン展開】
             // CSS側のシアン（#00e5ff）固定発光シャドウを上書きし、プレイヤーが選択した色
             // （黄色 #fde047、ピンク、緑など）と同色のネオンオーラを美しく展開
@@ -125,7 +133,7 @@ export class DanmakuManager {
                     border-color: ${safeColor} !important;
                     color: #ffffff !important;
                     box-shadow: 0 0 8px ${shadowGlow} !important;
-                ">${this.escapeHTML(senderName)}</span>
+                ">${this.escapeHTML(safeSenderName)}</span>
                 <span class="danmaku-content">${this.escapeHTML(text)}</span>
             `;
         }

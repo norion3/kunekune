@@ -1,14 +1,16 @@
 // ==============================================================================
 // 『くねくねバトル オンライン』Phase 7 マスター統合オーケストレーター (main.js)
-// v53.0.0 撃破通知多重発火完全根絶＆被撃破自己判定同報一本化版:
-// ・【ホスト側 onAIKilledByGuest 内の重複 Danmaku.push 撤廃】
-// 　ゲスト端末がAIを撃破した際、すでに broadcastKill（KILL_ALERT）によってホスト含む
-// 　全員へ通知が届いているため、onAIKilledByGuest 内にあった2回目の Danmaku.push を削除！
-// 　ホスト端末で同一のAI撃破チャットが2連続で流れる問題を100%物理根絶
-// ・【対人戦（PvP）撃破同報（broadcastKill）の被害者自己判定一本化】
-// 　人間同士の対戦において、キラー側・被害者側の双方がほぼ同時に broadcastKill を
-// 　二重送信していた仕様を是正。「倒された本人（victim.isPlayer）」側のみが公式に
-// 　KILL_ALERT を発行する設計へ一本化し、ルーム全体での通知二重発火を完全根絶
+// v54.0.0 長大ネーム・絵文字通信バジェット防護＆待機室レイアウト保護版:
+// ・【リーダーボード送信前の長大ネーム・絵文字安全クランプ（通信バジェット防護）】
+// 　NetBroadcaster.setLatestLeaderboard にて送信する上位走者名を Array.from() により
+// 　最大10文字でサロゲートペア安全にクランプ！長大な日本語・漢字・絵文字ネームが複数人並んでも
+// 　パケット容量（1,000B）を圧迫せず、突発的なパケット超過・AI点滅消失を100%未然に防護
+// ・【待機室スロットでの長大ネームによるHOSTバッジ押し出し完全防止】
+// 　updateWaitingMembersList において、waiting-slot-left に min-width: 0; flex: 1; を配備し、
+// 　waiting-slot-name に overflow: hidden; text-overflow: ellipsis; white-space: nowrap; を適用！
+// 　長大なユーザー名でも右端の「HOST」バッジを画面外へ押し出さず美しく収容
+// ・【ホスト側 onAIKilledByGuest 内の重複 Danmaku.push 撤廃維持】
+// ・【対人戦（PvP）撃破同報（broadcastKill）の被害者自己判定一本化維持】
 // ・【リモート走者のバックステップ二重減算撤廃（他プレイヤー痙攣完全根絶）維持】
 // ・【直近キル座標キャッシュ（recentlyKilledPositions）配備維持】
 // ・【ゲストキルAIホスト即時確定RPC（sendAIKill）連携維持】
@@ -288,11 +290,11 @@ export const UIController = {
 
             return `
                 <div class="waiting-slot" style="${s.isAI ? 'opacity: 0.65;' : ''}">
-                    <div class="waiting-slot-left">
+                    <div class="waiting-slot-left" style="min-width: 0; flex: 1; overflow: hidden;">
                         ${avatarHtml}
-                        <div class="waiting-slot-name" style="color: ${s.isAI ? '#94a3b8' : '#ffffff'};">${displayName} ${isMe ? '(あなた)' : ''}</div>
+                        <div class="waiting-slot-name" style="color: ${s.isAI ? '#94a3b8' : '#ffffff'}; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${displayName} ${isMe ? '(あなた)' : ''}</div>
                     </div>
-                    ${isCurrentHost ? '<div class="waiting-slot-host">HOST</div>' : ''}
+                    ${isCurrentHost ? '<div class="waiting-slot-host" style="flex-shrink: 0;">HOST</div>' : ''}
                 </div>
             `;
         }).join('');
@@ -981,9 +983,13 @@ function gameLoop() {
                                     }
                                 }
                             }
+                            // ★ 長大ユーザー名・絵文字のサロゲートペア安全クランプ（最大10文字）
+                            const rawNameChars = Array.from(s.name || '');
+                            const clampedName = rawNameChars.length > 10 ? rawNameChars.slice(0, 10).join('') : (s.name || '');
+
                             return {
                                 slot: slotNum,
-                                name: s.name,
+                                name: clampedName,
                                 score: Math.floor(s.score || 0)
                             };
                         })

@@ -1,15 +1,17 @@
 // ==============================================================================
 // 『くねくねバトル オンライン』iOS WebKit & iPhone 干渉完全マスクスタイル (style.js)
-// v27.0.0 メニュー余白ドラッグ・画面スライド完全物理遮断版:
-// ・【メニュー外余白ドラッグ完全遮断】#menu-overlay に touch-action: none; および
-// 　overscroll-behavior: none; を配備。メニュー展開時に背後の暗い余白部分を
-// 　ドラッグした際、画面全体が上に引っ張られて最下部に白いOS背景が露出する
-// 　ラバーバンド現象をスタイルシート層から物理的に完全根絶
-// ・【メニュードラッグ完全マスク維持】#bottom-sheet に touch-action: none; 適用
-// ・【内部スクロール保護維持】走者一覧（.participants-list）は touch-action: pan-y; と
-// 　overscroll-behavior: contain; により独立した軽快な縦スクロールを100%維持
-// ・【カスタム顔スクロール保護維持】顔選択行（.custom-row）に touch-action: pan-x; を適用し、
-// 　横スクロール操作時の画面連動引っ張りを確実に防止
+// v28.0.0 待機室名＆弾幕バッジCSSレベル長大ネーム省略完全防護版:
+// ・【待機室名のCSS長大ネーム省略防護（.waiting-slot-name）】
+// 　white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 180px; を配備！
+// 　極端に長いユーザー名が参加した際でも、右端の「HOST」バッジ押し出しや
+// 　スロット枠の縦突き抜けをスタイルシート層から物理的に100%遮断
+// ・【弾幕バッジのCSS長大ネーム幅防護（.danmaku-badge）】
+// 　max-width: 110px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; を配備！
+// 　チャット本文の横幅スペースをCSS面からも二重にフェイルセーフ防護
+// ・【メニュー外余白ドラッグ完全遮断維持】#menu-overlay touch-action: none;
+// ・【メニュードラッグ完全マスク維持】#bottom-sheet touch-action: none;
+// ・【内部スクロール保護維持】走者一覧（.participants-list）touch-action: pan-y;
+// ・【カスタム顔スクロール保護維持】顔選択行（.custom-row）touch-action: pan-x;
 // ==============================================================================
 
 export function injectStyles() {
@@ -312,6 +314,10 @@ export function injectStyles() {
             box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
             text-shadow: 0 1px 2px rgba(0, 0, 0, 0.98);
             letter-spacing: 0.4px;
+            max-width: 110px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
         }
         .danmaku-content {
             letter-spacing: 0.2px;
@@ -1021,6 +1027,10 @@ export function injectStyles() {
             font-size: 13px;
             font-weight: 700;
             color: #ffffff;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            max-width: 180px;
         }
         .waiting-slot-host {
             font-size: 10px;

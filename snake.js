@@ -1,12 +1,14 @@
 // ==============================================================================
 // 『くねくねバトル オンライン』スネークエンティティクラス (snake.js)
-// v43.0.0 ステータスバッジ距離黄金比適正化＆後頭部完全クリア版:
-// ・【頭部ステータスバッジのオフセット距離適正化（後頭部被り完全根絶）】
-// 　実機スクリーンショット検証に基づき、バッジのオフセット距離計算式を
-// 　従来の (size * 1.35 + 14px) から (size * 1.55 + 24px) へ拡張！
-// 　後頭部やシールドオーラ輪郭との物理接触（被り・窮屈感）を完全に解消し、
-// 　約19pxの理想的なクリアランスを確保した上で、第4〜5体節（背中中央）の上に
-// 　ジャストフィットして追従する極上の視認性と美観を実現
+// v44.0.0 絵文字サロゲートペア安全トリム＆長大ネーム枠はみ出し完全根絶版:
+// ・【絵文字・サロゲートペア安全トリム（文字化け完全防止）】
+// 　従来の .slice(0, 9) で絵文字が途中で2分割され末尾が文字化け（）する問題を解消！
+// 　Array.from() により絵文字や特殊記号を1文字として正確にカウントし、
+// 　長大なユーザー名も最大7文字（全角14文字相当）＋「…」で安全に省略
+// ・【バッジ最大幅の適正拡張（92px ➔ 108px）】
+// 　漢字・ひらがな・絵文字が並んだ際のプレート枠線からの文字はみ出しを完全根絶！
+// 　どのような文字種・長さの名前でも美しくプレート内に中央収容
+// ・【頭部ステータスバッジのオフセット距離黄金比維持】size * 1.55 + 24px
 // ・【前方視界100%完全クリア維持】進行方向の真後ろへ幾何学オフセット
 // ・【文字水平正立描画＆例外完全ゼロ化維持】ワールド座標系水平描画
 // ・【バッジ背景スマート透過化維持】rgba(11, 5, 26, 0.58)
@@ -599,7 +601,15 @@ export class Snake {
 
         const currentFloorScore = Math.floor(this.score);
         const scoreText = formatBadgeScore(currentFloorScore);
-        const nameText = this.name.length > 10 ? this.name.slice(0, 9) + '…' : this.name;
+
+        // =========================================================================
+        // ★ 【絵文字・サロゲートペア安全なトリム処理 ＆ バッジ最大幅拡張】
+        // Array.from() により絵文字を2コード単位ではなく「1文字」として正しく計測。
+        // 最大7文字＋「…」で安全にトリムし、バッジ最大幅を 108px へ適正拡張することで
+        // 漢字・ひらがな・絵文字の名前がプレート枠線からはみ出す事故を100%物理根絶
+        // =========================================================================
+        const nameChars = Array.from(this.name || '');
+        const nameText = nameChars.length > 7 ? nameChars.slice(0, 7).join('') + '…' : (this.name || '');
 
         if (this._cachedBadgeScore !== currentFloorScore || this._cachedBadgeName !== nameText) {
             this._cachedBadgeScore = currentFloorScore;
@@ -608,7 +618,7 @@ export class Snake {
             const scoreW = ctx.measureText(scoreText).width;
             ctx.font = 'bold 9.5px sans-serif';
             const nameW = ctx.measureText(nameText).width;
-            this._cachedBadgeWidth = Math.max(54, Math.min(92, Math.max(scoreW, nameW) + 14));
+            this._cachedBadgeWidth = Math.max(54, Math.min(108, Math.max(scoreW, nameW) + 14));
         }
 
         const badgeW = this._cachedBadgeWidth;
