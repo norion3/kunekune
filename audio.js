@@ -1,15 +1,18 @@
 /**
  * ==============================================================================
  * 『くねくねバトル オンライン』Web Audio API プログラム動的音響エンジン (audio.js)
- * v26.0.0 餌取得音スロットリング＆クリッピングノイズ完全根絶版:
- * ・【効果音スロットリングによるAudioContext飽和・音割れ完全防止】
- * 　撃破肉片クラスタ密集地への突入時など、1フレーム内で数十個の餌を連続捕食した際に
- * 　オシレーター・ゲインノードが瞬時に大量生成されて音が割れる（クリッピングノイズ）現象、
- * 　およびモバイルブラウザで AudioContext が過負荷クラッシュする問題を
- * 　25ms（playEatSmall）/ 30ms（playEatBig）の最小発音インターバル制御により完全根絶！
+ * v27.0.0 ブースト音響デザイン刷新（マイルド・モーターサウンド版）:
+ * ・【マイルド・モーターサウンドへの刷新】
+ * 　「サーッ」という薄いノイズを大幅に軽減（ローパスフィルター化＆ゲイン激減）。
+ * 　代わりに、サイン波より倍音豊かな「三角波（Triangle）」を120Hzと243Hzの
+ * 　2オクターブで重ね合わせ、わずかなデチューン（ズレ）による「うなり（コーラス）」を
+ * 　発生させることで、スマホのスピーカーでもハッキリ聞こえる太いエンジン推進音を実現！
+ * ・【ブースト点火アタック効果（ピッチドロップ）】
+ * 　ブーストボタンを押した瞬間（0.12秒間）、オシレーターのピッチが低音から目標音へ
+ * 　「ギュン！」と急上昇するエンベロープを追加し、圧倒的な踏み込み感と加速感を創出
+ * ・【効果音スロットリングによるAudioContext飽和・音割れ完全防止維持】
  * ・【メモリリーク完全防止維持】stopBoostSound() 連打時の _stopTimeoutId 排他管理
  * ・【即時クリーンアップガード維持】連続停止呼び出し時の確実なノード切断・解放
- * ・【耳に優しい音響設計維持】バンドパス気流ノイズ＋温かみのある中低域推進ハム
  * ・【クリップノイズ防止フェード維持】linearRampToValueAtTime
  * ・【iOS WebKit バックグラウンド自動サスペンド/レジューム維持】
  * ==============================================================================
@@ -24,6 +27,7 @@ class AudioManager {
         this.boostNoiseNode = null;
         this.boostNoiseGain = null;
         this.boostHumOsc = null;
+        this.boostHumOsc2 = null; // ★コーラス・うなり用サブオシレーター
         this.boostHumGain = null;
         this.boostMasterGain = null;
         this.boostFilter = null;
@@ -32,7 +36,7 @@ class AudioManager {
         // 切断タイマー排他管理ID（メモリリーク防止用）
         this._stopTimeoutId = null;
 
-        // ★ 効果音スロットリング用タイムスタンプ（ノード乱立・音割れ防止）
+        // 効果音スロットリング用タイムスタンプ（ノード乱立・音割れ防止）
         this._lastEatSmallTime = 0;
         this._lastEatBigTime = 0;
 
@@ -101,7 +105,7 @@ class AudioManager {
     playEatSmall() {
         if (this.isMuted || !this.ctx) return;
 
-        // ★ 密集地帯での連続発音による音割れ・負荷を防止
+        // 密集地帯での連続発音による音割れ・負荷を防止
         const nowMs = performance.now();
         if (nowMs - this._lastEatSmallTime < 25) return;
         this._lastEatSmallTime = nowMs;
@@ -135,7 +139,7 @@ class AudioManager {
     playEatBig() {
         if (this.isMuted || !this.ctx) return;
 
-        // ★ 密集肉片捕食時のオシレーター飽和・クラッシュを防止
+        // 密集肉片捕食時のオシレーター飽和・クラッシュを防止
         const nowMs = performance.now();
         if (nowMs - this._lastEatBigTime < 30) return;
         this._lastEatBigTime = nowMs;
@@ -167,10 +171,9 @@ class AudioManager {
     }
 
     /**
-     * ★ ブースト加速音（柔らかなエアフロージェット ＆ 温かみのある推進ハム）
-     * 甲高い高周波オシレーターを全廃。
-     * バンドパス気流ノイズ（シュオオォォー）＋ 低域の推進ハム（130Hz->180Hz）により、
-     * 何分間加速しても耳が全く疲れない極上の滑空感を創出。
+     * ★ ブースト加速音（マイルド・モーターサウンド）
+     * 煩いノイズをローパスフィルターで低域のゴォォ音に抑えつつ、
+     * 三角波（Triangle）のうなりとピッチアタックで太く心地よい推進力を創出
      */
     startBoostSound() {
         if (this.isMuted || !this.ctx || this.boostMasterGain) return;
@@ -185,34 +188,42 @@ class AudioManager {
             const now = this.ctx.currentTime;
             if (!this._noiseBuffer) this._initNoiseBuffer();
 
-            // 1. 気流ノイズ源（エアフロー）
+            // 1. 気流ノイズ源（エアフロー）※大幅に音量を下げて低域寄りへ
             this.boostNoiseNode = this.ctx.createBufferSource();
             this.boostNoiseNode.buffer = this._noiseBuffer;
             this.boostNoiseNode.loop = true;
 
-            // 2. バンドパスフィルター（耳に心地よい 360Hz〜620Hz の気流成分のみを抽出）
+            // 高周波のサーッという音を削り、低域の風圧感のみを残す
             this.boostFilter = this.ctx.createBiquadFilter();
-            this.boostFilter.type = 'bandpass';
-            this.boostFilter.frequency.setValueAtTime(360, now);
-            this.boostFilter.frequency.linearRampToValueAtTime(580, now + 0.22);
-            this.boostFilter.Q.setValueAtTime(1.4, now);
+            this.boostFilter.type = 'lowpass';
+            this.boostFilter.frequency.setValueAtTime(300, now);
+            this.boostFilter.frequency.linearRampToValueAtTime(450, now + 0.2);
 
             this.boostNoiseGain = this.ctx.createGain();
-            this.boostNoiseGain.gain.setValueAtTime(0.09, now);
+            this.boostNoiseGain.gain.setValueAtTime(0.012, now); // ノイズ成分を極小化
 
             this.boostNoiseNode.connect(this.boostFilter);
             this.boostFilter.connect(this.boostNoiseGain);
 
-            // 3. 中低域推進ハム（柔らかなサイン波で厚みを付与：130Hz -> 180Hz）
+            // 2. 中低域推進ハム1（ベース：三角波による太い唸り）
             this.boostHumOsc = this.ctx.createOscillator();
-            this.boostHumOsc.type = 'sine';
-            this.boostHumOsc.frequency.setValueAtTime(130, now);
-            this.boostHumOsc.frequency.linearRampToValueAtTime(180, now + 0.22);
+            this.boostHumOsc.type = 'triangle';
+            this.boostHumOsc.frequency.setValueAtTime(60, now); // 点火時の低い踏み込み
+            this.boostHumOsc.frequency.exponentialRampToValueAtTime(120, now + 0.12); // 急上昇アタック（ギュン！）
+            this.boostHumOsc.frequency.linearRampToValueAtTime(124, now + 0.5);
+
+            // 3. 中低域推進ハム2（倍音＆コーラス：1オクターブ上＋デチューン）
+            this.boostHumOsc2 = this.ctx.createOscillator();
+            this.boostHumOsc2.type = 'triangle';
+            this.boostHumOsc2.frequency.setValueAtTime(120, now);
+            this.boostHumOsc2.frequency.exponentialRampToValueAtTime(243, now + 0.12); // 数Hzズラしてコーラス効果を生む
+            this.boostHumOsc2.frequency.linearRampToValueAtTime(246, now + 0.5);
 
             this.boostHumGain = this.ctx.createGain();
-            this.boostHumGain.gain.setValueAtTime(0.045, now);
+            this.boostHumGain.gain.setValueAtTime(0.045, now); // 三角波はエネルギーが強いため適切に調整
 
             this.boostHumOsc.connect(this.boostHumGain);
+            this.boostHumOsc2.connect(this.boostHumGain);
 
             // 4. マスターゲイン（クリップを防ぐ滑らかなフェードイン）
             this.boostMasterGain = this.ctx.createGain();
@@ -225,6 +236,7 @@ class AudioManager {
 
             this.boostNoiseNode.start(now);
             this.boostHumOsc.start(now);
+            this.boostHumOsc2.start(now);
         } catch (e) {}
     }
 
@@ -245,6 +257,7 @@ class AudioManager {
             const masterGain = this.boostMasterGain;
             const noise = this.boostNoiseNode;
             const hum = this.boostHumOsc;
+            const hum2 = this.boostHumOsc2;
             const filter = this.boostFilter;
             const noiseGain = this.boostNoiseGain;
             const humGain = this.boostHumGain;
@@ -258,12 +271,16 @@ class AudioManager {
             if (hum) {
                 try { hum.stop(now + 0.06); } catch (e) {}
             }
+            if (hum2) {
+                try { hum2.stop(now + 0.06); } catch (e) {}
+            }
 
             // タイマーを排他管理し、80ms後に確実に破棄・切断
             this._stopTimeoutId = setTimeout(() => {
                 try {
                     if (noise) noise.disconnect();
                     if (hum) hum.disconnect();
+                    if (hum2) hum2.disconnect();
                     if (filter) filter.disconnect();
                     if (noiseGain) noiseGain.disconnect();
                     if (humGain) humGain.disconnect();
@@ -275,6 +292,7 @@ class AudioManager {
 
         this.boostNoiseNode = null;
         this.boostHumOsc = null;
+        this.boostHumOsc2 = null;
         this.boostFilter = null;
         this.boostNoiseGain = null;
         this.boostHumGain = null;

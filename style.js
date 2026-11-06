@@ -1,6 +1,10 @@
 // ==============================================================================
 // 『くねくねバトル オンライン』iOS WebKit & iPhone 干渉完全マスクスタイル (style.js)
-// v28.0.0 待機室名＆弾幕バッジCSSレベル長大ネーム省略完全防護版:
+// v29.0.0 ブーストボタン動的無効化UI連携版:
+// ・【ブーストボタン動的無効化UI連携】
+// 　#btn-boost.disabled スタイルを追加配備。スコア不足（60以下）でブースト不可の際、
+// 　ボタンをグレーアウトさせ、ネオン発光やタップ時の凹みアクションを完全に無効化。
+// 　操作に対する直感的な視覚フィードバックを確立
 // ・【待機室名のCSS長大ネーム省略防護（.waiting-slot-name）】
 // 　white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 180px; を配備！
 // 　極端に長いユーザー名が参加した際でも、右端の「HOST」バッジ押し出しや
@@ -229,7 +233,7 @@ export function injectStyles() {
             justify-content: center;
             pointer-events: auto;
             box-shadow: 0 0 16px rgba(0, 229, 255, 0.30), inset 0 0 10px rgba(0, 229, 255, 0.2);
-            transition: transform 0.1s, border-color 0.2s, box-shadow 0.2s;
+            transition: transform 0.1s, border-color 0.2s, box-shadow 0.2s, opacity 0.2s;
             cursor: pointer;
             z-index: 50;
         }
@@ -249,6 +253,18 @@ export function injectStyles() {
             stroke: #ff0055;
             filter: drop-shadow(0 0 6px #ff0055);
             transform: scale(1.15);
+        }
+
+        /* ★ ブースト無効化時（スコア不足）のスタイル定義 */
+        #btn-boost.disabled {
+            opacity: 0.35;
+            pointer-events: none;
+            border-color: rgba(255, 255, 255, 0.2);
+            box-shadow: none;
+        }
+        #btn-boost.disabled svg {
+            stroke: #64748b;
+            filter: none;
         }
 
         /* --- 仮想ジョイスティック --- */

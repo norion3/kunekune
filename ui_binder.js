@@ -1,16 +1,13 @@
 // ==============================================================================
 // 『くねくねバトル オンライン』UIイベントバインダーモジュール (ui_binder.js)
-// v33.0.0 チャット送信二重発火根絶＆menu.js一本化完全整理版:
-// ・【チャット送信二重発火の完全根絶（menu.js 一本化）】
-// 　ホスト側でチャット送信時にメッセージが2重に流れる（二重表示）原因となっていた
-// 　ui_binder.js 側の重複チャット送信ハンドラ（chatInput / chatSendBtn）を完全撤廃！
-// 　メニュー内の定型文チップおよび自由入力フォームの送信責務を menu.js 側へ完全に集約し、
-// 　送信ボタン1回のタップで確実に1回のみ実行される健全なアーキテクチャへ適正化
+// v34.0.0 ブーストボタン動的無効化（超軽量状態キャッシュ版）追加:
+// ・【ブーストボタンの動的無効化（スコア60以下）】
+// 　スコアが60以下でブーストできない状態の際、ボタンに disabled クラスを付与し、
+// 　「押せるのに加速しない」という直感に反するUIをグレーアウトで適切に無効化。
+// 　状態キャッシュ（isBoostDisabled）を用いることで、状態変化が起きた1フレームしか
+// 　DOMアクセスが発生せず、毎フレーム呼び出してもFPS負荷（描画遅延）が実質ゼロの超軽量設計
+// ・【チャット送信二重発火の完全根絶（menu.js 一本化）維持】
 // ・【顔・マイアイコン即時マルチ同期維持】
-// 　Menu.init コールバック内で顔や色の変更が行われた際、自機 player.face / color
-// 　だけでなく NetworkManager.slots[mySlot].face / color を即時更新！
-// 　ホスト時は ROOM_MEMBERS_SYNC を一斉同報し、ホスト・ゲスト問わず
-// 　forceImmediateSync() を即座に発火して相手画面へ新表情・新アイコンを0msで同期
 // ・【カスタムカラー即時マルチ同期維持】
 // ・【待機室＆メニュー走者リスト即時連動維持】
 // ・【デバッグ用無敵シールドボタン(#btn-god-mode)イベントバインド維持】
@@ -22,6 +19,28 @@
 // ==============================================================================
 
 import { Menu } from './menu.js';
+
+/**
+ * ブーストボタンのdisabled状態（スコア60以下）を状態キャッシュで超軽量に管理
+ */
+let isBoostDisabled = false;
+
+export function updateBoostButtonState(currentScore) {
+    const shouldDisable = (currentScore <= 60);
+
+    // ★ 現在の記憶状態と「違う状態」になった瞬間だけDOMを触る（負荷ゼロ化）
+    if (isBoostDisabled !== shouldDisable) {
+        isBoostDisabled = shouldDisable;
+        const btn = document.getElementById('btn-boost');
+        if (btn) {
+            if (shouldDisable) {
+                btn.classList.add('disabled');
+            } else {
+                btn.classList.remove('disabled');
+            }
+        }
+    }
+}
 
 /**
  * ズームボタンのdisabled状態を倍率に応じて更新

@@ -1,14 +1,12 @@
 // ==============================================================================
 // 『くねくねバトル オンライン』Phase 7 マスター統合オーケストレーター (main.js)
-// v54.0.0 長大ネーム・絵文字通信バジェット防護＆待機室レイアウト保護版:
-// ・【リーダーボード送信前の長大ネーム・絵文字安全クランプ（通信バジェット防護）】
-// 　NetBroadcaster.setLatestLeaderboard にて送信する上位走者名を Array.from() により
-// 　最大10文字でサロゲートペア安全にクランプ！長大な日本語・漢字・絵文字ネームが複数人並んでも
-// 　パケット容量（1,000B）を圧迫せず、突発的なパケット超過・AI点滅消失を100%未然に防護
-// ・【待機室スロットでの長大ネームによるHOSTバッジ押し出し完全防止】
-// 　updateWaitingMembersList において、waiting-slot-left に min-width: 0; flex: 1; を配備し、
-// 　waiting-slot-name に overflow: hidden; text-overflow: ellipsis; white-space: nowrap; を適用！
-// 　長大なユーザー名でも右端の「HOST」バッジを画面外へ押し出さず美しく収容
+// v55.0.0 ブーストボタン動的無効化監視連携版:
+// ・【ブーストボタンの動的無効化監視連携】
+// 　メインループ（gameLoop）内で毎フレーム player.score を監視し、
+// 　ui_binder.js の updateBoostButtonState を呼び出してブーストボタンの有効/無効を制御。
+// 　スコア60以下の際にボタンをグレーアウトさせるUI連携を確立
+// ・【リーダーボード送信前の長大ネーム・絵文字安全クランプ（通信バジェット防護）維持】
+// ・【待機室スロットでの長大ネームによるHOSTバッジ押し出し完全防止維持】
 // ・【ホスト側 onAIKilledByGuest 内の重複 Danmaku.push 撤廃維持】
 // ・【対人戦（PvP）撃破同報（broadcastKill）の被害者自己判定一本化維持】
 // ・【リモート走者のバックステップ二重減算撤廃（他プレイヤー痙攣完全根絶）維持】
@@ -67,7 +65,8 @@ import { AIManager } from './ai.js';
 import { CameraManager } from './camera.js';
 import { NetworkManager } from './network.js';
 import { NetBroadcaster } from './net_broadcaster.js';
-import { initUIBindings, updateZoomButtonsState } from './ui_binder.js';
+// ★ updateBoostButtonState を追加インポート
+import { initUIBindings, updateZoomButtonsState, updateBoostButtonState } from './ui_binder.js';
 import { setupNetworkHandlers } from './net_handlers.js';
 import { handleHostMigration } from './host_migration.js';
 import { runBootSequence } from './boot.js';
@@ -560,9 +559,6 @@ NetworkManager.setCallbacks({
 
     // =========================================================================
     // ★ 【ゲスト端末によるAI撃破確定ハンドラ（ホスト専用）】
-    // ゲスト端末が敵AIを撃破した確定通知を受信し、ホスト側の該当AIを即死確定させて
-    // 正規肉片クラスタを発行。ゲスト画面での頭だけ無敵ゾンビ復活を完全防止
-    // ※ 重複していた Danmaku.push を削除し、KILL_ALERT 側の通知に一本化
     // =========================================================================
     onAIKilledByGuest(aiSlot, killerName) {
         if (!NetworkManager.isHost || !NetworkManager.isMultiplayerActive) return;
@@ -691,6 +687,13 @@ function gameLoop() {
             }
             player.updatePhysics(dtSec, inputAngle, input.boost);
 
+            // =========================================================================
+            // ★ 【ブーストボタンの動的無効化監視】
+            // 毎フレーム自機のスコアを監視し、60以下の場合はブーストボタンをグレーアウト無効化。
+            // 内部の状態キャッシュによりDOMアクセスは最小限に抑えられ、FPSへの負荷はゼロ。
+            // =========================================================================
+            updateBoostButtonState(player.score);
+
             if (player.isDead) {
                 handleGameOver({ name: '外壁 (MAP境界)', isDead: false });
             }
@@ -734,8 +737,6 @@ function gameLoop() {
 
             // =========================================================================
             // ★ 【リモート走者位置更新：バックステップ二重減算の撤廃】
-            // 未来予測位置へのLerp補正後に前進量を二重減算していたコードを撤廃し、
-            // カクつき・痙攣振動のない滑らかな走行描画を実現
             // =========================================================================
             if (remote.targetNetX !== undefined && remote.targetNetY !== undefined) {
                 const timeScale = Math.max(0.1, Math.min(3.0, dtSec * 60));
@@ -899,8 +900,6 @@ function gameLoop() {
 
                     // =========================================================================
                     // ★ 【撃破同報の多重発火防止：被撃破側（自己判定）一本化】
-                    // 対人戦において勝者・敗者双方が broadcastKill を送り合ってチャットが二重に
-                    // 流れるのを防ぐため、被撃破側（victim.isPlayer）または被害者がAIの場合のみ送信
                     // =========================================================================
                     const shouldBroadcast = NetworkManager.isMultiplayerActive && 
                         typeof NetworkManager.broadcastKill === 'function' &&

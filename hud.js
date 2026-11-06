@@ -1,20 +1,18 @@
 // ==============================================================================
 // 『くねくねバトル オンライン』一体型HUD ＆ 自機中心相対追従レーダー (hud.js)
-// v35.0.0 MAP上1〜3位王冠表示（枠内ミニクラウン大型化・視認系統一版）:
-// ・【レーダー内王冠(ミニクラウン)の大幅サイズアップ】
-// 　枠内に入った時の王冠サイズを従来の幅約11pxから幅16px(w=8.0, h=6.5)へ約1.5倍拡大！
-// 　枠外の方向ポインターとサイズ感をシームレスに統一し、「近づいてきた時に急に小さくなる」
-// 　強烈な違和感を完全払拭。線の密集・潰れが解消され、金・銀・銅のベタ塗り面積が
-// 　広く確保されたことで、王者としての圧倒的な存在感と視認性を実現
+// v36.0.0 MAP上1〜3位王冠表示（カラー＆黄金比シルエット完全最適化版）:
+// ・【1〜3位王冠カラーの完全最適化（赤枠・くすみ根絶）】
+// 　背景のダークパープルに溶け込んで汚く見えていたオーラ色を、高輝度・高彩度に刷新。
+// 　1位金は「純金イエロー」、2位銀は「アイシーシルバー」、3位銅は赤みを抜いた
+// 　「アンバー（琥珀）オレンジ」へと変更し、不自然な赤枠感や泥のような濁りを100%払拭！
+// ・【王冠シルエットの黄金比スマート化】
+// 　横に間延びして不格好だった王冠の縦横比を、黄金比（約1:1.618）ベースに再計算。
+// 　枠内のミニクラウンは横幅を絞って高さを出し「シュッとした高貴なシルエット」へ。
+// 　枠外のポインターは左右の突起を畳み、進行方向へ鋭く突き刺さる「スタイリッシュな矢印」へ進化
+// ・【レーダー内王冠(ミニクラウン)の大幅サイズアップ維持】
 // ・【王冠マークのゆらぎ（伸縮）完全撤廃維持】
-// 　レーダー枠外・枠内の王冠から Math.sin によるサイズ変動を100%削除。
-// 　常に固定サイズでブレなくピタッと表示させることで、目障りなチカチカ感を根絶
-// ・【王冠シルエットのシンプル化＆底辺の直線(フラット)化維持】
-// 　王冠の底辺のくぼみをなくして「まっすぐな直線」に変更。
-// 　どっしりとした安定感のある王冠アイコンに進化！
+// ・【王冠シルエットの底辺の直線(フラット)化維持】
 // ・【絶対座標直描によるCanvasマトリクス破壊・MAP消失の完全根絶維持】
-// 　iOS WebKitのCanvas消失を引き起こす translate/rotate/shadowBlur を一切使用せず、
-// 　三角関数による絶対座標直描パスで安全に描画
 // ・【NaN/Undefined絶対防護＆try-finally描画保証維持】
 // ・【自機除外ルール＆王冠表示数の動的整合維持】
 // ・【自機中心マークの完全不変性維持】
@@ -23,7 +21,6 @@
 // ・【カスタムカラー即時マルチ同期維持】
 // ・【矢印二重描画の完全根絶維持】
 // ・【ゲスト端末でのホスト方向ポインター確実点灯維持】
-// ・自機進行方向コンパス、カメラ視野枠ハイライト維持
 // ・描画負荷軽減：2フレームに1回（30FPS）描画スロットリング ＆ Offscreen キャッシュ維持
 // ==============================================================================
 
@@ -31,11 +28,11 @@ import { MAX_PLAYERS } from './constants.js';
 import { NetworkManager } from './network.js';
 import { resetLeaderboardCache } from './net_handlers.js';
 
-// ★ 王冠ランク別スタイル定義（ゼロアロケーション）
+// ★ 王冠ランク別スタイル定義（濁り・赤枠を根絶した高輝度最適化パレット）
 const CROWN_CONFIGS = [
-    { rank: 1, fill: '#fde047', glow: '#eab308' }, // 1位: 金 (Gold)
-    { rank: 2, fill: '#f1f5f9', glow: '#94a3b8' }, // 2位: 銀 (Silver)
-    { rank: 3, fill: '#fb923c', glow: '#c2410c' }  // 3位: 銅 (Bronze)
+    { rank: 1, fill: '#fef08a', glow: '#fde047' }, // 1位: 金 (クリアレモンゴールド)
+    { rank: 2, fill: '#ffffff', glow: '#7dd3fc' }, // 2位: 銀 (アイシーシルバー)
+    { rank: 3, fill: '#f59e0b', glow: '#d97706' }  // 3位: 銅 (アンバー・キャメルオレンジ)
 ];
 
 export class HUDManager {
@@ -142,7 +139,6 @@ export class HUDManager {
 
                 // =========================================================================
                 // ★ 【Top 3 絶対順位マッピング ＆ 自機除外判定】
-                // 全体の上位スネークから生存している真の1位、2位、3位を特定。
                 // =========================================================================
                 const top3Map = new Map();
                 let rankCounter = 1;
@@ -206,7 +202,7 @@ export class HUDManager {
                         const drawY = radarCenter + dy * radarRatio;
 
                         // =========================================================================
-                        // ★ 【最優先：1〜3位（Top 3）王冠マーク描画（金・銀・銅）】
+                        // ★ 【最優先：1〜3位（Top 3）王冠マーク描画（黄金比スリム化）】
                         // =========================================================================
                         const crownRank = top3Map.get(s);
                         if (crownRank !== undefined && crownRank >= 1 && crownRank <= 3) {
@@ -214,40 +210,39 @@ export class HUDManager {
                             const inBounds = (drawX >= 7 && drawX <= this.radarSize - 7 && drawY >= 7 && drawY <= this.radarSize - 7);
 
                             if (inBounds) {
-                                // ★ レーダー枠内：水平正立ミニクラウン（ゆらぎ無し・固定サイズ・大型化）
-                                // 外周のポインターと同等の存在感を出すため、サイズを大幅に引き上げ
-                                const w = 8.0; 
-                                const h = 6.5;
+                                // ★ レーダー枠内：水平正立ミニクラウン（黄金比・横幅を絞り高さを出す）
+                                const w = 6.2; // 横幅を 8.0 -> 6.2 へ絞る
+                                const h = 6.8; // 高さを 6.5 -> 6.8 へ引き上げる
                                 const ow = w * 1.35;
                                 const oh = h * 1.35;
 
                                 rCtx.save();
 
-                                // 1. 背後の静的グローオーラ（底辺直線）
+                                // 1. 背後の静的グローオーラ
                                 rCtx.beginPath();
                                 rCtx.moveTo(drawX - ow, drawY + oh * 0.6);
-                                rCtx.lineTo(drawX - ow * 0.9, drawY - oh * 0.5);
-                                rCtx.lineTo(drawX - ow * 0.4, drawY);
-                                rCtx.lineTo(drawX, drawY - oh);
-                                rCtx.lineTo(drawX + ow * 0.4, drawY);
-                                rCtx.lineTo(drawX + ow * 0.9, drawY - oh * 0.5);
+                                rCtx.lineTo(drawX - ow * 0.85, drawY - oh * 0.5);
+                                rCtx.lineTo(drawX - ow * 0.35, drawY);
+                                rCtx.lineTo(drawX, drawY - oh * 1.05); // 中央をより高く
+                                rCtx.lineTo(drawX + ow * 0.35, drawY);
+                                rCtx.lineTo(drawX + ow * 0.85, drawY - oh * 0.5);
                                 rCtx.lineTo(drawX + ow, drawY + oh * 0.6);
-                                rCtx.closePath(); // 底辺は自動的に直線で結ばれる
+                                rCtx.closePath();
                                 rCtx.fillStyle = config.glow;
-                                rCtx.globalAlpha = 0.45; // 透過度固定
+                                rCtx.globalAlpha = 0.55; // 発光を少し強め
                                 rCtx.fill();
 
-                                // 2. 本体の王冠塗り（底辺直線・シンプルシルエット）
+                                // 2. 本体の王冠塗り（底辺直線・スリムシルエット）
                                 rCtx.globalAlpha = 1.0;
                                 rCtx.beginPath();
-                                rCtx.moveTo(drawX - w, drawY + h * 0.6);        // 左下
-                                rCtx.lineTo(drawX - w * 0.9, drawY - h * 0.5);  // 左の山
-                                rCtx.lineTo(drawX - w * 0.4, drawY);            // 左の谷
-                                rCtx.lineTo(drawX, drawY - h);                  // 中央の高い山
-                                rCtx.lineTo(drawX + w * 0.4, drawY);            // 右の谷
-                                rCtx.lineTo(drawX + w * 0.9, drawY - h * 0.5);  // 右の山
-                                rCtx.lineTo(drawX + w, drawY + h * 0.6);        // 右下
-                                rCtx.closePath(); // ★ 底辺をまっすぐな直線で結ぶ
+                                rCtx.moveTo(drawX - w, drawY + h * 0.6);
+                                rCtx.lineTo(drawX - w * 0.85, drawY - h * 0.5);
+                                rCtx.lineTo(drawX - w * 0.35, drawY);
+                                rCtx.lineTo(drawX, drawY - h * 1.05);
+                                rCtx.lineTo(drawX + w * 0.35, drawY);
+                                rCtx.lineTo(drawX + w * 0.85, drawY - h * 0.5);
+                                rCtx.lineTo(drawX + w, drawY + h * 0.6);
+                                rCtx.closePath();
                                 rCtx.fillStyle = config.fill;
                                 rCtx.fill();
 
@@ -259,7 +254,7 @@ export class HUDManager {
 
                                 rCtx.restore();
                             } else {
-                                // ★ レーダー枠外：最外周フチの王冠矢印ポインター（ゆらぎ無し・固定サイズ）
+                                // ★ レーダー枠外：王冠矢印ポインター（黄金比・横の広がりを抑え前方を鋭角に）
                                 const angle = Math.atan2(dy, dx);
                                 if (!Number.isFinite(angle)) continue;
 
@@ -273,31 +268,29 @@ export class HUDManager {
                                 const edgeX = radarCenter + cos * t;
                                 const edgeY = radarCenter + sin * t;
 
-                                // ゆらぎ撤廃、常に固定スケール。どっしりとしたサイズ感
                                 const scale = 1.25; 
                                 
-                                // 進行軸（相手方向）と垂直軸の単位ベクトル
                                 const ux = cos;
                                 const uy = sin;
                                 const vx = -sin;
                                 const vy = cos;
 
-                                // ★ 王冠矢印の各頂点（中央突起が最も高く先端を指す、底辺はまっすぐ）
-                                const tipX = edgeX;
-                                const tipY = edgeY;
-                                const lValleyX = edgeX - ux * 4.0 * scale + vx * 2.5 * scale;
-                                const lValleyY = edgeY - uy * 4.0 * scale + vy * 2.5 * scale;
-                                const lPeakX = edgeX - ux * 2.5 * scale + vx * 5.0 * scale;
-                                const lPeakY = edgeY - uy * 2.5 * scale + vy * 5.0 * scale;
-                                const lBaseX = edgeX - ux * 7.5 * scale + vx * 4.5 * scale;
-                                const lBaseY = edgeY - uy * 7.5 * scale + vy * 4.5 * scale;
+                                // 左右の突起（vx）の広がりを抑え、前方（ux）を鋭く伸ばす
+                                const tipX = edgeX + ux * 1.0 * scale; // 先端を少し前へ
+                                const tipY = edgeY + uy * 1.0 * scale;
+                                const lValleyX = edgeX - ux * 4.0 * scale + vx * 2.0 * scale; // 幅を2.5 -> 2.0
+                                const lValleyY = edgeY - uy * 4.0 * scale + vy * 2.0 * scale;
+                                const lPeakX = edgeX - ux * 2.5 * scale + vx * 4.2 * scale;   // 幅を5.0 -> 4.2
+                                const lPeakY = edgeY - uy * 2.5 * scale + vy * 4.2 * scale;
+                                const lBaseX = edgeX - ux * 7.5 * scale + vx * 3.8 * scale;   // 幅を4.5 -> 3.8
+                                const lBaseY = edgeY - uy * 7.5 * scale + vy * 3.8 * scale;
 
-                                const rBaseX = edgeX - ux * 7.5 * scale - vx * 4.5 * scale;
-                                const rBaseY = edgeY - uy * 7.5 * scale - vy * 4.5 * scale;
-                                const rPeakX = edgeX - ux * 2.5 * scale - vx * 5.0 * scale;
-                                const rPeakY = edgeY - uy * 2.5 * scale - vy * 5.0 * scale;
-                                const rValleyX = edgeX - ux * 4.0 * scale - vx * 2.5 * scale;
-                                const rValleyY = edgeY - uy * 4.0 * scale - vy * 2.5 * scale;
+                                const rBaseX = edgeX - ux * 7.5 * scale - vx * 3.8 * scale;
+                                const rBaseY = edgeY - uy * 7.5 * scale - vy * 3.8 * scale;
+                                const rPeakX = edgeX - ux * 2.5 * scale - vx * 4.2 * scale;
+                                const rPeakY = edgeY - uy * 2.5 * scale - vy * 4.2 * scale;
+                                const rValleyX = edgeX - ux * 4.0 * scale - vx * 2.0 * scale;
+                                const rValleyY = edgeY - uy * 4.0 * scale - vy * 2.0 * scale;
 
                                 rCtx.save();
 
@@ -307,12 +300,12 @@ export class HUDManager {
                                 rCtx.lineTo(lValleyX + ux * 1.0 + vx * 1.5, lValleyY + uy * 1.0 + vy * 1.5);
                                 rCtx.lineTo(lPeakX + vx * 1.5, lPeakY + vy * 1.5);
                                 rCtx.lineTo(lBaseX - ux * 1.5 + vx * 1.5, lBaseY - uy * 1.5 + vy * 1.5);
-                                rCtx.lineTo(rBaseX - ux * 1.5 - vx * 1.5, rBaseY - uy * 1.5 - vy * 1.5); // 直線底辺オーラ
+                                rCtx.lineTo(rBaseX - ux * 1.5 - vx * 1.5, rBaseY - uy * 1.5 - vy * 1.5);
                                 rCtx.lineTo(rPeakX - vx * 1.5, rPeakY - vy * 1.5);
                                 rCtx.lineTo(rValleyX + ux * 1.0 - vx * 1.5, rValleyY + uy * 1.0 - vy * 1.5);
                                 rCtx.closePath();
                                 rCtx.fillStyle = config.glow;
-                                rCtx.globalAlpha = 0.45;
+                                rCtx.globalAlpha = 0.55;
                                 rCtx.fill();
 
                                 // 2. 本体の王冠矢印パス
@@ -322,7 +315,7 @@ export class HUDManager {
                                 rCtx.lineTo(lValleyX, lValleyY);
                                 rCtx.lineTo(lPeakX, lPeakY);
                                 rCtx.lineTo(lBaseX, lBaseY);
-                                rCtx.lineTo(rBaseX, rBaseY); // ★ 底辺のくぼみをなくし、まっすぐな直線で結ぶ
+                                rCtx.lineTo(rBaseX, rBaseY);
                                 rCtx.lineTo(rPeakX, rPeakY);
                                 rCtx.lineTo(rValleyX, rValleyY);
                                 rCtx.closePath();
