@@ -1,11 +1,11 @@
 // ==============================================================================
 // 『くねくねバトル オンライン』AgentSDK公式マルチプレイ通信マネージャー (network.js)
-// v39.0.0 ゲストキルAIホスト即時確定RPC(AI_KILL)＆ゾンビ復活完全防止版:
-// ・【ゲストキルAIホスト即時確定RPC（sendAIKill）の配備】
-// 　ゲスト端末が敵AIを撃破した際、ホストへ確定通知（e: 'AI_KILL'）を即時送信！
-// 　ホスト側の世界線でも該当AIを確実に即死（die）させ、正規の肉片クラスタを発行。
-// 　ホストから「AI生存」パケットが送り返されてゲスト画面に頭だけの無敵ゾンビAIが
-// 　突如出現し即死させられる重大な通信デシンクを100%物理根絶
+// v40.0.0 弾幕表示責務一本化＆重複発火完全根絶版:
+// ・【弾幕表示責務の一元化（net_handlers.js 一本化）】
+// 　KILL_ALERT および定期パケット内チャット（packet.ch）受信時、
+// 　net_handlers.js のインターセプターと重複して二重発火していた Danmaku.push を
+// 　network.js 側から完全に撤廃！表示責務を一元化し同一弾幕の二重表示を100%根絶
+// ・【ゲストキルAIホスト即時確定RPC（sendAIKill）維持】
 // ・【ホスト昇格時Slot 0競合タイブレーカー維持】辞書順比較によるサレンダー解決
 // ・【スプリットブレイン降格時送信ロックアウト機構維持】
 // ・【新スロット番号確定時の送信自律復帰維持】
@@ -857,12 +857,9 @@ export const NetworkManager = {
             // =========================================================================
             // ★ 【撃破アラート受信ハンドラ（被撃破判定完全同期）】
             // 相手端末の判定で自分が倒された場合、即座に onPlayerKilled を発火！
+            // ※ Danmaku.push は net_handlers.js 側に一本化し重複を完全根絶
             // =========================================================================
             if (eventType === 'KILL_ALERT') {
-                if (packet.senderId !== this.clientId && packet.kn && packet.vn) {
-                    Danmaku.push(packet.kn, `${packet.vn} を撃破！`, packet.col || '#ff3366');
-                }
-
                 // 被撃破判定：被害者スロット（vs）が自分自身（mySlot）であればゲームオーバーを即座に起動
                 if (packet.vs !== undefined && packet.vs !== null && packet.vs === this.mySlot) {
                     console.warn(`[Sync] 撃破パケット検知: スロット ${packet.vs} (自機) の撃破宣告を受信しました。ゲームオーバー処理を実行します。`);
@@ -1001,17 +998,7 @@ export const NetworkManager = {
                     });
                 }
 
-                if (Array.isArray(packet.ch)) {
-                    packet.ch.forEach(tuple => {
-                        const chat = unpackChatTuple(tuple);
-                        if (chat && chat.slot !== this.mySlot) {
-                            const senderSlot = chat.slot;
-                            const senderName = this.slots[senderSlot] ? this.slots[senderSlot].name : `P${senderSlot + 1}`;
-                            const badgeColor = SNAKE_COLORS[senderSlot % SNAKE_COLORS.length];
-                            Danmaku.push(senderName, chat.message, badgeColor);
-                        }
-                    });
-                }
+                // ※ チャットタプル（packet.ch）の受信表示は net_handlers.js 側のインターセプターに一本化し、二重発火を完全排除
                 return;
             }
 

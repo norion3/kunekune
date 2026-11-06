@@ -1,14 +1,13 @@
 /**
  * ==============================================================================
  * 『くねくねバトル オンライン』マルチプレイ送信ループ＆アクションキュー管理 (net_broadcaster.js)
- * v35.0.0 パケット・バジェット容量予算管理＆CPU負荷ゼロ化完全収束版:
- * ・【パケット・バジェット（事前容量割り当て）方式の完全導入】
- * 　従来の「完成品を作ってから超過分を削るために最大5回 JSON.stringify を回す」設計を全廃！
- * 　パケット上限（1,000バイト）からヘッダ、自機情報、リーダーボード（lb）の有無に応じた
- * 　動的バジェットを算出し、優先度順（チャット ➔ 餌取得 ➔ 視界保証AI ➔ 肉片）に枠内へ詰め込む
- * 　事前見積もりアーキテクチャへ刷新。ホスト端末のマイクロスタッター（処理落ち）を100%根絶
- * ・【AI消失フリーズの完全防止】
- * 　AIタプルを無差別に全破棄する事態を回避し、許容容量ギリギリまで常に最適なAIを詰め込む
+ * v36.0.0 AIタプルバジェット高精度化＆AI突発パージ完全根絶版:
+ * ・【AIタプルバジェット見積もり精度の適正化（38B ➔ 48B）】
+ * 　実測で46〜52Bに達していた11要素AIタプルの消費見積もりを 38B から 48B へ補正！
+ * 　通常AI選定上限を視界保証に十分な最大8体へ最適化することで、
+ * 　リーダーボード同梱フレーム等で突発的に 1,010B 超過フェイルセーフへ突入し、
+ * 　ゲスト画面で視界内の通常AIが一瞬全消滅（点滅フリーズ）する現象を100%根絶
+ * ・【パケット・バジェット（事前容量割り当て）方式維持】
  * ・【全人間プレイヤー視界保証同期維持】
  * ・【餌同期の絶対座標化維持】queueFoodPick (x, y) 運用
  * ・【重要システムパケットのレートリミットバイパス維持】
@@ -220,7 +219,7 @@ export const NetBroadcaster = {
                         const startIndex = (this._aiSliceIndex * BATCH_SIZE) % totalRegular;
                         this._aiSliceIndex = (this._aiSliceIndex + 1) % Math.ceil(totalRegular / BATCH_SIZE);
 
-                        for (let i = startIndex; i < startIndex + BATCH_SIZE && candidates.length < 12; i++) {
+                        for (let i = startIndex; i < startIndex + BATCH_SIZE && candidates.length < 8; i++) {
                             const targetIdx = i % totalRegular;
                             const ai = regularAIs[targetIdx];
                             if (ai && !selectedSet.has(ai)) {
@@ -230,9 +229,9 @@ export const NetBroadcaster = {
                         }
                     }
 
-                    // バジェット（容量予算）の許す限りタプル化して投入（1タプル約38B）
+                    // バジェット（容量予算）の許す限りタプル化して投入（実測値に即した1タプル48B計算）
                     for (let c = 0; c < candidates.length; c++) {
-                        if (budget < 45) break; // 容量安全マージン
+                        if (budget < 55) break; // 容量安全マージン
 
                         const ai = candidates[c];
                         let aiSlot;
@@ -243,7 +242,7 @@ export const NetBroadcaster = {
                         }
 
                         tuplesList.push(encodeSnakeToTuple(ai, aiSlot, false));
-                        budget -= 38;
+                        budget -= 48;
                     }
                 }
             }
