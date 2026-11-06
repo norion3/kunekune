@@ -1,7 +1,11 @@
 // ==============================================================================
 // 『くねくねバトル オンライン』Phase 7 マスター統合オーケストレーター (main.js)
-// v55.0.0 ブーストボタン動的無効化監視連携版:
-// ・【ブーストボタンの動的無効化監視連携】
+// v56.0.0 ブースト音響・加速状態完全同期＆動的無効化版:
+// ・【ブースト音響・加速状態完全同期制御】
+// 　ブーストボタンを押し続けていても、スコアが60以下になって加速が強制解除された瞬間に
+// 　ブースト音を即座に完全停止！音の制御トリガーを「指のタッチ判定」から
+// 　「スネークの実加速状態（player.isBoosting）」へ完全同期させ、鳴りっぱなし問題を根本根絶
+// ・【ブーストボタンの動的無効化監視連携維持】
 // 　メインループ（gameLoop）内で毎フレーム player.score を監視し、
 // 　ui_binder.js の updateBoostButtonState を呼び出してブーストボタンの有効/無効を制御。
 // 　スコア60以下の際にボタンをグレーアウトさせるUI連携を確立
@@ -65,7 +69,6 @@ import { AIManager } from './ai.js';
 import { CameraManager } from './camera.js';
 import { NetworkManager } from './network.js';
 import { NetBroadcaster } from './net_broadcaster.js';
-// ★ updateBoostButtonState を追加インポート
 import { initUIBindings, updateZoomButtonsState, updateBoostButtonState } from './ui_binder.js';
 import { setupNetworkHandlers } from './net_handlers.js';
 import { handleHostMigration } from './host_migration.js';
@@ -135,8 +138,10 @@ const ctx = canvas.getContext('2d', { alpha: false });
 
 const input = new InputManager();
 input.init(canvas, (isBoosting) => {
-    if (isBoosting) Sound.startBoostSound();
-    else Sound.stopBoostSound();
+    // 物理的な指のタッチ解除時は即座に停止
+    if (!isBoosting) {
+        Sound.stopBoostSound();
+    }
 });
 
 const hud = new HUDManager();
@@ -686,6 +691,17 @@ function gameLoop() {
                 inputAngle = Math.atan2(input.y, input.x);
             }
             player.updatePhysics(dtSec, inputAngle, input.boost);
+
+            // =========================================================================
+            // ★ 【ブースト音響・加速状態完全同期制御】
+            // 押し続けていてもスコアが60以下になってブーストが強制解除された瞬間に
+            // 音を即時停止。逆にブーストが成立している時のみ確実に音を発音する。
+            // =========================================================================
+            if (player.isBoosting) {
+                Sound.startBoostSound();
+            } else {
+                Sound.stopBoostSound();
+            }
 
             // =========================================================================
             // ★ 【ブーストボタンの動的無効化監視】
