@@ -1,6 +1,9 @@
 // ==============================================================================
 // 『くねくねバトル オンライン』マルチプレイ通信プロトコル ＆ 極小タプルパッカー (net_protocol.js)
-// v29.0.0 リアルタイム動的顔タイプ・マイアイコン同期(faceIdx)完全対応版:
+// v29.1.0 初期スコア100同期（タプルフォールバック適正化）版:
+// ・【初期スコア100適正化（エンコード時スコアフォールバックの同期）】
+// 　初期スコア100への改定に合わせ、encodeSnakeToTuple 内のスネークスコア・
+// 　フォールバック値を 50 から 100（Math.floor(snake.score || 100)）へ整合
 // ・【動的顔タイプ(faceIdx)タプル統合】
 // 　FACE_TYPES（全6種: normal, angry, happy, smile, cute, user_avatar）を定義し、
 // 　encodeSnakeToTuple の第11要素として snake.face から動的算出した faceIdx を追加！
@@ -90,7 +93,7 @@ export function encodeSnakeToTuple(snake, slot, isHost = false) {
         round2(snake.angle),
         round1(snake.speed),
         Math.floor(snake.targetLength || 10),
-        Math.floor(snake.score || 50),
+        Math.floor(snake.score || 100),
         flags,
         Math.floor(snake.kills || 0),
         colorIdx,

@@ -1,6 +1,10 @@
 // ==============================================================================
 // 『くねくねバトル オンライン』スネークエンティティクラス (snake.js)
-// v44.0.0 絵文字サロゲートペア安全トリム＆長大ネーム枠はみ出し完全根絶版:
+// v45.0.0 初期スコア100適正化＆開幕テンポ向上版:
+// ・【初期スコア100適正化（開幕テンポ向上）】
+// 　スポーン時およびリスポーン時の初期スコアを 50 から 100 へ引き上げ！
+// 　開幕直後からブースト（閾値60以上）を約1.9秒間存分に使用可能となり、
+// 　開始直後のテンポ感および緊急離脱能力を大幅に向上
 // ・【絵文字・サロゲートペア安全トリム（文字化け完全防止）】
 // 　従来の .slice(0, 9) で絵文字が途中で2分割され末尾が文字化け（）する問題を解消！
 // 　Array.from() により絵文字や特殊記号を1文字として正確にカウントし、
@@ -62,7 +66,7 @@ export class Snake {
         this.speed = BASE_SPEED;
         this.turnSpeed = isPlayer ? TURN_SPEED_PLAYER : 0.08;
 
-        this.score = 50;
+        this.score = 100;
         this.size = 14;
         this.targetLength = 16;
         
@@ -106,7 +110,7 @@ export class Snake {
         this.y = spawnY;
         this.angle = Math.random() * Math.PI * 2;
         this.targetAngle = this.angle;
-        this.score = 50;
+        this.score = 100;
         this.recalculateSize();
         this.maxSize = this.size;
         
