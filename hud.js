@@ -1,17 +1,17 @@
 // ==============================================================================
 // 『くねくねバトル オンライン』一体型HUD ＆ 自機中心相対追従レーダー (hud.js)
-// v36.0.0 MAP上1〜3位王冠表示（カラー＆黄金比シルエット完全最適化版）:
-// ・【1〜3位王冠カラーの完全最適化（赤枠・くすみ根絶）】
-// 　背景のダークパープルに溶け込んで汚く見えていたオーラ色を、高輝度・高彩度に刷新。
-// 　1位金は「純金イエロー」、2位銀は「アイシーシルバー」、3位銅は赤みを抜いた
-// 　「アンバー（琥珀）オレンジ」へと変更し、不自然な赤枠感や泥のような濁りを100%払拭！
-// ・【王冠シルエットの黄金比スマート化】
-// 　横に間延びして不格好だった王冠の縦横比を、黄金比（約1:1.618）ベースに再計算。
-// 　枠内のミニクラウンは横幅を絞って高さを出し「シュッとした高貴なシルエット」へ。
-// 　枠外のポインターは左右の突起を畳み、進行方向へ鋭く突き刺さる「スタイリッシュな矢印」へ進化
-// ・【レーダー内王冠(ミニクラウン)の大幅サイズアップ維持】
-// ・【王冠マークのゆらぎ（伸縮）完全撤廃維持】
-// ・【王冠シルエットの底辺の直線(フラット)化維持】
+// v37.0.0 レーダー王冠エンブレム化（丸メダル＋くり抜き王冠＆1位パルス波紋版）:
+// ・【枠内Top 3メダルエンブレム化】
+// 　従来の極小王冠で発生していた「トゲの潰れ」「金色のゴミに見える問題」を完全解消！
+// 　直径13pxの真円高輝度メダル（1位:金, 2位:銀, 3位:銅）をベースに、
+// 　背景ダークパープル（#0b051a）でデフォルメされたボールド王冠シルエットをくり抜き描画。
+// 　縮小Canvas上でも輪郭が絶対に破綻せず、一目で賞金首ランカーと直感認識可能
+// ・【1位限定プレミアムパルス波紋演出】
+// 　1位（ゴールド）のみ、背後に滑らかな黄金パルスリング（1.5秒周期の透過波紋）を展開！
+// 　周囲の黄色い餌や自機マーカーとの色被りを打破し、圧倒的ボスの風格と討伐対象としての存在感を強調
+// ・【枠外ポインターの勲章型シャープ化】
+// 　外周吸着ポインターを、鋭角先端＋ミニメダルサークルがドッキングした「勲章型矢印」へ刷新。
+// 　画面外のランカーがいる方角を正確かつスタイリッシュに指示
 // ・【絶対座標直描によるCanvasマトリクス破壊・MAP消失の完全根絶維持】
 // ・【NaN/Undefined絶対防護＆try-finally描画保証維持】
 // ・【自機除外ルール＆王冠表示数の動的整合維持】
@@ -28,11 +28,11 @@ import { MAX_PLAYERS } from './constants.js';
 import { NetworkManager } from './network.js';
 import { resetLeaderboardCache } from './net_handlers.js';
 
-// ★ 王冠ランク別スタイル定義（濁り・赤枠を根絶した高輝度最適化パレット）
+// ★ 王冠ランク別スタイル定義（高輝度メダルカラー＆オーラパレット）
 const CROWN_CONFIGS = [
-    { rank: 1, fill: '#fef08a', glow: '#fde047' }, // 1位: 金 (クリアレモンゴールド)
-    { rank: 2, fill: '#ffffff', glow: '#7dd3fc' }, // 2位: 銀 (アイシーシルバー)
-    { rank: 3, fill: '#f59e0b', glow: '#d97706' }  // 3位: 銅 (アンバー・キャメルオレンジ)
+    { rank: 1, fill: '#fef08a', glow: '#fde047', border: '#ca8a04' }, // 1位: 金 (クリアレモンゴールド)
+    { rank: 2, fill: '#ffffff', glow: '#7dd3fc', border: '#94a3b8' }, // 2位: 銀 (アイシーシルバー)
+    { rank: 3, fill: '#f59e0b', glow: '#d97706', border: '#b45309' }  // 3位: 銅 (アンバー・キャメルオレンジ)
 ];
 
 export class HUDManager {
@@ -202,65 +202,76 @@ export class HUDManager {
                         const drawY = radarCenter + dy * radarRatio;
 
                         // =========================================================================
-                        // ★ 【最優先：1〜3位（Top 3）王冠マーク描画（黄金比スリム化）】
+                        // ★ 【最優先：1〜3位（Top 3）エンブレムマーク描画（丸バッジ＋くり抜き王冠）】
                         // =========================================================================
                         const crownRank = top3Map.get(s);
                         if (crownRank !== undefined && crownRank >= 1 && crownRank <= 3) {
                             const config = CROWN_CONFIGS[crownRank - 1];
-                            const inBounds = (drawX >= 7 && drawX <= this.radarSize - 7 && drawY >= 7 && drawY <= this.radarSize - 7);
+                            const inBounds = (drawX >= 8 && drawX <= this.radarSize - 8 && drawY >= 8 && drawY <= this.radarSize - 8);
 
                             if (inBounds) {
-                                // ★ レーダー枠内：水平正立ミニクラウン（黄金比・横幅を絞り高さを出す）
-                                const w = 6.2; // 横幅を 8.0 -> 6.2 へ絞る
-                                const h = 6.8; // 高さを 6.5 -> 6.8 へ引き上げる
-                                const ow = w * 1.35;
-                                const oh = h * 1.35;
-
                                 rCtx.save();
 
-                                // 1. 背後の静的グローオーラ
-                                rCtx.beginPath();
-                                rCtx.moveTo(drawX - ow, drawY + oh * 0.6);
-                                rCtx.lineTo(drawX - ow * 0.85, drawY - oh * 0.5);
-                                rCtx.lineTo(drawX - ow * 0.35, drawY);
-                                rCtx.lineTo(drawX, drawY - oh * 1.05); // 中央をより高く
-                                rCtx.lineTo(drawX + ow * 0.35, drawY);
-                                rCtx.lineTo(drawX + ow * 0.85, drawY - oh * 0.5);
-                                rCtx.lineTo(drawX + ow, drawY + oh * 0.6);
-                                rCtx.closePath();
-                                rCtx.fillStyle = config.glow;
-                                rCtx.globalAlpha = 0.55; // 発光を少し強め
-                                rCtx.fill();
+                                // 1. 【1位限定：背後拡大パルスリング（黄金の波紋オーラ）】
+                                if (crownRank === 1) {
+                                    const waveProgress = ((this.radarFrameCount * 0.05) % 1.0); // 0.0 -> 1.0
+                                    const waveRadius = 6.8 + waveProgress * 9.0;
+                                    const waveAlpha = (1.0 - waveProgress) * 0.65;
 
-                                // 2. 本体の王冠塗り（底辺直線・スリムシルエット）
+                                    rCtx.strokeStyle = config.glow;
+                                    rCtx.lineWidth = 1.4;
+                                    rCtx.globalAlpha = waveAlpha;
+                                    rCtx.beginPath();
+                                    rCtx.arc(drawX, drawY, waveRadius, 0, Math.PI * 2);
+                                    rCtx.stroke();
+                                }
+
+                                // 2. 【エンブレムベース：高輝度真円メダルサークル】
+                                const medalRadius = 6.5;
                                 rCtx.globalAlpha = 1.0;
-                                rCtx.beginPath();
-                                rCtx.moveTo(drawX - w, drawY + h * 0.6);
-                                rCtx.lineTo(drawX - w * 0.85, drawY - h * 0.5);
-                                rCtx.lineTo(drawX - w * 0.35, drawY);
-                                rCtx.lineTo(drawX, drawY - h * 1.05);
-                                rCtx.lineTo(drawX + w * 0.35, drawY);
-                                rCtx.lineTo(drawX + w * 0.85, drawY - h * 0.5);
-                                rCtx.lineTo(drawX + w, drawY + h * 0.6);
-                                rCtx.closePath();
+
+                                // 外枠シャドウ・発光
+                                rCtx.shadowColor = config.glow;
+                                rCtx.shadowBlur = 6;
                                 rCtx.fillStyle = config.fill;
+                                rCtx.beginPath();
+                                rCtx.arc(drawX, drawY, medalRadius, 0, Math.PI * 2);
                                 rCtx.fill();
 
-                                // 3. 輪郭線
+                                // シャドウリセットして輪郭黒枠
+                                rCtx.shadowBlur = 0;
                                 rCtx.strokeStyle = 'rgba(0, 0, 0, 0.95)';
                                 rCtx.lineWidth = 1.5;
-                                rCtx.lineJoin = 'round';
+                                rCtx.beginPath();
+                                rCtx.arc(drawX, drawY, medalRadius, 0, Math.PI * 2);
                                 rCtx.stroke();
+
+                                // 3. 【内側くり抜き：デフォルメ・ボールド王冠シルエット（#0b051a）】
+                                // 突起が潰れないよう太め＆くっきりとした幾何学パスを描画
+                                rCtx.fillStyle = '#0b051a';
+                                rCtx.beginPath();
+                                const cw = 3.6;
+                                const ch = 3.2;
+                                const cyOffset = 0.4;
+                                rCtx.moveTo(drawX - cw, drawY + cyOffset + ch * 0.5);
+                                rCtx.lineTo(drawX - cw, drawY + cyOffset - ch * 0.4);
+                                rCtx.lineTo(drawX - cw * 0.45, drawY + cyOffset + ch * 0.05);
+                                rCtx.lineTo(drawX, drawY + cyOffset - ch * 0.9); // 中央頂点
+                                rCtx.lineTo(drawX + cw * 0.45, drawY + cyOffset + ch * 0.05);
+                                rCtx.lineTo(drawX + cw, drawY + cyOffset - ch * 0.4);
+                                rCtx.lineTo(drawX + cw, drawY + cyOffset + ch * 0.5);
+                                rCtx.closePath();
+                                rCtx.fill();
 
                                 rCtx.restore();
                             } else {
-                                // ★ レーダー枠外：王冠矢印ポインター（黄金比・横の広がりを抑え前方を鋭角に）
+                                // ★ レーダー枠外：勲章型シャープポインター（鋭角先端＋ミニメダルサークル）
                                 const angle = Math.atan2(dy, dx);
                                 if (!Number.isFinite(angle)) continue;
 
                                 const cos = Math.cos(angle);
                                 const sin = Math.sin(angle);
-                                const halfSize = radarCenter - 6.5;
+                                const halfSize = radarCenter - 7.0;
 
                                 const denomX = Math.abs(cos) > 0.0001 ? Math.abs(cos) : 0.0001;
                                 const denomY = Math.abs(sin) > 0.0001 ? Math.abs(sin) : 0.0001;
@@ -268,68 +279,52 @@ export class HUDManager {
                                 const edgeX = radarCenter + cos * t;
                                 const edgeY = radarCenter + sin * t;
 
-                                const scale = 1.25; 
-                                
-                                const ux = cos;
-                                const uy = sin;
-                                const vx = -sin;
-                                const vy = cos;
-
-                                // 左右の突起（vx）の広がりを抑え、前方（ux）を鋭く伸ばす
-                                const tipX = edgeX + ux * 1.0 * scale; // 先端を少し前へ
-                                const tipY = edgeY + uy * 1.0 * scale;
-                                const lValleyX = edgeX - ux * 4.0 * scale + vx * 2.0 * scale; // 幅を2.5 -> 2.0
-                                const lValleyY = edgeY - uy * 4.0 * scale + vy * 2.0 * scale;
-                                const lPeakX = edgeX - ux * 2.5 * scale + vx * 4.2 * scale;   // 幅を5.0 -> 4.2
-                                const lPeakY = edgeY - uy * 2.5 * scale + vy * 4.2 * scale;
-                                const lBaseX = edgeX - ux * 7.5 * scale + vx * 3.8 * scale;   // 幅を4.5 -> 3.8
-                                const lBaseY = edgeY - uy * 7.5 * scale + vy * 3.8 * scale;
-
-                                const rBaseX = edgeX - ux * 7.5 * scale - vx * 3.8 * scale;
-                                const rBaseY = edgeY - uy * 7.5 * scale - vy * 3.8 * scale;
-                                const rPeakX = edgeX - ux * 2.5 * scale - vx * 4.2 * scale;
-                                const rPeakY = edgeY - uy * 2.5 * scale - vy * 4.2 * scale;
-                                const rValleyX = edgeX - ux * 4.0 * scale - vx * 2.0 * scale;
-                                const rValleyY = edgeY - uy * 4.0 * scale - vy * 2.0 * scale;
-
                                 rCtx.save();
 
-                                // 1. 背後の静的グローオーラ
-                                rCtx.beginPath();
-                                rCtx.moveTo(tipX + ux * 1.5, tipY + uy * 1.5);
-                                rCtx.lineTo(lValleyX + ux * 1.0 + vx * 1.5, lValleyY + uy * 1.0 + vy * 1.5);
-                                rCtx.lineTo(lPeakX + vx * 1.5, lPeakY + vy * 1.5);
-                                rCtx.lineTo(lBaseX - ux * 1.5 + vx * 1.5, lBaseY - uy * 1.5 + vy * 1.5);
-                                rCtx.lineTo(rBaseX - ux * 1.5 - vx * 1.5, rBaseY - uy * 1.5 - vy * 1.5);
-                                rCtx.lineTo(rPeakX - vx * 1.5, rPeakY - vy * 1.5);
-                                rCtx.lineTo(rValleyX + ux * 1.0 - vx * 1.5, rValleyY + uy * 1.0 - vy * 1.5);
-                                rCtx.closePath();
-                                rCtx.fillStyle = config.glow;
-                                rCtx.globalAlpha = 0.55;
-                                rCtx.fill();
+                                // 1. 【1位限定：外周ポインターのパルスオーラ】
+                                if (crownRank === 1) {
+                                    const pPulse = 1.0 + Math.sin(this.radarFrameCount * 0.16) * 0.25;
+                                    rCtx.fillStyle = config.glow;
+                                    rCtx.globalAlpha = 0.45;
+                                    rCtx.beginPath();
+                                    rCtx.arc(edgeX - cos * 5.0, edgeY - sin * 5.0, 7.5 * pPulse, 0, Math.PI * 2);
+                                    rCtx.fill();
+                                }
 
-                                // 2. 本体の王冠矢印パス
+                                // 2. 【シャープ矢印ヘッド（先端）】
+                                const arrowLen = 9.0;
+                                const arrowHalfW = 4.8;
+                                const basePtX = edgeX - cos * arrowLen;
+                                const basePtY = edgeY - sin * arrowLen;
+                                const perpX = -sin * arrowHalfW;
+                                const perpY = cos * arrowHalfW;
+
                                 rCtx.globalAlpha = 1.0;
-                                rCtx.beginPath();
-                                rCtx.moveTo(tipX, tipY);
-                                rCtx.lineTo(lValleyX, lValleyY);
-                                rCtx.lineTo(lPeakX, lPeakY);
-                                rCtx.lineTo(lBaseX, lBaseY);
-                                rCtx.lineTo(rBaseX, rBaseY);
-                                rCtx.lineTo(rPeakX, rPeakY);
-                                rCtx.lineTo(rValleyX, rValleyY);
-                                rCtx.closePath();
                                 rCtx.fillStyle = config.fill;
+                                rCtx.beginPath();
+                                rCtx.moveTo(edgeX, edgeY);
+                                rCtx.lineTo(basePtX + perpX, basePtY + perpY);
+                                rCtx.lineTo(basePtX - perpX, basePtY - perpY);
+                                rCtx.closePath();
                                 rCtx.fill();
 
-                                // 3. 黒＋白のダブル輪郭線
                                 rCtx.strokeStyle = 'rgba(0, 0, 0, 0.95)';
                                 rCtx.lineWidth = 1.6;
                                 rCtx.lineJoin = 'round';
                                 rCtx.stroke();
 
-                                rCtx.strokeStyle = 'rgba(255, 255, 255, 0.85)';
-                                rCtx.lineWidth = 0.8;
+                                // 3. 【基部マウント：ミニメダルサークル】
+                                const badgeCenterDist = arrowLen * 0.72;
+                                const bcX = edgeX - cos * badgeCenterDist;
+                                const bcY = edgeY - sin * badgeCenterDist;
+
+                                rCtx.fillStyle = '#0b051a';
+                                rCtx.beginPath();
+                                rCtx.arc(bcX, bcY, 2.8, 0, Math.PI * 2);
+                                rCtx.fill();
+
+                                rCtx.strokeStyle = config.fill;
+                                rCtx.lineWidth = 1.2;
                                 rCtx.stroke();
 
                                 rCtx.restore();
