@@ -1,16 +1,15 @@
 // ==============================================================================
 // 『くねくねバトル オンライン』UIイベントバインダーモジュール (ui_binder.js)
-// v34.0.0 ブーストボタン動的無効化（超軽量状態キャッシュ版）追加:
-// ・【ブーストボタンの動的無効化（スコア60以下）】
-// 　スコアが60以下でブーストできない状態の際、ボタンに disabled クラスを付与し、
-// 　「押せるのに加速しない」という直感に反するUIをグレーアウトで適切に無効化。
-// 　状態キャッシュ（isBoostDisabled）を用いることで、状態変化が起きた1フレームしか
-// 　DOMアクセスが発生せず、毎フレーム呼び出してもFPS負荷（描画遅延）が実質ゼロの超軽量設計
+// v35.0.0 デバッグ無敵ボタン撤廃・本番UI完全クリーンアップ版:
+// ・【デバッグ用無敵シールドボタン(#btn-god-mode)イベントバインド撤廃】
+// 　dom.js からのボタン削除に伴い、無敵シールドボタンのイベントバインド処理を
+// 　安全に完全撤廃。参照エラーや不要なリスナー登録を根絶し初期化を軽量化
+// ・【ブーストボタンの動的無効化（スコア60以下）維持】
+// 　スコアが60以下でブーストできない状態の際、ボタンに disabled クラスを付与
 // ・【チャット送信二重発火の完全根絶（menu.js 一本化）維持】
 // ・【顔・マイアイコン即時マルチ同期維持】
 // ・【カスタムカラー即時マルチ同期維持】
 // ・【待機室＆メニュー走者リスト即時連動維持】
-// ・【デバッグ用無敵シールドボタン(#btn-god-mode)イベントバインド維持】
 // ・【リトライ明示連携(isExplicitRetry)維持】initGame(true, true)
 // ・【リトライタップ反応性向上維持】300ms デバウンス
 // ・【ズーム境界判定の浮動小数点誤差吸収維持】
@@ -177,21 +176,7 @@ export function initUIBindings(ctx) {
         });
     }
 
-    // 5. デバッグ用：無敵シールドボタン（高速タップ対応＆貫通防止＆トグル連動）
-    const btnGodMode = document.getElementById('btn-god-mode');
-    if (btnGodMode && !btnGodMode._hasGodModeBound) {
-        btnGodMode._hasGodModeBound = true;
-
-        bindFastTap(btnGodMode, () => {
-            const p = getPlayer();
-            if (p) {
-                p.isGodMode = !p.isGodMode;
-                btnGodMode.classList.toggle('active', p.isGodMode);
-            }
-        });
-    }
-
-    // 6. ロビー：ソロプレイ開始ボタン（1秒連打デバウンス付＆貫通防止）
+    // 5. ロビー：ソロプレイ開始ボタン（1秒連打デバウンス付＆貫通防止）
     const btnLobbySolo = document.getElementById('btn-lobby-solo');
     if (btnLobbySolo && !btnLobbySolo._hasSoloBound) {
         btnLobbySolo._hasSoloBound = true;
@@ -219,7 +204,7 @@ export function initUIBindings(ctx) {
         btnLobbySolo.addEventListener('click', onSoloTap);
     }
 
-    // 7. 待機室：ホスト専用ゲーム開始ボタン（1000ms連打デバウンス配備＆一斉開始連携＆貫通防止）
+    // 6. 待機室：ホスト専用ゲーム開始ボタン（1000ms連打デバウンス配備＆一斉開始連携＆貫通防止）
     const btnWaitingStart = document.getElementById('btn-waiting-start');
     if (btnWaitingStart && !btnWaitingStart._hasStartBound) {
         btnWaitingStart._hasStartBound = true;
@@ -251,7 +236,7 @@ export function initUIBindings(ctx) {
         btnWaitingStart.addEventListener('click', onStartTap);
     }
 
-    // 8. 待機室：退室ボタン（貫通防止）
+    // 7. 待機室：退室ボタン（貫通防止）
     const btnWaitingLeave = document.getElementById('btn-waiting-leave');
     if (btnWaitingLeave && !btnWaitingLeave._hasLeaveBound) {
         btnWaitingLeave._hasLeaveBound = true;
@@ -272,7 +257,7 @@ export function initUIBindings(ctx) {
     }
 
     // =========================================================================
-    // 9. ★ 【メニュー着せ替えコールバック（顔・アイコン＆カラー即時マルチ同期）】
+    // 8. ★ 【メニュー着せ替えコールバック（顔・アイコン＆カラー即時マルチ同期）】
     // 顔や色の変更時に自機 player だけでなく、NetworkManager.slots の face と color
     // を即座に更新し、即時パケット送信(forceImmediateSync)とスロット同期を相手へ伝達
     // =========================================================================
@@ -321,7 +306,7 @@ export function initUIBindings(ctx) {
         }
     });
 
-    // 10. リザルト画面：リトライボタン（直接リスポーン再戦化＆貫通防止＆300ms適正デバウンス）
+    // 9. リザルト画面：リトライボタン（直接リスポーン再戦化＆貫通防止＆300ms適正デバウンス）
     const btnRetry = document.getElementById('btn-retry');
     if (btnRetry && !btnRetry._hasRetryBound) {
         btnRetry._hasRetryBound = true;

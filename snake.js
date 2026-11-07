@@ -25,7 +25,7 @@
 // ・【リスポーン時撃破フラグ（_hasBeenKilled）初期化維持】
 // ・【ワープ時prevX/Y追従補正によるCCDデス・レーザー完全根絶維持】
 // ・【相手マイアイコン顔(user_avatar)のCanvas完全描画維持】
-// ・【デバッグ用無敵シールド(isGodMode)維持】外壁死スキップ＆不死身判定
+// ・【デバッグ用無敵シールド(isGodMode)デフォルトOFF化】自機不死身解除・正規判定適用
 // ・【外壁激突即死判定維持】
 // ・【とぐろ立体感＆生体ウロコ重なりレイヤード描画維持】
 // ・【ゼロ負荷設計＆生体テーパーウェーブ完全維持】
@@ -89,8 +89,8 @@ export class Snake {
         this.isVisible = true;
 
         this.invulnerableTimer = 0;
-        // ★ デバッグ用無敵シールド（デフォルトON・維持）
-        this.isGodMode = isPlayer ? true : false;
+        // ★ デバッグ用無敵シールド（デフォルトOFF化：正規の撃破・死亡判定を適用）
+        this.isGodMode = false;
 
         this.aiLevel = isPlayer ? 0 : (Math.floor(Math.random() * 3) + 1);
         this.aiChangeTimer = Math.floor(Math.random() * 30);
