@@ -1,17 +1,20 @@
 // ==============================================================================
 // 『くねくねバトル オンライン』一体型HUD ＆ 自機中心相対追従レーダー (hud.js)
-// v38.0.0 黄金比ライン王冠ピクトグラム（丸枠＋均等3山ストローク線画版）:
-// ・【黄金比均等3山ライン王冠（塗りつぶしなし）】
-// 　ベタ塗りやくり抜き、過大な装飾を完全撤廃！画面内の既存ボタン（MENU等）と
-// 　美しく調和するミニマルな「線画（ストローク）アイコン」として再設計。
-// 　幅6.0px : 高さ3.7px（黄金比 1.62 : 1）で均等な高さの3つの山と直線の谷を構築し、
-// 　横の間延びや縮小解像度時のトゲ潰れを100%解消
-// ・【適正スケール（直径10.4px）への最適化】
-// 　自機マーカーや他走者アイコンとスケール感を1:1に統一。他の記号より浮く違和感を根絶
-// ・【点滅・波紋オーラ・明滅の完全撤廃】
-// 　パルス波紋やチカチカするアニメーションを全廃し、クリアな視界の完全静止表示へ
-// ・【枠外ポインターのシンプルシャープ矢印化】
-// 　外周ポインターの不要な装飾（ミニメダル・パルス）を排し、各ランク色のシャープな三角矢印（▲）に統一
+// v39.0.0 完全正立・内外完全同一ライン王冠（方向マーク全廃＆塗りつぶしなし版）:
+// ・【外も内も完全同一 ＆ 方向マーク（三角矢印）完全全廃】
+// 　「マークが存在している位置そのものが方角を示す」設計へ昇華！
+// 　外周の三角矢印やクチバシを100%全廃し、画面外の遠方にいる敵はレーダーの縁に
+// 　そのままクランプ吸着。接近した際は実際の位置へシームレスに追従
+// ・【常時真上向き正立固定】
+// 　プレイヤーの向きや敵の角度に関係なく、王冠はレーダー上のどの位置にあっても
+// 　常にまっすぐ上（北）を向いた美しい水平正立（👑）をキープ
+// ・【塗りつぶしなし（純粋な美しいストローク線画）】
+// 　丸枠も王冠もベタ塗りを完全排除！既存のUIボタン（MENU等）と調和する
+// 　ミニマルな単色ラインアートとし、金（#fde047）・銀（#ffffff）・銅（#f59e0b）の
+// 　線の色だけで一目瞭然に順位を識別
+// ・【黄金比均等3山（幅 5.8px : 高さ 3.6px）＆ 適正スケール（直径 10.8px）】
+// 　3つの山が完全に同一の高さで水平に整列し、横の間延びや他の記号より浮く違和感を根絶
+// ・【点滅・波紋オーラ・明滅の完全撤廃】完全静止によるクリアな索敵視界
 // ・【絶対座標直描によるCanvasマトリクス破壊・MAP消失の完全根絶維持】
 // ・【NaN/Undefined絶対防護＆try-finally描画保証維持】
 // ・【自機除外ルール＆王冠表示数の動的整合維持】
@@ -202,98 +205,93 @@ export class HUDManager {
                         const drawY = radarCenter + dy * radarRatio;
 
                         // =========================================================================
-                        // ★ 【最優先：1〜3位（Top 3）黄金比ライン王冠（丸枠＋均等3山ストローク線画）】
+                        // ★ 【最優先：1〜3位（Top 3）完全正立・統一ライン王冠（外も内も完全同一・上向き固定）】
                         // =========================================================================
                         const crownRank = top3Map.get(s);
                         if (crownRank !== undefined && crownRank >= 1 && crownRank <= 3) {
                             const config = CROWN_CONFIGS[crownRank - 1];
-                            const inBounds = (drawX >= 7 && drawX <= this.radarSize - 7 && drawY >= 7 && drawY <= this.radarSize - 7);
 
-                            if (inBounds) {
-                                rCtx.save();
-                                rCtx.globalAlpha = 1.0;
+                            // 外周境界マージン（直径10.8pxの円がレーダー枠内に美しく収まる境界値）
+                            const margin = 7.5;
+                            const inBounds = (drawX >= margin && drawX <= this.radarSize - margin && drawY >= margin && drawY <= this.radarSize - margin);
 
-                                const strokeCol = config.color;
-                                const circleRadius = 5.2; // 直径 10.4px（他のマーカーと揃う適正スケール）
+                            let targetX = drawX;
+                            let targetY = drawY;
 
-                                // 1. 【外側の丸枠：単色ストローク（塗りつぶしなし）】
-                                rCtx.strokeStyle = strokeCol;
-                                rCtx.lineWidth = 1.2;
-                                rCtx.beginPath();
-                                rCtx.arc(drawX, drawY, circleRadius, 0, Math.PI * 2);
-                                rCtx.stroke();
-
-                                // 2. 【内側の均等3山王冠：黄金比ストローク線画（塗りつぶしなし）】
-                                // 幅 6.0px : 高さ 3.7px (黄金比 1.62 : 1)
-                                const halfW = 3.0;
-                                const baseHalfW = 2.6; // 底辺をわずかに絞って洗練されたプロポーションに
-                                const crownTopY = drawY - 1.8;
-                                const crownBottomY = drawY + 1.9;
-                                const valleyY = drawY + 0.5;
-
-                                rCtx.strokeStyle = strokeCol;
-                                rCtx.lineWidth = 1.2;
-                                rCtx.lineCap = 'round';
-                                rCtx.lineJoin = 'round';
-
-                                rCtx.beginPath();
-                                // 水平底辺
-                                rCtx.moveTo(drawX - baseHalfW, crownBottomY);
-                                rCtx.lineTo(drawX + baseHalfW, crownBottomY);
-                                // 右壁立ち上がり -> 右の山
-                                rCtx.lineTo(drawX + halfW, crownTopY);
-                                // 右の谷
-                                rCtx.lineTo(drawX + halfW * 0.45, valleyY);
-                                // 中央の山（頂点の高さは左右と完全均等）
-                                rCtx.lineTo(drawX, crownTopY);
-                                // 左の谷
-                                rCtx.lineTo(drawX - halfW * 0.45, valleyY);
-                                // 左の山 -> 左壁
-                                rCtx.lineTo(drawX - halfW, crownTopY);
-                                rCtx.lineTo(drawX - baseHalfW, crownBottomY);
-                                rCtx.stroke();
-
-                                rCtx.restore();
-                            } else {
-                                // ★ レーダー枠外：シンプル＆シャープな単色三角矢印ポインター（▲）
+                            // 枠外にいる場合は、方向を示す外周の縁へ幾何学的に吸着（マークの位置自体が方向を提示）
+                            if (!inBounds) {
                                 const angle = Math.atan2(dy, dx);
                                 if (!Number.isFinite(angle)) continue;
 
                                 const cos = Math.cos(angle);
                                 const sin = Math.sin(angle);
-                                const halfSize = radarCenter - 6.5;
+                                const halfSize = radarCenter - margin;
 
                                 const denomX = Math.abs(cos) > 0.0001 ? Math.abs(cos) : 0.0001;
                                 const denomY = Math.abs(sin) > 0.0001 ? Math.abs(sin) : 0.0001;
                                 const t = Math.min(halfSize / denomX, halfSize / denomY);
-                                const edgeX = radarCenter + cos * t;
-                                const edgeY = radarCenter + sin * t;
-
-                                rCtx.save();
-                                rCtx.globalAlpha = 1.0;
-
-                                const arrowLen = 8.5;
-                                const arrowHalfW = 4.2;
-                                const basePtX = edgeX - cos * arrowLen;
-                                const basePtY = edgeY - sin * arrowLen;
-                                const perpX = -sin * arrowHalfW;
-                                const perpY = cos * arrowHalfW;
-
-                                rCtx.fillStyle = config.color;
-                                rCtx.beginPath();
-                                rCtx.moveTo(edgeX, edgeY);
-                                rCtx.lineTo(basePtX + perpX, basePtY + perpY);
-                                rCtx.lineTo(basePtX - perpX, basePtY - perpY);
-                                rCtx.closePath();
-                                rCtx.fill();
-
-                                rCtx.strokeStyle = 'rgba(0, 0, 0, 0.95)';
-                                rCtx.lineWidth = 1.5;
-                                rCtx.lineJoin = 'round';
-                                rCtx.stroke();
-
-                                rCtx.restore();
+                                targetX = radarCenter + cos * t;
+                                targetY = radarCenter + sin * t;
                             }
+
+                            rCtx.save();
+                            rCtx.globalAlpha = 1.0;
+
+                            const strokeCol = config.color;
+                            const circleRadius = 5.4; // 直径 10.8px（他マーカーと揃う適正スケール）
+
+                            // 1. 【視認性保護：黒下地ストローク】背景や餌に埋もれないよう線の外側に極細黒アウトライン
+                            rCtx.strokeStyle = 'rgba(0, 0, 0, 0.95)';
+                            rCtx.lineWidth = 2.4;
+                            rCtx.lineCap = 'round';
+                            rCtx.lineJoin = 'round';
+
+                            // 黒下地：丸枠
+                            rCtx.beginPath();
+                            rCtx.arc(targetX, targetY, circleRadius, 0, Math.PI * 2);
+                            rCtx.stroke();
+
+                            // 黒下地：均等3山王冠（幅 5.8px : 高さ 3.6px の黄金比）
+                            const halfW = 2.9;
+                            const baseHalfW = 2.5;
+                            const topY = targetY - 1.8;
+                            const bottomY = targetY + 1.8;
+                            const valleyY = targetY + 0.4;
+                            const valleyX = 1.4;
+
+                            rCtx.beginPath();
+                            rCtx.moveTo(targetX - baseHalfW, bottomY);
+                            rCtx.lineTo(targetX + baseHalfW, bottomY);
+                            rCtx.lineTo(targetX + halfW, topY);
+                            rCtx.lineTo(targetX + valleyX, valleyY);
+                            rCtx.lineTo(targetX, topY);
+                            rCtx.lineTo(targetX - valleyX, valleyY);
+                            rCtx.lineTo(targetX - halfW, topY);
+                            rCtx.closePath();
+                            rCtx.stroke();
+
+                            // 2. 【メインストローク：塗りつぶしなし・単色ラインアート】
+                            rCtx.strokeStyle = strokeCol;
+                            rCtx.lineWidth = 1.3;
+
+                            // メイン：丸枠
+                            rCtx.beginPath();
+                            rCtx.arc(targetX, targetY, circleRadius, 0, Math.PI * 2);
+                            rCtx.stroke();
+
+                            // メイン：均等3山王冠（常時真上向き・塗りつぶしなし）
+                            rCtx.beginPath();
+                            rCtx.moveTo(targetX - baseHalfW, bottomY);
+                            rCtx.lineTo(targetX + baseHalfW, bottomY);
+                            rCtx.lineTo(targetX + halfW, topY);
+                            rCtx.lineTo(targetX + valleyX, valleyY);
+                            rCtx.lineTo(targetX, topY);
+                            rCtx.lineTo(targetX - valleyX, valleyY);
+                            rCtx.lineTo(targetX - halfW, topY);
+                            rCtx.closePath();
+                            rCtx.stroke();
+
+                            rCtx.restore();
                             continue; // ★ Top 3 処理完了のため、後続の人間・AI判定をバイパス
                         }
 
