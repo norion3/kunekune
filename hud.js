@@ -1,17 +1,17 @@
 // ==============================================================================
 // 『くねくねバトル オンライン』一体型HUD ＆ 自機中心相対追従レーダー (hud.js)
-// v37.0.0 レーダー王冠エンブレム化（丸メダル＋くり抜き王冠＆1位パルス波紋版）:
-// ・【枠内Top 3メダルエンブレム化】
-// 　従来の極小王冠で発生していた「トゲの潰れ」「金色のゴミに見える問題」を完全解消！
-// 　直径13pxの真円高輝度メダル（1位:金, 2位:銀, 3位:銅）をベースに、
-// 　背景ダークパープル（#0b051a）でデフォルメされたボールド王冠シルエットをくり抜き描画。
-// 　縮小Canvas上でも輪郭が絶対に破綻せず、一目で賞金首ランカーと直感認識可能
-// ・【1位限定プレミアムパルス波紋演出】
-// 　1位（ゴールド）のみ、背後に滑らかな黄金パルスリング（1.5秒周期の透過波紋）を展開！
-// 　周囲の黄色い餌や自機マーカーとの色被りを打破し、圧倒的ボスの風格と討伐対象としての存在感を強調
-// ・【枠外ポインターの勲章型シャープ化】
-// 　外周吸着ポインターを、鋭角先端＋ミニメダルサークルがドッキングした「勲章型矢印」へ刷新。
-// 　画面外のランカーがいる方角を正確かつスタイリッシュに指示
+// v38.0.0 黄金比ライン王冠ピクトグラム（丸枠＋均等3山ストローク線画版）:
+// ・【黄金比均等3山ライン王冠（塗りつぶしなし）】
+// 　ベタ塗りやくり抜き、過大な装飾を完全撤廃！画面内の既存ボタン（MENU等）と
+// 　美しく調和するミニマルな「線画（ストローク）アイコン」として再設計。
+// 　幅6.0px : 高さ3.7px（黄金比 1.62 : 1）で均等な高さの3つの山と直線の谷を構築し、
+// 　横の間延びや縮小解像度時のトゲ潰れを100%解消
+// ・【適正スケール（直径10.4px）への最適化】
+// 　自機マーカーや他走者アイコンとスケール感を1:1に統一。他の記号より浮く違和感を根絶
+// ・【点滅・波紋オーラ・明滅の完全撤廃】
+// 　パルス波紋やチカチカするアニメーションを全廃し、クリアな視界の完全静止表示へ
+// ・【枠外ポインターのシンプルシャープ矢印化】
+// 　外周ポインターの不要な装飾（ミニメダル・パルス）を排し、各ランク色のシャープな三角矢印（▲）に統一
 // ・【絶対座標直描によるCanvasマトリクス破壊・MAP消失の完全根絶維持】
 // ・【NaN/Undefined絶対防護＆try-finally描画保証維持】
 // ・【自機除外ルール＆王冠表示数の動的整合維持】
@@ -28,11 +28,11 @@ import { MAX_PLAYERS } from './constants.js';
 import { NetworkManager } from './network.js';
 import { resetLeaderboardCache } from './net_handlers.js';
 
-// ★ 王冠ランク別スタイル定義（高輝度メダルカラー＆オーラパレット）
+// ★ 王冠ランク別スタイル定義（高輝度ソリッドラインカラー）
 const CROWN_CONFIGS = [
-    { rank: 1, fill: '#fef08a', glow: '#fde047', border: '#ca8a04' }, // 1位: 金 (クリアレモンゴールド)
-    { rank: 2, fill: '#ffffff', glow: '#7dd3fc', border: '#94a3b8' }, // 2位: 銀 (アイシーシルバー)
-    { rank: 3, fill: '#f59e0b', glow: '#d97706', border: '#b45309' }  // 3位: 銅 (アンバー・キャメルオレンジ)
+    { rank: 1, color: '#fde047' }, // 1位: 金 (レモンゴールド)
+    { rank: 2, color: '#ffffff' }, // 2位: 銀 (アイシーホワイト)
+    { rank: 3, color: '#f59e0b' }  // 3位: 銅 (アンバーオレンジ)
 ];
 
 export class HUDManager {
@@ -202,76 +202,66 @@ export class HUDManager {
                         const drawY = radarCenter + dy * radarRatio;
 
                         // =========================================================================
-                        // ★ 【最優先：1〜3位（Top 3）エンブレムマーク描画（丸バッジ＋くり抜き王冠）】
+                        // ★ 【最優先：1〜3位（Top 3）黄金比ライン王冠（丸枠＋均等3山ストローク線画）】
                         // =========================================================================
                         const crownRank = top3Map.get(s);
                         if (crownRank !== undefined && crownRank >= 1 && crownRank <= 3) {
                             const config = CROWN_CONFIGS[crownRank - 1];
-                            const inBounds = (drawX >= 8 && drawX <= this.radarSize - 8 && drawY >= 8 && drawY <= this.radarSize - 8);
+                            const inBounds = (drawX >= 7 && drawX <= this.radarSize - 7 && drawY >= 7 && drawY <= this.radarSize - 7);
 
                             if (inBounds) {
                                 rCtx.save();
-
-                                // 1. 【1位限定：背後拡大パルスリング（黄金の波紋オーラ）】
-                                if (crownRank === 1) {
-                                    const waveProgress = ((this.radarFrameCount * 0.05) % 1.0); // 0.0 -> 1.0
-                                    const waveRadius = 6.8 + waveProgress * 9.0;
-                                    const waveAlpha = (1.0 - waveProgress) * 0.65;
-
-                                    rCtx.strokeStyle = config.glow;
-                                    rCtx.lineWidth = 1.4;
-                                    rCtx.globalAlpha = waveAlpha;
-                                    rCtx.beginPath();
-                                    rCtx.arc(drawX, drawY, waveRadius, 0, Math.PI * 2);
-                                    rCtx.stroke();
-                                }
-
-                                // 2. 【エンブレムベース：高輝度真円メダルサークル】
-                                const medalRadius = 6.5;
                                 rCtx.globalAlpha = 1.0;
 
-                                // 外枠シャドウ・発光
-                                rCtx.shadowColor = config.glow;
-                                rCtx.shadowBlur = 6;
-                                rCtx.fillStyle = config.fill;
-                                rCtx.beginPath();
-                                rCtx.arc(drawX, drawY, medalRadius, 0, Math.PI * 2);
-                                rCtx.fill();
+                                const strokeCol = config.color;
+                                const circleRadius = 5.2; // 直径 10.4px（他のマーカーと揃う適正スケール）
 
-                                // シャドウリセットして輪郭黒枠
-                                rCtx.shadowBlur = 0;
-                                rCtx.strokeStyle = 'rgba(0, 0, 0, 0.95)';
-                                rCtx.lineWidth = 1.5;
+                                // 1. 【外側の丸枠：単色ストローク（塗りつぶしなし）】
+                                rCtx.strokeStyle = strokeCol;
+                                rCtx.lineWidth = 1.2;
                                 rCtx.beginPath();
-                                rCtx.arc(drawX, drawY, medalRadius, 0, Math.PI * 2);
+                                rCtx.arc(drawX, drawY, circleRadius, 0, Math.PI * 2);
                                 rCtx.stroke();
 
-                                // 3. 【内側くり抜き：デフォルメ・ボールド王冠シルエット（#0b051a）】
-                                // 突起が潰れないよう太め＆くっきりとした幾何学パスを描画
-                                rCtx.fillStyle = '#0b051a';
+                                // 2. 【内側の均等3山王冠：黄金比ストローク線画（塗りつぶしなし）】
+                                // 幅 6.0px : 高さ 3.7px (黄金比 1.62 : 1)
+                                const halfW = 3.0;
+                                const baseHalfW = 2.6; // 底辺をわずかに絞って洗練されたプロポーションに
+                                const crownTopY = drawY - 1.8;
+                                const crownBottomY = drawY + 1.9;
+                                const valleyY = drawY + 0.5;
+
+                                rCtx.strokeStyle = strokeCol;
+                                rCtx.lineWidth = 1.2;
+                                rCtx.lineCap = 'round';
+                                rCtx.lineJoin = 'round';
+
                                 rCtx.beginPath();
-                                const cw = 3.6;
-                                const ch = 3.2;
-                                const cyOffset = 0.4;
-                                rCtx.moveTo(drawX - cw, drawY + cyOffset + ch * 0.5);
-                                rCtx.lineTo(drawX - cw, drawY + cyOffset - ch * 0.4);
-                                rCtx.lineTo(drawX - cw * 0.45, drawY + cyOffset + ch * 0.05);
-                                rCtx.lineTo(drawX, drawY + cyOffset - ch * 0.9); // 中央頂点
-                                rCtx.lineTo(drawX + cw * 0.45, drawY + cyOffset + ch * 0.05);
-                                rCtx.lineTo(drawX + cw, drawY + cyOffset - ch * 0.4);
-                                rCtx.lineTo(drawX + cw, drawY + cyOffset + ch * 0.5);
-                                rCtx.closePath();
-                                rCtx.fill();
+                                // 水平底辺
+                                rCtx.moveTo(drawX - baseHalfW, crownBottomY);
+                                rCtx.lineTo(drawX + baseHalfW, crownBottomY);
+                                // 右壁立ち上がり -> 右の山
+                                rCtx.lineTo(drawX + halfW, crownTopY);
+                                // 右の谷
+                                rCtx.lineTo(drawX + halfW * 0.45, valleyY);
+                                // 中央の山（頂点の高さは左右と完全均等）
+                                rCtx.lineTo(drawX, crownTopY);
+                                // 左の谷
+                                rCtx.lineTo(drawX - halfW * 0.45, valleyY);
+                                // 左の山 -> 左壁
+                                rCtx.lineTo(drawX - halfW, crownTopY);
+                                rCtx.lineTo(drawX - baseHalfW, crownBottomY);
+                                rCtx.stroke();
 
                                 rCtx.restore();
                             } else {
-                                // ★ レーダー枠外：勲章型シャープポインター（鋭角先端＋ミニメダルサークル）
+                                // ★ レーダー枠外：シンプル＆シャープな単色三角矢印ポインター（▲）
                                 const angle = Math.atan2(dy, dx);
                                 if (!Number.isFinite(angle)) continue;
 
                                 const cos = Math.cos(angle);
                                 const sin = Math.sin(angle);
-                                const halfSize = radarCenter - 7.0;
+                                const halfSize = radarCenter - 6.5;
 
                                 const denomX = Math.abs(cos) > 0.0001 ? Math.abs(cos) : 0.0001;
                                 const denomY = Math.abs(sin) > 0.0001 ? Math.abs(sin) : 0.0001;
@@ -280,27 +270,16 @@ export class HUDManager {
                                 const edgeY = radarCenter + sin * t;
 
                                 rCtx.save();
+                                rCtx.globalAlpha = 1.0;
 
-                                // 1. 【1位限定：外周ポインターのパルスオーラ】
-                                if (crownRank === 1) {
-                                    const pPulse = 1.0 + Math.sin(this.radarFrameCount * 0.16) * 0.25;
-                                    rCtx.fillStyle = config.glow;
-                                    rCtx.globalAlpha = 0.45;
-                                    rCtx.beginPath();
-                                    rCtx.arc(edgeX - cos * 5.0, edgeY - sin * 5.0, 7.5 * pPulse, 0, Math.PI * 2);
-                                    rCtx.fill();
-                                }
-
-                                // 2. 【シャープ矢印ヘッド（先端）】
-                                const arrowLen = 9.0;
-                                const arrowHalfW = 4.8;
+                                const arrowLen = 8.5;
+                                const arrowHalfW = 4.2;
                                 const basePtX = edgeX - cos * arrowLen;
                                 const basePtY = edgeY - sin * arrowLen;
                                 const perpX = -sin * arrowHalfW;
                                 const perpY = cos * arrowHalfW;
 
-                                rCtx.globalAlpha = 1.0;
-                                rCtx.fillStyle = config.fill;
+                                rCtx.fillStyle = config.color;
                                 rCtx.beginPath();
                                 rCtx.moveTo(edgeX, edgeY);
                                 rCtx.lineTo(basePtX + perpX, basePtY + perpY);
@@ -309,22 +288,8 @@ export class HUDManager {
                                 rCtx.fill();
 
                                 rCtx.strokeStyle = 'rgba(0, 0, 0, 0.95)';
-                                rCtx.lineWidth = 1.6;
+                                rCtx.lineWidth = 1.5;
                                 rCtx.lineJoin = 'round';
-                                rCtx.stroke();
-
-                                // 3. 【基部マウント：ミニメダルサークル】
-                                const badgeCenterDist = arrowLen * 0.72;
-                                const bcX = edgeX - cos * badgeCenterDist;
-                                const bcY = edgeY - sin * badgeCenterDist;
-
-                                rCtx.fillStyle = '#0b051a';
-                                rCtx.beginPath();
-                                rCtx.arc(bcX, bcY, 2.8, 0, Math.PI * 2);
-                                rCtx.fill();
-
-                                rCtx.strokeStyle = config.fill;
-                                rCtx.lineWidth = 1.2;
                                 rCtx.stroke();
 
                                 rCtx.restore();
