@@ -1,18 +1,18 @@
 // ==============================================================================
 // 『くねくねバトル オンライン』一体型HUD ＆ 自機中心相対追従レーダー (hud.js)
-// v40.0.0 極細・直線ミニマル王冠（変な存在感ゼロ＆直線のみ＆極細0.8px線画版）:
-// ・【変な存在感を完全排除した極細控えめデザイン】
-// 　太い黒下地や二重線を全廃し、0.8pxの繊細な極細ストローク線画へ刷新！
-// 　線同士の隙間（空間の抜け）を広く確保し、線が潰れて文字（Wや山）に見える現象を根本根絶
-// ・【直線のみで構成されたミニマルピクトグラム】
-// 　曲線やアールを一切使わず、8本の直線セグメントのみで幾何学的に構成
-// ・【直径 9.6px への適正縮小＆自然な溶け込み】
-// 　サイズを控えめに小型化し、不透明度を 0.85 に設定することで、
-// 　レーダーの索敵や他マーカーを邪魔せず自然に溶け込むHUD表現を確立
-// ・【塗りつぶし完全禁止（完全透明ストローク維持）】
-// 　丸枠も王冠もベタ塗りを一切行わず、純粋な線画ストロークのみで描画
-// ・【外も内も完全同一 ＆ 常時上向き正立固定】
-// 　「マークの位置＝方向」の原則に基づき、矢印や回転を全廃して常時真上向き固定
+// v41.0.0 1〜3位同径ソリッド丸（完全同一サイズ＆◯の塗りつぶし＆色別識別版）:
+// ・【1〜3位 完全同サイズソリッド丸（直径 9.6px）】
+// 　王冠・星・文字などの細かな線画ピクトグラムを完全に全廃！
+// 　スマホ画面の縮小解像度下でも100%潰れない、均整の取れた「◯の塗りつぶし（ベタ塗り）」へ刷新。
+// 　1位・2位・3位の大きさを完全に同一（半径 4.8px / 直径 9.6px）に揃え、サイズ差による不揃い感を一掃
+// ・【色のみで直感識別（金・銀・銅の高発色パレット）】
+// 　1位: レモンゴールド（#fde047）、2位: アイシーホワイト（#ffffff）、3位: アンバーオレンジ（#f59e0b）。
+// 　0.8px の極細黒輪郭（rgba(0, 0, 0, 0.95)）により背景の濃紺に埋もれず輪郭を鮮明に保護
+// ・【外も内も完全同一 ＆ 方向矢印ゼロ】
+// 　「マークの位置＝方向」の原則に基づき、遠方にいる敵は外周の縁へクランプ吸着。
+// 　接近した際は実際の位置へそのまま追従し、マークの形状・サイズは一切変化しない
+// ・【完全静止（点滅・波紋・明滅ゼロ）】
+// 　チカチカする視覚ノイズを一切排し、レーダー本来のクリアな索敵視界を保証
 // ・【絶対座標直描によるCanvasマトリクス破壊・MAP消失の完全根絶維持】
 // ・【NaN/Undefined絶対防護＆try-finally描画保証維持】
 // ・【自機除外ルール＆王冠表示数の動的整合維持】
@@ -29,11 +29,11 @@ import { MAX_PLAYERS } from './constants.js';
 import { NetworkManager } from './network.js';
 import { resetLeaderboardCache } from './net_handlers.js';
 
-// ★ 王冠ランク別スタイル定義（ギラつきを抑えた上品な極細ラインカラー）
+// ★ ランク別スタイル定義（同径ソリッド丸用 高輝度カラーパレット）
 const CROWN_CONFIGS = [
-    { rank: 1, color: '#fde047' }, // 1位: 淡いゴールド
-    { rank: 2, color: '#e2e8f0' }, // 2位: 控えめなシルバーホワイト
-    { rank: 3, color: '#f59e0b' }  // 3位: 落ち着いたブロンズ
+    { rank: 1, color: '#fde047' }, // 1位: 金 (レモンゴールド)
+    { rank: 2, color: '#ffffff' }, // 2位: 銀 (アイシーホワイト)
+    { rank: 3, color: '#f59e0b' }  // 3位: 銅 (アンバーオレンジ)
 ];
 
 export class HUDManager {
@@ -203,7 +203,7 @@ export class HUDManager {
                         const drawY = radarCenter + dy * radarRatio;
 
                         // =========================================================================
-                        // ★ 【最優先：1〜3位（Top 3）極細・直線ミニマル王冠（変な存在感ゼロ＆完全静止線画）】
+                        // ★ 【最優先：1〜3位（Top 3）完全同サイズ・ソリッド丸塗りつぶし（完全静止）】
                         // =========================================================================
                         const crownRank = top3Map.get(s);
                         if (crownRank !== undefined && crownRank >= 1 && crownRank <= 3) {
@@ -233,47 +233,19 @@ export class HUDManager {
                             }
 
                             rCtx.save();
-                            // ★ 眩しすぎず背後の暗闇に自然に溶け込ませるための適正不透明度
-                            rCtx.globalAlpha = 0.85;
+                            rCtx.globalAlpha = 1.0;
 
-                            const strokeCol = config.color;
-                            const circleRadius = 4.8; // 直径 9.6px（控えめで邪魔にならない適正サイズ）
+                            const circleRadius = 4.8; // 直径 9.6px（1〜3位完全同サイズ）
 
-                            // 線の太さを 0.8px に極細化し、太い黒下地や二重線を完全排除
-                            rCtx.strokeStyle = strokeCol;
-                            rCtx.lineWidth = 0.8;
-                            rCtx.lineCap = 'round';
-                            rCtx.lineJoin = 'round';
-
-                            // 1. 【外側の丸枠：極細単色ストローク（塗りつぶしなし）】
+                            // 1. 【本体：各ランク色（金/銀/銅）のソリッド丸ベタ塗り】
+                            rCtx.fillStyle = config.color;
                             rCtx.beginPath();
                             rCtx.arc(targetX, targetY, circleRadius, 0, Math.PI * 2);
-                            rCtx.stroke();
+                            rCtx.fill();
 
-                            // 2. 【内側の王冠：直線のみで構成された極細ピクトグラム（塗りつぶしなし・常時上向き）】
-                            // 幅 4.8px : 高さ 3.0px（直線8セグメント構成・隙間を広く確保して文字化を完全防止）
-                            const halfW = 2.4;
-                            const valleyX = 1.2;
-                            const topY = targetY - 1.5;
-                            const bottomY = targetY + 1.5;
-                            const valleyY = targetY + 0.6;
-
-                            rCtx.beginPath();
-                            // 水平底辺（直線1）
-                            rCtx.moveTo(targetX - halfW, bottomY);
-                            rCtx.lineTo(targetX + halfW, bottomY);
-                            // 右の垂直壁（直線2） -> 右の山頂
-                            rCtx.lineTo(targetX + halfW, topY);
-                            // 右の谷切れ込み（直線3）
-                            rCtx.lineTo(targetX + valleyX, valleyY);
-                            // 中央の山頂（直線4）
-                            rCtx.lineTo(targetX, topY);
-                            // 左の谷切れ込み（直線5）
-                            rCtx.lineTo(targetX - valleyX, valleyY);
-                            // 左の山頂（直線6）
-                            rCtx.lineTo(targetX - halfW, topY);
-                            // 左の垂直壁（直線7）
-                            rCtx.closePath();
+                            // 2. 【輪郭保護：0.8px の極細黒輪郭（背景埋もれ防止）】
+                            rCtx.strokeStyle = 'rgba(0, 0, 0, 0.95)';
+                            rCtx.lineWidth = 0.8;
                             rCtx.stroke();
 
                             rCtx.restore();
