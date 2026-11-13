@@ -1,34 +1,22 @@
 // ==============================================================================
 // 『くねくねバトル オンライン』スネークエンティティクラス (snake.js)
-// v45.0.0 初期スコア100適正化＆開幕テンポ向上版:
-// ・【初期スコア100適正化（開幕テンポ向上）】
-// 　スポーン時およびリスポーン時の初期スコアを 50 から 100 へ引き上げ！
-// 　開幕直後からブースト（閾値60以上）を約1.9秒間存分に使用可能となり、
-// 　開始直後のテンポ感および緊急離脱能力を大幅に向上
-// ・【絵文字・サロゲートペア安全トリム（文字化け完全防止）】
-// 　従来の .slice(0, 9) で絵文字が途中で2分割され末尾が文字化け（）する問題を解消！
-// 　Array.from() により絵文字や特殊記号を1文字として正確にカウントし、
-// 　長大なユーザー名も最大7文字（全角14文字相当）＋「…」で安全に省略
-// ・【バッジ最大幅の適正拡張（92px ➔ 108px）】
-// 　漢字・ひらがな・絵文字が並んだ際のプレート枠線からの文字はみ出しを完全根絶！
-// 　どのような文字種・長さの名前でも美しくプレート内に中央収容
-// ・【頭部ステータスバッジのオフセット距離黄金比維持】size * 1.55 + 24px
-// ・【前方視界100%完全クリア維持】進行方向の真後ろへ幾何学オフセット
-// ・【文字水平正立描画＆例外完全ゼロ化維持】ワールド座標系水平描画
-// ・【バッジ背景スマート透過化維持】rgba(11, 5, 26, 0.58)
-// ・【胴体中心線（白い針金状の直線）アーティファクト完全根絶維持】
-// ・【リモートAI出現・急成長時のカーブ追従型体節補間維持】
-// ・【超巨大化時の太さ特化スケール（最大太さ 65px）維持】
-// ・【節数ハードキャップ（最大95節）によるCanvas描画FPS完全防護維持】
-// ・【巨体時の重量級旋回慣性バランス適正化維持】
-// ・【ブースト自傷肉片の自画面即時ドロップ反映維持】
-// ・【リスポーン時撃破フラグ（_hasBeenKilled）初期化維持】
-// ・【ワープ時prevX/Y追従補正によるCCDデス・レーザー完全根絶維持】
-// ・【相手マイアイコン顔(user_avatar)のCanvas完全描画維持】
-// ・【デバッグ用無敵シールド(isGodMode)デフォルトOFF化】自機不死身解除・正規判定適用
-// ・【外壁激突即死判定維持】
-// ・【とぐろ立体感＆生体ウロコ重なりレイヤード描画維持】
-// ・【ゼロ負荷設計＆生体テーパーウェーブ完全維持】
+// v46.0.0 ネームプレート動的スケーリング＆首元遅延アングル追従最適化版:
+// ・【ネームプレート画面実寸逆算スケーリング（改良版アプローチC）】
+// 　カメラズーム倍率（cameraScale）と体格（this.size）からワールド拡大率（badgeScale）を
+// 　逆算し、巨大化・ズームアウト時でもスマホ画面上で常に読みやすい実寸サイズを維持
+// ・【首元遅延アングル連続補間による60FPS滑らか追従（空中浮遊＆カクつき完全根絶）】
+// 　離散更新される体節履歴の角度と現在角度を distCounter 進行率で毎フレーム線形補間し、
+// 　急旋回時でもネームプレートが胴体から飛び出さず、かつ1フレームの震えもなく背中に追従
+// ・【緩やかな楕円クリアランス補正（360度全方位の顔めり込み完全防止）】
+// 　水平移動時に横長プレートの端が頭部・マイアイコンに被らないよう角度成分に応じて距離を自動調整
+// ・【超広域ズームアウト時の小型AIスマート透過（視界ノイズ防止）】
+// 　自機・人間・大型AIは常時クッキリ表示し、遠方の小型AIのみズームアウト時に滑らかに透過
+// ・【初期スコア100適正化（開幕テンポ向上）維持】
+// ・【絵文字・サロゲートペア安全トリム＆バッジ最大幅108px維持】
+// ・【文字水平正立描画＆例外完全ゼロ化維持】
+// ・【胴体中心線アーティファクト完全根絶＆カーブ追従型体節補間維持】
+// ・【超巨大化時の太さ特化スケール（最大太さ 65px）＆節数キャップ（95節）維持】
+// ・【デバッグ用無敵シールド(isGodMode)デフォルトOFF化維持】
 // ==============================================================================
 
 import { BASE_SPEED, BOOST_SPEED_MULT, TURN_SPEED_PLAYER, MAP_SIZE, SNAKE_COLORS } from './constants.js';
@@ -578,39 +566,38 @@ export class Snake {
         ctx.restore();
         ctx.globalAlpha = 1.0;
 
-        // 頭上ステータス表示（首元・進行方向背後幾何学追従描画）
-        this.drawOverheadBadge(ctx);
+        // 頭上ステータス表示（画面実寸逆算スケーリング＆首元遅延アングル追従描画）
+        this.drawOverheadBadge(ctx, cameraScale);
     }
 
     /**
      * ステータスバッジ（得点・名前）の描画
      * =========================================================================
-     * ★ 【首元・進行方向背後幾何学オフセット（黄金比クリアランス適正化）＆ 水平正立描画】
-     * 進行方向（angle）の真後ろへ、頭部サイズに比例した最適距離（size * 1.55 + 24px）
-     * だけ幾何学的にオフセット配置することで、後頭部・オーラ輪郭との被りを完全根絶！
-     * 約19pxのクリアランスを確保した上で、第4〜5体節（背中中央）の上に自然に吸着追従。
-     * 文字は常に水平正立で描画され、急旋回時や上下逆さまの走行でも完全な可読性を維持。
+     * ★ 【改良版アプローチC：画面実寸逆算スケーリング ＆ 首元遅延アングル連続補間】
+     * 1. カメラズーム(cameraScale)と体格(size)からワールド拡大率(badgeScale)を動的逆算し、
+     * 　 巨大化・ズームアウト時でもスマホ画面上で常にクッキリ読める黄金実寸を維持。
+     * 2. 体節リングバッファの角度履歴を distCounter 進行率で毎フレーム連続補間した
+     * 　 遅延アングル(neckAngle)を用いることで、急旋回時の空中浮遊と離散カクつきを100%根絶。
+     * 3. 水平移動成分(|cos|)に応じた緩やかな楕円クリアランス補正により、横移動時も顔に被らない。
+     * 4. 超広域ズームアウト時は遠方の小型AIのみ透明度を下げて視界のノイズを防止。
      * =========================================================================
      */
-    drawOverheadBadge(ctx) {
-        ctx.save();
-        
-        // 進行方向の真後ろ（首元〜背中）へ幾何学オフセットを算出（黄金比クリアランス化）
-        const offsetDist = this.size * 1.55 + 24;
-        const badgeX = this.x - Math.cos(this.angle) * offsetDist;
-        const badgeY = this.y - Math.sin(this.angle) * offsetDist;
+    drawOverheadBadge(ctx, cameraScale = 1.0) {
+        const safeCamScale = Math.max(0.15, Number.isFinite(cameraScale) && cameraScale > 0 ? cameraScale : 1.0);
+        const isHuman = Boolean(this.isPlayer || this.isHumanPlayer);
 
-        // 常に水平正立（回転なし）のワールド座標系へ移動
-        ctx.translate(badgeX, badgeY);
+        // 超広域ズームアウト時の小型AIスマート透過（邪魔防止LoD）
+        let badgeAlpha = 1.0;
+        if (!isHuman && safeCamScale < 0.48 && this.size < 22) {
+            badgeAlpha = Math.max(0.18, Math.min(1.0, (safeCamScale - 0.18) / 0.30));
+        }
 
         const currentFloorScore = Math.floor(this.score);
         const scoreText = formatBadgeScore(currentFloorScore);
 
         // =========================================================================
-        // ★ 【絵文字・サロゲートペア安全なトリム処理 ＆ バッジ最大幅拡張】
-        // Array.from() により絵文字を2コード単位ではなく「1文字」として正しく計測。
-        // 最大7文字＋「…」で安全にトリムし、バッジ最大幅を 108px へ適正拡張することで
-        // 漢字・ひらがな・絵文字の名前がプレート枠線からはみ出す事故を100%物理根絶
+        // ★ 【絵文字・サロゲートペア安全なトリム処理 ＆ 基準サイズでの幅キャッシュ計測】
+        // ctx.scale 適用前の基準フォントサイズ（10px / 9.5px）で1回だけ計測してキャッシュ
         // =========================================================================
         const nameChars = Array.from(this.name || '');
         const nameText = nameChars.length > 7 ? nameChars.slice(0, 7).join('') + '…' : (this.name || '');
@@ -618,10 +605,12 @@ export class Snake {
         if (this._cachedBadgeScore !== currentFloorScore || this._cachedBadgeName !== nameText) {
             this._cachedBadgeScore = currentFloorScore;
             this._cachedBadgeName = nameText;
+            ctx.save();
             ctx.font = 'bold 10px sans-serif';
             const scoreW = ctx.measureText(scoreText).width;
             ctx.font = 'bold 9.5px sans-serif';
             const nameW = ctx.measureText(nameText).width;
+            ctx.restore();
             this._cachedBadgeWidth = Math.max(54, Math.min(108, Math.max(scoreW, nameW) + 14));
         }
 
@@ -629,16 +618,71 @@ export class Snake {
         const badgeH = 25;
         const radius = 6;
 
-        // 背景プレート：背後の餌や壁が適度に透けるスマート半透明（0.58）
-        ctx.fillStyle = 'rgba(11, 5, 26, 0.58)';
-        ctx.strokeStyle = this.isGodMode ? 'rgba(253, 224, 71, 0.75)' : 'rgba(0, 229, 255, 0.35)';
+        // =========================================================================
+        // 1. 【画面実寸逆算型の動的バッジ倍率（badgeScale）算出】
+        // =========================================================================
+        const targetApparentScale = Math.min(1.30, 0.95 + Math.max(0, this.size - 14) * 0.007);
+        const roleFactor = isHuman ? 1.0 : 0.85;
+        let badgeScale = (targetApparentScale * roleFactor) / Math.pow(safeCamScale, 0.85);
+        badgeScale = Math.max(0.85, Math.min(3.5, badgeScale));
+
+        // =========================================================================
+        // 2. 【首元遅延アングル連続補間（急旋回時の空中浮遊＆離散カクつき完全根絶）】
+        // =========================================================================
+        let neckAngle = this.angle;
+        if (this.historyLength >= 4) {
+            const idx2 = (this.headIdx + 2) % MAX_HISTORY;
+            const idx3 = (this.headIdx + 3) % MAX_HISTORY;
+            const pt2 = this.history[idx2];
+            const pt3 = this.history[idx3];
+
+            if (pt2 && pt3 && pt2.angle !== undefined && pt3.angle !== undefined) {
+                const stepDist = Math.max(1.0, this.size * 0.58);
+                const frac = Math.max(0, Math.min(1.0, this.distCounter / stepDist));
+
+                let histDiff = pt3.angle - pt2.angle;
+                while (histDiff < -Math.PI) histDiff += Math.PI * 2;
+                while (histDiff > Math.PI) histDiff -= Math.PI * 2;
+                const smoothHistAngle = pt2.angle + histDiff * frac;
+
+                let neckDiff = smoothHistAngle - this.angle;
+                while (neckDiff < -Math.PI) neckDiff += Math.PI * 2;
+                while (neckDiff > Math.PI) neckDiff -= Math.PI * 2;
+                neckAngle = this.angle + neckDiff * 0.65;
+            }
+        }
+
+        // =========================================================================
+        // 3. 【緩やかな楕円クリアランス補正（水平移動時の顔・アイコン被り100%防止）】
+        // =========================================================================
+        const halfW = badgeW * 0.5;
+        const halfH = badgeH * 0.5;
+        const baseDist = this.size * 1.35 + (18 * badgeScale);
+        const horizExtra = Math.max(0, halfW - halfH) * badgeScale * 0.55 * Math.abs(Math.cos(neckAngle));
+        const offsetDist = baseDist + horizExtra;
+
+        const badgeX = this.x - Math.cos(neckAngle) * offsetDist;
+        const badgeY = this.y - Math.sin(neckAngle) * offsetDist;
+
+        ctx.save();
+        ctx.globalAlpha = badgeAlpha;
+
+        // 常に水平正立（回転なし）のワールド座標系へ移動し、動的スケールを適用
+        ctx.translate(badgeX, badgeY);
+        ctx.scale(badgeScale, badgeScale);
+
+        // 背景プレート：太い胴体の上でも文字が埋もれない視認性強化半透明（0.72）
+        ctx.fillStyle = 'rgba(11, 5, 26, 0.72)';
+        ctx.strokeStyle = this.isGodMode
+            ? 'rgba(253, 224, 71, 0.80)'
+            : (this.isPlayer ? 'rgba(253, 224, 71, 0.55)' : 'rgba(0, 229, 255, 0.38)');
         ctx.lineWidth = 1.2;
 
         ctx.beginPath();
         if (ctx.roundRect) {
-            ctx.roundRect(-badgeW / 2, -badgeH / 2, badgeW, badgeH, radius);
+            ctx.roundRect(- halfW, - halfH, badgeW, badgeH, radius);
         } else {
-            ctx.rect(-badgeW / 2, -badgeH / 2, badgeW, badgeH);
+            ctx.rect(- halfW, - halfH, badgeW, badgeH);
         }
         ctx.fill();
         ctx.stroke();
@@ -649,7 +693,7 @@ export class Snake {
         ctx.font = 'bold 10px sans-serif';
         ctx.fillText(scoreText, 0, -2);
 
-        ctx.fillStyle = 'rgba(255, 255, 255, 0.95)';
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.96)';
         ctx.font = 'bold 9.5px sans-serif';
         ctx.fillText(nameText, 0, 9.5);
 
